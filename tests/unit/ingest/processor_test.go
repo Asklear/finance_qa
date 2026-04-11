@@ -13,7 +13,7 @@ func TestImporterImportParsed(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "test_import.db")
 	
-	imp := ingest.NewImporter()
+	imp := ingest.NewImporter(nil)
 	
 	// Mock data
 	result := parser.ParseResult{
@@ -33,7 +33,7 @@ func TestImporterImportParsed(t *testing.T) {
 		},
 	}
 	
-	err := imp.ImportParsed(ctx, dbPath, result)
+	err := imp.ImportParsed(ctx, dbPath, result, false)
 	if err != nil {
 		t.Fatalf("ImportParsed failed: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestProcessorProcessFileDelegation(t *testing.T) {
 	// Processor is a thin wrapper that currently only handles metadata extraction
 	// without actually importing into DB in its current ProcessFile implementation.
 	// This tests the structure is intact.
-	proc := ingest.NewProcessor()
+	proc := ingest.NewProcessor(nil)
 	
 	// We can't easily test ProcessFile without a real file on disk, 
 	// but we can verify it exists and compiles.

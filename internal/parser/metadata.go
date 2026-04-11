@@ -28,8 +28,6 @@ func DetectReportType(path string) string {
 		return "balance_sheet"
 	case strings.Contains(filename, "利润表"), strings.Contains(filename, "损益表"):
 		return "income_statement"
-	case strings.Contains(filename, "预算"):
-		return "budget"
 	default:
 		return "unknown"
 	}
@@ -53,10 +51,16 @@ func ExtractMetadata(path string) (FileMetadata, error) {
 			periodStart = formatYYYYMM(m[1][:6])
 			periodEnd = formatYYYYMM(m[2][:6])
 		}
-	case strings.Contains(filename, "预算"):
-		if m := yearPattern.FindStringSubmatch(filename); len(m) == 2 {
-			periodStart = m[1] + "-01"
-			periodEnd = m[1] + "-12"
+		// Extract company from bank statement: 交易查询，南京优集数据科技有限公司，...
+		parts := strings.Split(filename, "，")
+		if len(parts) >= 2 {
+			company = strings.TrimSpace(parts[1])
+		} else {
+			// Try comma (English)
+			parts = strings.Split(filename, ",")
+			if len(parts) >= 2 {
+				company = strings.TrimSpace(parts[1])
+			}
 		}
 	default:
 		if m := companyPattern.FindStringSubmatch(filename); len(m) >= 2 {
@@ -89,18 +93,8 @@ func ExtractMetadata(path string) (FileMetadata, error) {
 }
 
 func sanitizeCompanyName(name string) string {
-	// Standardized desensitization mapping
-	replacements := map[string]string{
-		"南京优集": "模拟财务科技有限公司",
-		"飞未云科": "合作伙伴A",
-		"模拟财务": "模拟财务科技有限公司",
-		"Unknown": "模拟财务科技有限公司", // Default fallback for this project context
-	}
-
-	for k, v := range replacements {
-		if strings.Contains(name, k) {
-			return v
-		}
+	if name == "" || name == "Unknown" {
+		return "DefaultCompany"
 	}
 	return name
 }

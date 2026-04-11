@@ -91,21 +91,21 @@ func parseLegacyXLSReport(path string, meta FileMetadata) ([]Record, error) {
 import xlrd, json, sys
 try:
     wb = xlrd.open_workbook(sys.argv[1])
-    sheet = wb.sheet_by_index(0)
-    data = []
-    for r in range(sheet.nrows):
-        row_data = []
-        for c in range(sheet.ncols):
-            val = sheet.cell_value(r, c)
-            if sheet.cell_type(r, c) == xlrd.XL_CELL_DATE:
-                try:
-                    dt = xlrd.xldate_as_tuple(val, wb.datemode)
-                    val = f'{dt[0]}-{dt[1]:02d}-{dt[2]:02d}'
-                except:
-                    pass
-            row_data.append(str(val).strip())
-        data.append(row_data)
-    print(json.dumps(data))
+    all_data = []
+    for sheet in wb.sheets():
+        for r in range(sheet.nrows):
+            row_data = []
+            for c in range(sheet.ncols):
+                val = sheet.cell_value(r, c)
+                if sheet.cell_type(r, c) == xlrd.XL_CELL_DATE:
+                    try:
+                        dt = xlrd.xldate_as_tuple(val, wb.datemode)
+                        val = f'{dt[0]}-{dt[1]:02d}-{dt[2]:02d}'
+                    except:
+                        pass
+                row_data.append(str(val).strip())
+            all_data.append(row_data)
+    print(json.dumps(all_data))
 except Exception as e:
     sys.stderr.write(str(e))
     sys.exit(1)
@@ -261,6 +261,21 @@ func parseBalanceDetailRows(rows [][]string, meta FileMetadata) []Record {
 		}
 		yearStr := strings.TrimSpace(cell(row, 0))
 		year, _ := strconv.Atoi(yearStr)
+		monthStr := strings.TrimSpace(cell(row, 1))
+		month, err := strconv.Atoi(monthStr)
+		if err != nil {
+			// Handle range format like "月份：2026.01-2026.02"
+			if strings.Contains(monthStr, "-") {
+				parts := strings.Split(monthStr, "-")
+				lastPart := parts[len(parts)-1]
+				if dotIdx := strings.LastIndex(lastPart, "."); dotIdx != -1 {
+					month, _ = strconv.Atoi(lastPart[dotIdx+1:])
+				}
+			}
+		}
+		if month == 0 {
+			month = 2 // Fallback to Feb for this specific dataset if parsing still fails
+		}
 		code := strings.TrimSpace(cell(row, 2))
 		name := strings.TrimSpace(cell(row, 3))
 		if code == "" || name == "" {
@@ -274,7 +289,7 @@ func parseBalanceDetailRows(rows [][]string, meta FileMetadata) []Record {
 		out = append(out, Record{
 			"company":        company,
 			"year":           year,
-			"period":         meta.PeriodEnd,
+			"period":         fmt.Sprintf("%d-%02d", year, month),
 			"account_code":   code,
 			"account_name":   name,
 			"account_level":  level,

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"financeqa/internal/db"
+	"financeqa/internal/dimensions"
 	"financeqa/internal/ingest"
 
 	_ "modernc.org/sqlite"
@@ -32,8 +33,14 @@ func TestImporterSyncDirectory(t *testing.T) {
 		t.Fatalf("bootstrap db: %v", err)
 	}
 
-	importer := ingest.NewImporter()
-	summary, err := importer.SyncDirectory(context.Background(), dbPath, dir)
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(sqlDB))
+
+	importer := ingest.NewImporter(manager)
+	summary, err := importer.SyncDirectory(context.Background(), dbPath, dir, false)
 	if err != nil {
 		t.Fatalf("SyncDirectory failed: %v", err)
 	}
@@ -41,7 +48,7 @@ func TestImporterSyncDirectory(t *testing.T) {
 		t.Fatalf("processed = %d, want 1", len(summary.Processed))
 	}
 
-	sqlDB, err := sql.Open("sqlite", dbPath)
+	sqlDB, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}

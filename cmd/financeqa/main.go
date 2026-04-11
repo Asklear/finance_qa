@@ -138,6 +138,21 @@ func runKeywords(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func isProductionMode() bool {
+	// 1. Priority: Environment variable (standard for servers/CI-CD)
+	if os.Getenv("APP_ENV") == "production" {
+		return true
+	}
+
+	// 2. Fallback: Local skill.md file (useful for rapid local switching)
+	content, err := os.ReadFile("skill.md")
+	if err != nil {
+		return false // Default to test mode if file missing
+	}
+	// Specifically look for the active selection, avoiding the hint in parentheses
+	return strings.Contains(string(content), "当前运行模式：【正式版本】")
+}
+
 func runQuery(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -165,12 +180,17 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	b, err := json.MarshalIndent(result.Data, "", "  ")
+	// Output control: Hide internal traces in production mode
+	if isProductionMode() {
+		result.ExecutedSQL = nil
+		result.CalculationLogs = nil
+	}
+
+	b, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "marshal query result failed: %v\n", err)
 		return 1
 	}
-	fmt.Fprintln(stdout, result.Message)
 	fmt.Fprintln(stdout, string(b))
 	return 0
 }
@@ -179,6 +199,7 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	incremental := fs.Bool("incremental", false, "incremental import (don't clear existing data)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -188,8 +209,16 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	importer := ingest.NewImporter()
-	summary, err := importer.ImportFile(context.Background(), *dbPath, filePath)
+	db, err := sql.Open("sqlite", *dbPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "open db failed: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(db))
+
+	importer := ingest.NewImporter(manager)
+	summary, err := importer.ImportFile(context.Background(), *dbPath, filePath, *incremental)
 	if err != nil {
 		fmt.Fprintf(stderr, "import failed: %v\n", err)
 		return 1
@@ -208,6 +237,7 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	incremental := fs.Bool("incremental", false, "incremental sync (don't clear existing data)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -217,8 +247,16 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	importer := ingest.NewImporter()
-	summary, err := importer.SyncDirectory(context.Background(), *dbPath, dirPath)
+	db, err := sql.Open("sqlite", *dbPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "open db failed: %v\n", err)
+		return 1
+	}
+	defer db.Close()
+	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(db))
+
+	importer := ingest.NewImporter(manager)
+	summary, err := importer.SyncDirectory(context.Background(), *dbPath, dirPath, *incremental)
 	if err != nil {
 		fmt.Fprintf(stderr, "sync failed: %v\n", err)
 		return 1
@@ -335,6 +373,34 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 			"ruleCount":  rules.Total,
 			"rules":      rules.Data,
 		})
+	case "seed-standard":
+		fs := flag.NewFlagSet("dimensions seed-standard", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		company := fs.String("company", "", "company to initialize standard rules for")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *company == "" {
+			fmt.Fprintln(stderr, "seed-standard requires --company")
+			return 2
+		}
+
+		manager, cleanup, err := openDimensionsManager(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions manager failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+
+		// 1. Initialize dimension members and rules
+		if err := manager.InitializeStandardRules(context.Background(), *company); err != nil {
+			fmt.Fprintf(stderr, "seed-standard failed: %v\n", err)
+			return 1
+		}
+
+		fmt.Fprintf(stdout, "successfully seeded standard CAS rules for %s\n", *company)
+		return 0
 	case "export-package":
 		fs := flag.NewFlagSet("dimensions export-package", flag.ContinueOnError)
 		fs.SetOutput(stderr)
@@ -587,12 +653,13 @@ func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "  financeqa config show [--config <path>]")
 	fmt.Fprintln(out, "  financeqa keywords intents [--keywords <path>]")
 	fmt.Fprintln(out, "  financeqa query [--db <path>] [--company <name>] <question>")
-	fmt.Fprintln(out, "  financeqa import [--db <path>] <file>")
-	fmt.Fprintln(out, "  financeqa sync [--db <path>] <directory>")
+	fmt.Fprintln(out, "  financeqa import [--db <path>] [--incremental] <file>")
+	fmt.Fprintln(out, "  financeqa sync [--db <path>] [--incremental] <directory>")
 	fmt.Fprintln(out, "  financeqa dimensions list [--db <path>]")
 	fmt.Fprintln(out, "  financeqa dimensions add-dimension --db <path> --code <code> --name <name> --type <type>")
 	fmt.Fprintln(out, "  financeqa dimensions add-member --db <path> --dimension <code> --code <code> --name <name>")
 	fmt.Fprintln(out, "  financeqa dimensions mapping-stats [--db <path>] [--company <name>]")
+	fmt.Fprintln(out, "  financeqa dimensions seed-standard [--db <path>] --company <name>")
 	fmt.Fprintln(out, "  financeqa dimensions export-package --db <path> --output <file> [--format json]")
 	fmt.Fprintln(out, "  financeqa dimensions import-dimensions --db <path> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
 	fmt.Fprintln(out, "  financeqa dimensions import-members --db <path> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
