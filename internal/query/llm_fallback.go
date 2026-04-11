@@ -55,16 +55,30 @@ func (e *Engine) buildFallbackHint(question, from, to, priorErr string) Result {
 	}
 }
 
-// listAvailableAccounts 返回当前期间可查询的科目名，最多 30 条
+// listAvailableAccounts 返回当前期间可查询的细颗粒度科目名（联合提取序时帐与余额表），最多 50 条
 func (e *Engine) listAvailableAccounts(period string) []string {
+	startDate := period + "-01"
+	endDate := monthEndDay(period)
+
+	// 使用 UNION 联合序时帐(journal)和资产负债表(balance_sheet)中的科目名称
+	// 这样能确保费用类、损益类明细等在资产负债表无法体现的细颗粒度词汇暴露给 LLM
 	rows, err := e.db.Query(`
-SELECT DISTINCT account_name
-FROM balance_sheet
-WHERE company = ?
-  AND period = ?
-ORDER BY account_name
-LIMIT 30
-`, e.Company, period)
+SELECT sub.name FROM (
+  SELECT DISTINCT account_name AS name
+  FROM journal
+  WHERE company = ?
+    AND DATE(voucher_date) >= DATE(?)
+    AND DATE(voucher_date) <= DATE(?)
+  UNION
+  SELECT DISTINCT account_name AS name
+  FROM balance_sheet
+  WHERE company = ?
+    AND period = ?
+) sub
+WHERE sub.name IS NOT NULL AND sub.name <> ''
+ORDER BY sub.name
+LIMIT 50
+`, e.Company, startDate, endDate, e.Company, period)
 	if err != nil {
 		return nil
 	}
