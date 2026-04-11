@@ -282,4 +282,9 @@ CREATE TABLE IF NOT EXISTS smart_mapping_learnings (
 CREATE INDEX IF NOT EXISTS idx_smart_learnings_journal ON smart_mapping_learnings(journal_id);
 CREATE INDEX IF NOT EXISTS idx_smart_learnings_adjusted ON smart_mapping_learnings(adjusted_member_code);
 CREATE INDEX IF NOT EXISTS idx_smart_learnings_keywords ON smart_mapping_learnings(extracted_keywords);
+CREATE TABLE IF NOT EXISTS cas_mapping (
+    standard_code TEXT PRIMARY KEY,
+    standard_name TEXT NOT NULL,
+    category TEXT
+);
 `

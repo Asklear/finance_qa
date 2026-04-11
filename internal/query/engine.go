@@ -278,33 +278,61 @@ WHERE company = ?
 }
 
 func (e *Engine) queryARAP(question, period string) Result {
-	account := "应收账款"
+	accountName := "应收账款"
+	prefix := "1122"
 	if strings.Contains(question, "应付") {
-		account = "应付账款"
+		accountName = "应付账款"
+		prefix = "2202"
 	}
 
+	// 1. 获取全盘汇总 Total
 	row := e.db.QueryRow(`
 SELECT COALESCE(SUM(COALESCE(closing_balance, 0)), 0)
 FROM balance_sheet
 WHERE company = ?
   AND period = ?
-  AND account_name LIKE ?
-`, e.Company, period, "%"+account+"%")
+  AND account_code LIKE ?
+`, e.Company, period, prefix+"%")
 
 	var total float64
 	if err := row.Scan(&total); err != nil {
-		return Result{Success: false, Message: fmt.Sprintf("query ar/ap: %v", err)}
+		return Result{Success: false, Message: fmt.Sprintf("query ar/ap total: %v", err)}
+	}
+
+	// 2. 获取排名前十挂账明细 Details
+	rows, err := e.db.Query(`
+SELECT account_name, closing_balance
+FROM balance_sheet
+WHERE company = ?
+  AND period = ?
+  AND account_code LIKE ?
+  AND closing_balance <> 0
+ORDER BY ABS(closing_balance) DESC
+LIMIT 10
+`, e.Company, period, prefix+"%")
+
+	var details []map[string]any
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name string
+			var bal float64
+			if err := rows.Scan(&name, &bal); err == nil {
+				details = append(details, map[string]any{"name": name, "balance": bal})
+			}
+		}
 	}
 
 	return Result{
 		Success: true,
-		Message: fmt.Sprintf("%s %s查询成功", period, account),
+		Message: fmt.Sprintf("%s %s查询成功", period, accountName),
 		Data: map[string]any{
-			"period": period,
-			"type":   account,
-			"total":  total,
+			"period":  period,
+			"type":    accountName,
+			"total":   total,
+			"details": details,
 		},
-		SQL: "balance_sheet ar/ap",
+		SQL: "balance_sheet ar/ap details by code",
 	}
 }
 

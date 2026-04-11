@@ -74,6 +74,9 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if v := numberFromMap(t, ar.Data, "total"); v != 1200 {
 		t.Fatalf("ar total = %.2f, want 1200", v)
 	}
+	if details, ok := ar.Data["details"].([]map[string]any); !ok || len(details) == 0 {
+		t.Fatalf("ar details missing or empty, got %v", ar.Data["details"])
+	}
 
 	ap := eng.Query("2026年2月应付账款情况")
 	if !ap.Success {
@@ -81,6 +84,9 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	}
 	if v := numberFromMap(t, ap.Data, "total"); v != 700 {
 		t.Fatalf("ap total = %.2f, want 700", v)
+	}
+	if details, ok := ap.Data["details"].([]map[string]any); !ok || len(details) == 0 {
+		t.Fatalf("ap details missing or empty, got %v", ap.Data["details"])
 	}
 
 	analysis := eng.Query("2026年2月账龄分析")
@@ -125,6 +131,7 @@ func setupQueryTestDB(t *testing.T) string {
 CREATE TABLE balance_sheet (
   company TEXT,
   period TEXT,
+  account_code TEXT,
   account_name TEXT,
   opening_balance REAL,
   closing_balance REAL
@@ -162,12 +169,23 @@ CREATE TABLE journal (
   credit_amount REAL,
   counterparty TEXT
 );
+CREATE TABLE cas_mapping (
+  standard_code TEXT PRIMARY KEY,
+  standard_name TEXT NOT NULL,
+  category TEXT
+);
 
-INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','货币资金',100,150);
-INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','应收账款',1000,1200);
-INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','应付账款',500,700);
-INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','应付职工薪酬',200,300);
-INSERT INTO balance_sheet VALUES ('苏州模拟财务','2026-02','货币资金',10,20);
+INSERT INTO cas_mapping VALUES ('1002','银行存款','资产');
+INSERT INTO cas_mapping VALUES ('1122','应收账款','资产');
+INSERT INTO cas_mapping VALUES ('2202','应付账款','负债');
+INSERT INTO cas_mapping VALUES ('2211','应付职工薪酬','负债');
+
+INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','1002','货币资金',100,150);
+INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','112201','应收账款-客户A',500,600);
+INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','112202','应收账款-客户B',500,600);
+INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','2202','应付账款',500,700);
+INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','2211','应付职工薪酬',200,300);
+INSERT INTO balance_sheet VALUES ('苏州模拟财务','2026-02','1002','货币资金',10,20);
 
 INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','营业收入',2000,3000);
 
