@@ -8,14 +8,93 @@ import (
 	"time"
 )
 
+// AccountCategory represents the nature of an accounting subject (Assets, Liabilities, etc.)
+type AccountCategory string
+
+const (
+	CategoryAsset     AccountCategory = "资产"
+	CategoryLiability AccountCategory = "负债"
+	CategoryEquity    AccountCategory = "权益"
+	CategoryCost      AccountCategory = "成本"
+	CategoryRevenue   AccountCategory = "收入"
+	CategoryExpense   AccountCategory = "费用"
+)
+
+// NormalDirection returns the standard balance side ("借" or "贷") for a category.
+func NormalDirection(cat AccountCategory) string {
+	switch cat {
+	case CategoryAsset, CategoryCost, CategoryExpense:
+		return "借"
+	default:
+		return "贷"
+	}
+}
+
+// CategoryForCode provides a rule-based categorization based on Chinese Accounting Standards (CAS).
+func CategoryForCode(code string) AccountCategory {
+	if len(code) == 0 {
+		return ""
+	}
+	switch code[0] {
+	case '1':
+		return CategoryAsset
+	case '2':
+		return CategoryLiability
+	case '3':
+		return CategoryEquity
+	case '4':
+		return CategoryCost
+	case '5':
+		return CategoryCost // Manufacturing/Common
+	case '6':
+		// In CAS 2013, 60xx/63xx are typically Revenue/Income, others are Expenses
+		if strings.HasPrefix(code, "60") || strings.HasPrefix(code, "61") || strings.HasPrefix(code, "63") {
+			return CategoryRevenue
+		}
+		return CategoryExpense
+	}
+	return ""
+}
+
+// AccountMapper defines the interface for mapping company-specific accounts to standard categories.
+type AccountMapper interface {
+	MapAccount(code, name, summary, counterparty string) (string, bool)
+	GetCode(name string) string
+}
+
 // Calculator computes financial reports from journal (序时帐) data.
 type Calculator struct {
-	db *sql.DB
+	db              *sql.DB
+	Mapper          AccountMapper
+	ExecutedSQLs    []string
+	CalculationLogs []string
 }
 
 // NewCalculator creates a calculator backed by the given database.
 func NewCalculator(db *sql.DB) *Calculator {
 	return &Calculator{db: db}
+}
+
+// ResetTrace clears the recorded SQLs and logs.
+func (c *Calculator) GetCode(name string) string {
+	if c.Mapper == nil {
+		return ""
+	}
+	return c.Mapper.GetCode(name)
+}
+
+func (c *Calculator) ResetTrace() {
+	c.ExecutedSQLs = nil
+	c.CalculationLogs = nil
+}
+
+func (c *Calculator) trace(sql string, log string) {
+	if sql != "" {
+		c.ExecutedSQLs = append(c.ExecutedSQLs, sql)
+	}
+	if log != "" {
+		c.CalculationLogs = append(c.CalculationLogs, log)
+	}
 }
 
 // BalanceDetailRow represents one computed row of the balance detail (科目余额表).
@@ -86,14 +165,15 @@ func (c *Calculator) ComputeMonthlyFromJournal(company string, year, month int) 
 	startDate := fmt.Sprintf("%d-%02d-01", year, month)
 	endDate := fmt.Sprintf("%d-%02d-31", year, month) // SQLite DATE handles overflow
 
-	rows, err := c.db.Query(`
+	sqlTxt := `
 SELECT account_code, direction, COALESCE(amount, 0) as amount, summary
 FROM journal
-WHERE company = ?
-  AND DATE(voucher_date) >= DATE(?)
-  AND DATE(voucher_date) <= DATE(?)
-  AND summary NOT LIKE '%期间损益结转%'
-`, company, startDate, endDate)
+WHERE company = ? AND DATE(voucher_date) >= DATE(?) AND DATE(voucher_date) <= DATE(?) AND summary NOT LIKE '%期间损益结转%'
+`
+	c.trace(fmt.Sprintf("ComputeMonthlyFromJournal: %s [args: %s, %s, %s]", sqlTxt, company, startDate, endDate), 
+		fmt.Sprintf("汇总 %s %d年%d月 序时账数据（排除利润结转）", company, year, month))
+
+	rows, err := c.db.Query(sqlTxt, company, startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("query journal for month %d: %w", month, err)
 	}
@@ -107,7 +187,16 @@ WHERE company = ?
 			return nil, fmt.Errorf("scan journal row: %w", err)
 		}
 
-		cat := CategoryForCode(code)
+		// Map account to standard code
+		finalCode := code
+		if c.Mapper != nil {
+			if mapped, ok := c.Mapper.MapAccount(code, "", summary, ""); ok {
+				finalCode = mapped
+				c.trace("", fmt.Sprintf("  - 科目 %s 匹配到映射规则 -> %s", code, mapped))
+			}
+		}
+
+		cat := CategoryForCode(finalCode)
 		switch cat {
 		case CategoryRevenue:
 			// Revenue accounts: normal direction is 贷 (credit increases revenue)
@@ -148,11 +237,11 @@ func (c *Calculator) ComputeIncomeStatement(company string, year, month int) (*I
 	rows, err := c.db.Query(`
 SELECT account_code, direction, COALESCE(amount, 0) as amount
 FROM journal
-WHERE company = ?
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
   AND DATE(voucher_date) >= DATE(?)
   AND DATE(voucher_date) <= DATE(?)
   AND summary NOT LIKE '%期间损益结转%'
-`, company, startDate, endDate)
+`, company, company, startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("query journal for income statement: %w", err)
 	}
@@ -169,9 +258,17 @@ WHERE company = ?
 			return nil, fmt.Errorf("scan income row: %w", err)
 		}
 
+		// Map account to standard code
+		finalCode := code
+		if c.Mapper != nil {
+			if mapped, ok := c.Mapper.MapAccount(code, "", "", ""); ok {
+				finalCode = mapped
+			}
+		}
+
 		// Determine the sign: credits are positive for revenue, debits are positive for expense
 		signedAmount := amount
-		cat := CategoryForCode(code)
+		cat := CategoryForCode(finalCode)
 		normalDir := NormalDirection(cat)
 		if direction != normalDir {
 			signedAmount = -amount
@@ -233,15 +330,15 @@ func (c *Calculator) ComputeCashFlow(company, from, to string) (*CashPerspective
 	startDate := from + "-01"
 	endDate := lastDayOfMonth(to)
 
-	row := c.db.QueryRow(`
-SELECT
-  COALESCE(SUM(COALESCE(credit_amount, 0)), 0) AS income,
-  COALESCE(SUM(COALESCE(debit_amount, 0)), 0) AS expense
+	sqlTxt := `
+SELECT COALESCE(SUM(COALESCE(credit_amount, 0)), 0) AS income, COALESCE(SUM(COALESCE(debit_amount, 0)), 0) AS expense
 FROM bank_statement
-WHERE company = ?
-  AND DATE(transaction_date) >= DATE(?)
-  AND DATE(transaction_date) <= DATE(?)
-`, company, startDate, endDate)
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND DATE(transaction_date) >= DATE(?) AND DATE(transaction_date) <= DATE(?)
+`
+	c.trace(fmt.Sprintf("ComputeCashFlow: %s [args: %s, %s, %s]", sqlTxt, company, startDate, endDate),
+		fmt.Sprintf("汇总 %s 在 %s-%s 期间的银行现金流入流出", company, from, to))
+
+	row := c.db.QueryRow(sqlTxt, company, company, startDate, endDate)
 
 	var income, expense float64
 	if err := row.Scan(&income, &expense); err != nil {
@@ -284,9 +381,9 @@ func (c *Calculator) computeAccrualPerspective(company string, year, month int) 
 
 	row := c.db.QueryRow(`
 SELECT current_amount FROM income_statement
-WHERE company = ? AND period = ? AND item_name LIKE '%营业收入%'
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND period = ? AND item_name LIKE '%营业收入%'
 LIMIT 1
-`, company, period)
+`, company, company, period)
 	var currentRevenue sql.NullFloat64
 	if err := row.Scan(&currentRevenue); err == nil && currentRevenue.Valid {
 		found = true
