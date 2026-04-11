@@ -25,7 +25,7 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("precise query failed: %s", res.Message)
 	}
-	if v := numberFromMap(t, res.Data, "closing"); v != 150 {
+	if v := numberFromMap(t, res.Data, "closing_balance"); v != 150 {
 		t.Fatalf("closing balance = %.2f, want 150", v)
 	}
 

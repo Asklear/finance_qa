@@ -87,29 +87,56 @@ func (e *Engine) queryPrecise(question, period string) Result {
 		return Result{Success: false, Message: err.Error()}
 	}
 
-	row := e.db.QueryRow(`
+	startDate := period + "-01"
+	endDate := monthEndDay(period)
+
+	// 1. 获取余额 (balance_sheet) - 对于损益科目可能不存在，不存在则为 null (nil)
+	var opening, closing *float64
+	e.db.QueryRow(`
 SELECT opening_balance, closing_balance
 FROM balance_sheet
-WHERE company = ?
-  AND period = ?
-  AND account_name = ?
-LIMIT 1
-`, e.Company, period, accountName)
+WHERE company = ? AND period = ? AND account_name = ?
+LIMIT 1`, e.Company, period, accountName).Scan(&opening, &closing)
 
-	var opening, closing float64
-	if err := row.Scan(&opening, &closing); err != nil {
-		return Result{Success: false, Message: fmt.Sprintf("query precise balance: %v", err)}
+	// 2. 获取期间发生流水 (journal) - 对于仅有静态余额无流水的科目可能为 null
+	var debit, credit *float64
+	e.db.QueryRow(`
+SELECT SUM(debit_amount), SUM(credit_amount)
+FROM journal
+WHERE company = ? AND DATE(voucher_date) >= DATE(?) AND DATE(voucher_date) <= DATE(?) AND account_name = ?
+`, e.Company, startDate, endDate, accountName).Scan(&debit, &credit)
+
+	data := map[string]any{
+		"period":       period,
+		"account_name": accountName,
+	}
+
+	// 智能组装全景数据：让宿主 LLM 根据问题意图自己挑数据
+	// 如果老板问"余额" -> LLM 取 closing_balance
+	// 如果老板问"本月发生了多少" -> LLM 取 period_debit_flow 或 period_credit_flow
+	if opening != nil {
+		data["opening_balance"] = *opening
+	}
+	if closing != nil {
+		data["closing_balance"] = *closing
+	}
+	if debit != nil {
+		data["period_debit_flow"] = *debit
+	}
+	if credit != nil {
+		data["period_credit_flow"] = *credit
+	}
+
+	// 如果这个科目既没有余额也没有流水（极端情况），回退处理
+	if len(data) == 2 {
+		return Result{Success: false, Message: fmt.Sprintf("%s 查无 %s 的任何余额与流水数据", period, accountName)}
 	}
 
 	return Result{
 		Success: true,
-		Message: fmt.Sprintf("%s %s 余额查询成功", period, accountName),
-		Data: map[string]any{
-			"period":  period,
-			"opening": opening,
-			"closing": closing,
-		},
-		SQL: "balance_sheet precise balance",
+		Message: fmt.Sprintf("%s %s 综合账务（余额+发生额）查询成功", period, accountName),
+		Data:    data,
+		SQL:     "union precise balance and flow",
 	}
 }
 
@@ -307,13 +334,18 @@ func (e *Engine) queryAnalysis(period string) Result {
 }
 
 func (e *Engine) findMatchingAccount(question, period string) (string, error) {
+	startDate := period + "-01"
+	endDate := monthEndDay(period)
+
+	// 双擎共扫：同时从余额表和序时帐中提取可能被命中的科目名
 	rows, err := e.db.Query(`
-SELECT DISTINCT account_name
-FROM balance_sheet
-WHERE company = ?
-  AND period = ?
-ORDER BY LENGTH(account_name) DESC
-`, e.Company, period)
+SELECT DISTINCT name FROM (
+  SELECT account_name AS name FROM balance_sheet WHERE company = ? AND period = ?
+  UNION
+  SELECT account_name AS name FROM journal WHERE company = ? AND DATE(voucher_date) >= DATE(?) AND DATE(voucher_date) <= DATE(?)
+) WHERE name IS NOT NULL AND name <> ''
+ORDER BY LENGTH(name) DESC
+`, e.Company, period, e.Company, startDate, endDate)
 	if err != nil {
 		return "", fmt.Errorf("load account names: %w", err)
 	}
@@ -327,12 +359,15 @@ ORDER BY LENGTH(account_name) DESC
 		}
 		accounts = append(accounts, account)
 	}
+	
+	// 1. 精确包涵查找
 	for _, account := range accounts {
 		if strings.Contains(question, account) {
 			return account, nil
 		}
 	}
 
+	// 2. 别名查找映射
 	aliases := accountAliases()
 	for alias, accountName := range aliases {
 		if strings.Contains(question, alias) {
