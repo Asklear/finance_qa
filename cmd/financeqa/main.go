@@ -1,0 +1,601 @@
+package main
+
+import (
+	"encoding/json"
+	"context"
+	"database/sql"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"financeqa/internal/config"
+	"financeqa/internal/db"
+	"financeqa/internal/dimensions"
+	"financeqa/internal/ingest"
+	"financeqa/internal/query"
+	"financeqa/internal/support"
+)
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printUsage(stderr)
+		return 1
+	}
+
+	switch args[0] {
+	case "help", "-h", "--help":
+		printUsage(stdout)
+		return 0
+	case "init-db":
+		return runInitDB(args[1:], stdout, stderr)
+	case "config":
+		return runConfig(args[1:], stdout, stderr)
+	case "keywords":
+		return runKeywords(args[1:], stdout, stderr)
+	case "query":
+		return runQuery(args[1:], stdout, stderr)
+	case "import":
+		return runImport(args[1:], stdout, stderr)
+	case "sync":
+		return runSync(args[1:], stdout, stderr)
+	case "dimensions":
+		return runDimensions(args[1:], stdout, stderr)
+	default:
+		return runQuery(args, stdout, stderr)
+	}
+}
+
+func runInitDB(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("init-db", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if len(fs.Args()) > 0 {
+		fmt.Fprintf(stderr, "unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
+		return 2
+	}
+
+	if err := db.Bootstrap(context.Background(), *dbPath); err != nil {
+		fmt.Fprintf(stderr, "init-db failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "database initialized at %s\n", *dbPath)
+	return 0
+}
+
+func runConfig(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "config requires a subcommand: show")
+		return 2
+	}
+
+	switch args[0] {
+	case "show":
+		fs := flag.NewFlagSet("config show", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		configPath := fs.String("config", support.DefaultUserConfigPath(""), "path to user config yaml")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		mgr, err := config.NewUserConfigManager(*configPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "load config failed: %v\n", err)
+			return 1
+		}
+
+		b, err := yaml.Marshal(mgr.GetAllConfig())
+		if err != nil {
+			fmt.Fprintf(stderr, "marshal config failed: %v\n", err)
+			return 1
+		}
+		if _, err := stdout.Write(b); err != nil {
+			fmt.Fprintf(stderr, "write output failed: %v\n", err)
+			return 1
+		}
+		return 0
+	default:
+		fmt.Fprintf(stderr, "unknown config subcommand: %s\n", args[0])
+		return 2
+	}
+}
+
+func runKeywords(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "keywords requires a subcommand: intents")
+		return 2
+	}
+
+	switch args[0] {
+	case "intents":
+		fs := flag.NewFlagSet("keywords intents", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		path := fs.String("keywords", support.DefaultKeywordsPath(""), "path to query keywords json")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+
+		mgr := config.NewKeywordsManager(*path)
+		for _, name := range mgr.GetIntentNames() {
+			fmt.Fprintln(stdout, name)
+		}
+		return 0
+	default:
+		fmt.Fprintf(stderr, "unknown keywords subcommand: %s\n", args[0])
+		return 2
+	}
+}
+
+func runQuery(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	company := fs.String("company", "模拟财务", "company name to query")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	question := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if question == "" {
+		fmt.Fprintln(stderr, "query requires a natural language question")
+		return 2
+	}
+
+	engine, err := query.NewEngine(*dbPath, *company)
+	if err != nil {
+		fmt.Fprintf(stderr, "create query engine failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = engine.Close() }()
+
+	result := engine.Query(question)
+	if !result.Success {
+		fmt.Fprintln(stderr, result.Message)
+		return 1
+	}
+
+	b, err := json.MarshalIndent(result.Data, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "marshal query result failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, result.Message)
+	fmt.Fprintln(stdout, string(b))
+	return 0
+}
+
+func runImport(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	filePath := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if filePath == "" {
+		fmt.Fprintln(stderr, "import requires a file path")
+		return 2
+	}
+
+	importer := ingest.NewImporter()
+	summary, err := importer.ImportFile(context.Background(), *dbPath, filePath)
+	if err != nil {
+		fmt.Fprintf(stderr, "import failed: %v\n", err)
+		return 1
+	}
+
+	b, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "marshal import summary failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, string(b))
+	return 0
+}
+
+func runSync(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	dirPath := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if dirPath == "" {
+		fmt.Fprintln(stderr, "sync requires a directory path")
+		return 2
+	}
+
+	importer := ingest.NewImporter()
+	summary, err := importer.SyncDirectory(context.Background(), *dbPath, dirPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "sync failed: %v\n", err)
+		return 1
+	}
+	return writeJSON(stdout, stderr, summary)
+}
+
+func runDimensions(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "dimensions requires a subcommand")
+		return 2
+	}
+
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("dimensions list", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		manager, cleanup, err := openDimensionsManager(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions manager failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		result, err := manager.ListDimensions(context.Background(), dimensions.DimensionQueryOptions{})
+		if err != nil {
+			fmt.Fprintf(stderr, "list dimensions failed: %v\n", err)
+			return 1
+		}
+		return writeJSON(stdout, stderr, result)
+	case "add-dimension":
+		fs := flag.NewFlagSet("dimensions add-dimension", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		code := fs.String("code", "", "dimension code")
+		name := fs.String("name", "", "dimension name")
+		typ := fs.String("type", "custom", "dimension type")
+		hierarchical := fs.Bool("hierarchical", false, "whether the dimension is hierarchical")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		manager, cleanup, err := openDimensionsManager(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions manager failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		created, err := manager.CreateDimension(context.Background(), dimensions.CreateDimensionInput{
+			Code:           *code,
+			Name:           *name,
+			Type:           dimensions.DimensionType(*typ),
+			IsHierarchical: *hierarchical,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "add dimension failed: %v\n", err)
+			return 1
+		}
+		return writeJSON(stdout, stderr, created)
+	case "add-member":
+		fs := flag.NewFlagSet("dimensions add-member", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dimensionCode := fs.String("dimension", "", "dimension code")
+		code := fs.String("code", "", "member code")
+		name := fs.String("name", "", "member name")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		manager, cleanup, err := openDimensionsManager(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions manager failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		dim, err := manager.GetDimensionByCode(context.Background(), *dimensionCode)
+		if err != nil {
+			fmt.Fprintf(stderr, "get dimension failed: %v\n", err)
+			return 1
+		}
+		created, err := manager.AddMember(context.Background(), dimensions.AddMemberInput{
+			DimensionID: dim.ID,
+			Code:        *code,
+			Name:        *name,
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "add member failed: %v\n", err)
+			return 1
+		}
+		return writeJSON(stdout, stderr, created)
+	case "mapping-stats":
+		fs := flag.NewFlagSet("dimensions mapping-stats", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		company := fs.String("company", "", "company")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		manager, cleanup, err := openDimensionsManager(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions manager failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		rules, err := manager.ListMappingRules(context.Background(), dimensions.MappingRuleQueryOptions{Company: *company})
+		if err != nil {
+			fmt.Fprintf(stderr, "list mapping rules failed: %v\n", err)
+			return 1
+		}
+		return writeJSON(stdout, stderr, map[string]any{
+			"company":    *company,
+			"ruleCount":  rules.Total,
+			"rules":      rules.Data,
+		})
+	case "export-package":
+		fs := flag.NewFlagSet("dimensions export-package", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		outputPath := fs.String("output", "", "output file path")
+		format := fs.String("format", "json", "export format")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *outputPath == "" {
+			fmt.Fprintln(stderr, "export-package requires --output")
+			return 2
+		}
+		if *format != "json" {
+			fmt.Fprintln(stderr, "only json format is currently supported")
+			return 2
+		}
+		exchange, cleanup, err := openDimensionsExchange(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions exchange failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		pkg, err := exchange.ExportFullPackage(context.Background())
+		if err != nil {
+			fmt.Fprintf(stderr, "export package failed: %v\n", err)
+			return 1
+		}
+		if err := writeJSONFile(*outputPath, pkg); err != nil {
+			fmt.Fprintf(stderr, "write export package failed: %v\n", err)
+			return 1
+		}
+		return writeJSON(stdout, stderr, map[string]any{"output": *outputPath, "dimensionCount": len(pkg.Dimensions), "mappingRuleCount": len(pkg.MappingRules)})
+	case "import-dimensions":
+		fs := flag.NewFlagSet("dimensions import-dimensions", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		filePath := fs.String("file", "", "input json file")
+		validateOnly := fs.Bool("validate-only", false, "validate without persisting")
+		skipExisting := fs.Bool("skip-existing", false, "skip existing dimensions")
+		updateExisting := fs.Bool("update-existing", false, "update existing dimensions")
+		format := fs.String("format", "json", "import format")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *filePath == "" {
+			fmt.Fprintln(stderr, "import-dimensions requires --file")
+			return 2
+		}
+		if *format != "json" {
+			fmt.Fprintln(stderr, "only json format is currently supported")
+			return 2
+		}
+		var dims []dimensions.DimensionExport
+		if err := readJSONFile(*filePath, &dims); err != nil {
+			fmt.Fprintf(stderr, "read dimensions import file failed: %v\n", err)
+			return 1
+		}
+		exchange, cleanup, err := openDimensionsExchange(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions exchange failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		report := exchange.ImportDimensions(context.Background(), dims, dimensions.ImportOptions{
+			ValidateOnly:   *validateOnly,
+			SkipExisting:   *skipExisting,
+			UpdateExisting: *updateExisting,
+		})
+		return writeJSON(stdout, stderr, report)
+	case "import-members":
+		fs := flag.NewFlagSet("dimensions import-members", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dimensionCode := fs.String("dimension", "", "dimension code")
+		filePath := fs.String("file", "", "input json file")
+		validateOnly := fs.Bool("validate-only", false, "validate without persisting")
+		skipExisting := fs.Bool("skip-existing", false, "skip existing members")
+		updateExisting := fs.Bool("update-existing", false, "update existing members")
+		format := fs.String("format", "json", "import format")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *dimensionCode == "" || *filePath == "" {
+			fmt.Fprintln(stderr, "import-members requires --dimension and --file")
+			return 2
+		}
+		if *format != "json" {
+			fmt.Fprintln(stderr, "only json format is currently supported")
+			return 2
+		}
+		var members []dimensions.MemberExport
+		if err := readJSONFile(*filePath, &members); err != nil {
+			fmt.Fprintf(stderr, "read members import file failed: %v\n", err)
+			return 1
+		}
+		exchange, cleanup, err := openDimensionsExchange(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions exchange failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		report := exchange.ImportMembers(context.Background(), *dimensionCode, members, dimensions.ImportOptions{
+			ValidateOnly:   *validateOnly,
+			SkipExisting:   *skipExisting,
+			UpdateExisting: *updateExisting,
+		})
+		return writeJSON(stdout, stderr, report)
+	case "import-rules":
+		fs := flag.NewFlagSet("dimensions import-rules", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		filePath := fs.String("file", "", "input json file")
+		company := fs.String("company", "", "override company")
+		validateOnly := fs.Bool("validate-only", false, "validate without persisting")
+		skipExisting := fs.Bool("skip-existing", false, "skip existing rules")
+		updateExisting := fs.Bool("update-existing", false, "update existing rules")
+		format := fs.String("format", "json", "import format")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *filePath == "" {
+			fmt.Fprintln(stderr, "import-rules requires --file")
+			return 2
+		}
+		if *format != "json" {
+			fmt.Fprintln(stderr, "only json format is currently supported")
+			return 2
+		}
+		var rules []dimensions.MappingRuleExport
+		if err := readJSONFile(*filePath, &rules); err != nil {
+			fmt.Fprintf(stderr, "read rules import file failed: %v\n", err)
+			return 1
+		}
+		exchange, cleanup, err := openDimensionsExchange(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions exchange failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		report := exchange.ImportMappingRules(context.Background(), rules, dimensions.ImportOptions{
+			ValidateOnly:   *validateOnly,
+			SkipExisting:   *skipExisting,
+			UpdateExisting: *updateExisting,
+			Company:        *company,
+		})
+		return writeJSON(stdout, stderr, report)
+	case "preview-import":
+		fs := flag.NewFlagSet("dimensions preview-import", flag.ContinueOnError)
+		fs.SetOutput(stderr)
+		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		previewType := fs.String("type", "", "preview type: dimensions or members")
+		dimensionCode := fs.String("dimension", "", "dimension code for member preview")
+		filePath := fs.String("file", "", "input json file")
+		format := fs.String("format", "json", "import format")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		if *previewType == "" || *filePath == "" {
+			fmt.Fprintln(stderr, "preview-import requires --type and --file")
+			return 2
+		}
+		if *format != "json" {
+			fmt.Fprintln(stderr, "only json format is currently supported")
+			return 2
+		}
+		exchange, cleanup, err := openDimensionsExchange(*dbPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "open dimensions exchange failed: %v\n", err)
+			return 1
+		}
+		defer cleanup()
+		switch *previewType {
+		case "dimensions":
+			var dims []dimensions.DimensionExport
+			if err := readJSONFile(*filePath, &dims); err != nil {
+				fmt.Fprintf(stderr, "read dimensions preview file failed: %v\n", err)
+				return 1
+			}
+			return writeJSON(stdout, stderr, exchange.PreviewDimensionsImport(context.Background(), dims))
+		case "members":
+			if *dimensionCode == "" {
+				fmt.Fprintln(stderr, "preview-import with type=members requires --dimension")
+				return 2
+			}
+			var members []dimensions.MemberExport
+			if err := readJSONFile(*filePath, &members); err != nil {
+				fmt.Fprintf(stderr, "read members preview file failed: %v\n", err)
+				return 1
+			}
+			return writeJSON(stdout, stderr, exchange.PreviewMembersImport(context.Background(), *dimensionCode, members))
+		default:
+			fmt.Fprintf(stderr, "unsupported preview type: %s\n", *previewType)
+			return 2
+		}
+	default:
+		fmt.Fprintf(stderr, "unknown dimensions subcommand: %s\n", args[0])
+		return 2
+	}
+}
+
+func openDimensionsManager(dbPath string) (*dimensions.Manager, func(), error) {
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	repo := dimensions.NewSQLiteRepository(sqlDB)
+	return dimensions.NewManager(repo), func() { _ = sqlDB.Close() }, nil
+}
+
+func openDimensionsExchange(dbPath string) (*dimensions.DataExchange, func(), error) {
+	manager, cleanup, err := openDimensionsManager(dbPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dimensions.NewDataExchange(manager), cleanup, nil
+}
+
+func writeJSON(stdout, stderr io.Writer, v any) int {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "marshal json failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, string(b))
+	return 0
+}
+
+func readJSONFile(path string, target any) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, target)
+}
+
+func writeJSONFile(path string, v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func printUsage(out io.Writer) {
+	fmt.Fprintln(out, "financeqa - Go CLI foundation")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  financeqa init-db [--db <path>]")
+	fmt.Fprintln(out, "  financeqa config show [--config <path>]")
+	fmt.Fprintln(out, "  financeqa keywords intents [--keywords <path>]")
+	fmt.Fprintln(out, "  financeqa query [--db <path>] [--company <name>] <question>")
+	fmt.Fprintln(out, "  financeqa import [--db <path>] <file>")
+	fmt.Fprintln(out, "  financeqa sync [--db <path>] <directory>")
+	fmt.Fprintln(out, "  financeqa dimensions list [--db <path>]")
+	fmt.Fprintln(out, "  financeqa dimensions add-dimension --db <path> --code <code> --name <name> --type <type>")
+	fmt.Fprintln(out, "  financeqa dimensions add-member --db <path> --dimension <code> --code <code> --name <name>")
+	fmt.Fprintln(out, "  financeqa dimensions mapping-stats [--db <path>] [--company <name>]")
+	fmt.Fprintln(out, "  financeqa dimensions export-package --db <path> --output <file> [--format json]")
+	fmt.Fprintln(out, "  financeqa dimensions import-dimensions --db <path> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
+	fmt.Fprintln(out, "  financeqa dimensions import-members --db <path> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
+	fmt.Fprintln(out, "  financeqa dimensions import-rules --db <path> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing]")
+	fmt.Fprintln(out, "  financeqa dimensions preview-import --db <path> --type <dimensions|members> --file <file> [--dimension <code>]")
+}
