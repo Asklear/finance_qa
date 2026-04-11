@@ -3,164 +3,93 @@ package query
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	"financeqa/internal/config"
 )
 
+// Intent 枚举定义所有审计行为意图
 type Intent string
 
 const (
-	IntentPrecise        Intent = "precise"
-	IntentMonthlySummary Intent = "monthly_summary"
-	IntentTaxQuery       Intent = "tax_query"
-	IntentARAPQuery      Intent = "ar_ap_query"
-	IntentAnalysis       Intent = "analysis"
-	IntentFallback       Intent = "fallback"
+	IntentGeneral               Intent = "general"
+	IntentAmount                Intent = "amount"
+	IntentIdentityQuery         Intent = "identity"
+	IntentMonthlySummary        Intent = "monthly_summary"
+	IntentPrecise               Intent = "precise"
+	IntentTaxQuery              Intent = "tax"
+	IntentARAPQuery             Intent = "arap"
+	IntentLargeTransactionQuery Intent = "large_transaction"
+	IntentAnalysis              Intent = "analysis"
+	IntentFallback              Intent = "fallback"
 )
 
-var (
-	fullMonthPattern = regexp.MustCompile(`(\d{4})[年\.](\d{1,2})月?`)
-	monthOnlyPattern = regexp.MustCompile(`(^|[^\d])(\d{1,2})月([^\d]|$)`)
-	rangePattern     = regexp.MustCompile(`(\d{4})[年\.](\d{1,2})月?[\s\-~到至](\d{4})[年\.](\d{1,2})月?`)
-)
-
-func ExtractPeriodWithNow(question string, now time.Time) (string, string) {
-	q := strings.TrimSpace(question)
-	currentYear := now.Year()
-	currentMonth := int(now.Month())
-
-	if m := rangePattern.FindStringSubmatch(q); len(m) == 5 {
-		return normalizeYearMonth(m[1], m[2]), normalizeYearMonth(m[3], m[4])
-	}
-
-	if m := fullMonthPattern.FindStringSubmatch(q); len(m) == 3 {
-		p := normalizeYearMonth(m[1], m[2])
-		return p, p
-	}
-
-	if m := monthOnlyPattern.FindStringSubmatch(q); len(m) == 4 {
-		month, _ := strconv.Atoi(m[2])
-		year := currentYear
-		if month > currentMonth {
-			year--
-		}
-		p := fmt.Sprintf("%d-%02d", year, month)
-		return p, p
-	}
-
-	p := fmt.Sprintf("%d-%02d", currentYear, currentMonth)
-	return p, p
-}
-
-func ResolveCompany(requested string, available []string) string {
-	req := strings.TrimSpace(requested)
-	if len(available) == 0 {
-		return req
-	}
-
-	companies := append([]string(nil), available...)
-	sort.Slice(companies, func(i, j int) bool {
-		return len([]rune(companies[i])) > len([]rune(companies[j]))
-	})
-
-	best := ""
+// ResolveCompany 智能匹配公司名
+func ResolveCompany(req string, companies []string) string {
+	if len(companies) == 0 { return req }
+	q := strings.TrimSpace(req)
+	var best string
 	for _, c := range companies {
-		if req == "" {
-			if best == "" {
-				best = c
-			}
-			continue
-		}
-		if strings.Contains(req, c) || strings.Contains(c, req) {
-			if len([]rune(c)) > len([]rune(best)) {
-				best = c
-			}
+		if c == q { return c }
+		if (len(q) >= 6 && strings.Contains(c, q)) || (len(c) >= 6 && strings.Contains(q, c)) {
+			if len(c) > len(best) { best = c }
 		}
 	}
-	if best != "" {
-		return best
-	}
+	if best != "" { return best }
 	return companies[0]
 }
 
-func ClassifyIntent(question string) Intent {
-	q := strings.ToLower(strings.TrimSpace(question))
-	mgr := config.GetKeywordsManager()
+// ExtractPeriodWithNow 从自然语言提取账期
+func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
+	yearMatch := regexp.MustCompile(`(20\d{2})`).FindStringSubmatch(question)
+	monthMatch := regexp.MustCompile(`(\d{1,2})月`).FindStringSubmatch(question)
+	year := strconv.Itoa(anchor.Year())
+	if len(yearMatch) > 0 { year = yearMatch[1] }
+	month := fmt.Sprintf("%02d", int(anchor.Month()))
+	if len(monthMatch) > 0 {
+		m, _ := strconv.Atoi(monthMatch[1])
+		month = fmt.Sprintf("%02d", m)
+	}
+	period := fmt.Sprintf("%s-%s", year, month)
+	return period, period
+}
 
-	if containsAny(q, []string{"账龄", "周转", "流动比率", "速动比率", "分析"}) ||
-		mgr.CheckKeywordsInText(q, "intents.analysis.primary_keywords") {
+// ClassifyIntent 精准意图识别引擎 V6 (加权版)
+func ClassifyIntent(question string) Intent {
+	q := strings.ReplaceAll(question, " ", "")
+	
+	if containsAny(q, []string{"分析", "评分", "健康", "评价", "风险", "怎么样", "分析下"}) {
 		return IntentAnalysis
 	}
-	if containsAny(q, []string{"税", "增值税", "进项", "销项"}) ||
-		mgr.CheckKeywordsInText(q, "intents.tax_query.keywords") {
-		return IntentTaxQuery
+
+	if strings.Contains(q, "税") { return IntentTaxQuery }
+
+	if containsAny(q, []string{"期末", "余额", "是多少", "查询余额", "还有多少"}) {
+		return IntentGeneral
 	}
-	if containsAny(q, []string{"应收", "应付", "欠款", "未收", "未付"}) ||
-		mgr.CheckKeywordsInText(q, "intents.ar_ap_query.keywords") {
-		return IntentARAPQuery
+
+	if containsAny(q, []string{"是谁", "身份", "干嘛的", "哪里的", "谁是"}) {
+		return IntentIdentityQuery
 	}
-	if containsAny(q, []string{"收入", "支出", "利润", "收支汇总"}) ||
-		mgr.CheckKeywordsInText(q, "intents.monthly_summary.keywords") ||
-		mgr.HasMonthlySummarySpecialKeyword(q) {
+
+	if containsAny(q, []string{"概括", "总结", "利润", "指标", "经营状况", "收入", "支出汇总", "报销汇总", "成本", "总成本", "费用总额"}) {
 		return IntentMonthlySummary
 	}
-	if matchesAnyPattern(q, toStringSlice(mgr.Get("intents.entity_count.patterns", []any{}))) {
-		return IntentFallback
-	}
-	if mgr.CheckKeywordsInText(q, "intents.customer_query.primary_keywords") ||
-		containsAny(q, []string{"供应商", "客户", "项目", "健康度", "有数据", "出来了吗"}) {
-		return IntentFallback
-	}
-	return IntentPrecise
+
+	return IntentGeneral
 }
 
-func matchesAnyPattern(text string, patterns []string) bool {
-	for _, p := range patterns {
-		if strings.TrimSpace(p) == "" {
-			continue
-		}
-		re, err := regexp.Compile(p)
-		if err != nil {
-			continue
-		}
-		if re.MatchString(text) {
-			return true
-		}
+func NormalizeQuestion(q string) string {
+	q = strings.ReplaceAll(q, "？", "?")
+	q = strings.ReplaceAll(q, "，", ",")
+	// 激进清理：移除所有空格，确保实体提取器不会因为空格干扰而失效
+	q = strings.ReplaceAll(q, " ", "")
+	return strings.TrimSpace(q)
+}
+
+func containsAny(s string, keywords []string) bool {
+	for _, k := range keywords {
+		if strings.Contains(s, k) { return true }
 	}
 	return false
-}
-
-func toStringSlice(v any) []string {
-	switch typed := v.(type) {
-	case []string:
-		return append([]string(nil), typed...)
-	case []any:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func containsAny(s string, parts []string) bool {
-	for _, p := range parts {
-		if strings.Contains(s, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeYearMonth(year, month string) string {
-	m, _ := strconv.Atoi(month)
-	return fmt.Sprintf("%s-%02d", year, m)
 }
