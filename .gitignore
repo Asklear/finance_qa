@@ -1,0 +1,28 @@
+# Archive (legacy TypeScript version)
+archive/
+
+# Go
+financeqa
+*.exe
+
+# Database
+*.db
+*.db-*
+
+# OS
+.DS_Store
+
+# IDE
+.tools/
+
+# Data files
+uploads/
+*.xlsx
+*.xls
+*.csv
+*.pdf
+*.docx
+
+# Test artifacts
+test_data/
+test_questions*.txt
