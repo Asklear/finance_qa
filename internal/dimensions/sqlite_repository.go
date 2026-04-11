@@ -376,7 +376,7 @@ func (r *SQLiteRepository) ListMappingRules(ctx context.Context, opts MappingRul
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, company, rule_name, priority, account_code_pattern, account_name_pattern, summary_pattern, counterparty_pattern, dimension_code, member_code, allocation_ratio, valid_from, valid_to, is_active, created_at
 FROM mapping_rules
-ORDER BY priority, id
+ORDER BY priority DESC, id ASC
 `)
 	if err != nil {
 		return nil, 0, err

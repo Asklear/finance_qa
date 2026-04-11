@@ -45,5 +45,7 @@ func Bootstrap(ctx context.Context, dbPath string) error {
 		return fmt.Errorf("apply schema: %w", err)
 	}
 
+
 	return nil
 }
+

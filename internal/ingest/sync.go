@@ -16,7 +16,7 @@ type SyncSummary struct {
 	Skipped   []string        `json:"skipped"`
 }
 
-func (i *Importer) SyncDirectory(ctx context.Context, dbPath, dir string) (SyncSummary, error) {
+func (i *Importer) SyncDirectory(ctx context.Context, dbPath, dir string, incremental bool) (SyncSummary, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return SyncSummary{}, err
@@ -49,7 +49,7 @@ func (i *Importer) SyncDirectory(ctx context.Context, dbPath, dir string) (SyncS
 			summary.Skipped = append(summary.Skipped, file)
 			continue
 		}
-		imported, err := i.ImportFile(ctx, dbPath, file)
+		imported, err := i.ImportFile(ctx, dbPath, file, incremental)
 		if err != nil {
 			return summary, err
 		}

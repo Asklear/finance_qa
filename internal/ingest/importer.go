@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 
 	dbschema "financeqa/internal/db"
+	"financeqa/internal/dimensions"
 	"financeqa/internal/parser"
 )
 
@@ -20,22 +22,24 @@ type ImportSummary struct {
 	RecordCount int    `json:"recordCount"`
 }
 
-type Importer struct{}
+type Importer struct {
+	dim *dimensions.Manager
+}
 
-func NewImporter() *Importer {
-	return &Importer{}
+func NewImporter(dim *dimensions.Manager) *Importer {
+	return &Importer{dim: dim}
 }
 
 func (i *Importer) ParseFile(path string) (parser.ParseResult, error) {
 	return parser.ParseFile(path)
 }
 
-func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string) (ImportSummary, error) {
+func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string, incremental bool) (ImportSummary, error) {
 	result, err := parser.ParseFile(filePath)
 	if err != nil {
 		return ImportSummary{}, err
 	}
-	if err := i.ImportParsed(ctx, dbPath, result); err != nil {
+	if err := i.ImportParsed(ctx, dbPath, result, incremental); err != nil {
 		return ImportSummary{}, err
 	}
 	return ImportSummary{
@@ -48,7 +52,7 @@ func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string) (Imp
 	}, nil
 }
 
-func (i *Importer) ImportParsed(ctx context.Context, dbPath string, result parser.ParseResult) error {
+func (i *Importer) ImportParsed(ctx context.Context, dbPath string, result parser.ParseResult, incremental bool) error {
 	if err := dbschema.Bootstrap(ctx, dbPath); err != nil {
 		return fmt.Errorf("bootstrap sqlite db: %w", err)
 	}
@@ -65,10 +69,24 @@ func (i *Importer) ImportParsed(ctx context.Context, dbPath string, result parse
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := clearExisting(ctx, tx, result); err != nil {
-		return err
+	if !incremental {
+		if err := clearExisting(ctx, tx, result); err != nil {
+			return err
+		}
 	}
 	for _, row := range result.Data {
+		// Auto-map missing account codes across all report types using dimension manager
+		if (row["account_code"] == nil || row["account_code"] == "") && row["account_name"] != nil && row["account_name"] != "" {
+			if i.dim != nil {
+				accName := fmt.Sprintf("%v", row["account_name"])
+				// Clean company-specific prefixes if needed (e.g. trim whitespace)
+				accName = strings.TrimSpace(accName)
+				if m, err := i.dim.ResolveMemberByName(ctx, result.Metadata.Company, "CAS", accName); err == nil {
+					row["account_code"] = m.Code
+				}
+			}
+		}
+
 		if err := insertRecord(ctx, tx, result.Metadata.ReportType, row); err != nil {
 			return err
 		}
@@ -117,21 +135,21 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		return wrapInsertErr(reportType, err)
 	case "income_statement":
 		_, err := tx.ExecContext(ctx, `
-INSERT INTO income_statement
+INSERT OR REPLACE INTO income_statement
   (company, period, item_name, current_amount, cumulative_amount)
 VALUES (?, ?, ?, ?, ?)
 `, row["company"], row["period"], row["item_name"], row["current_amount"], row["cumulative_amount"])
 		return wrapInsertErr(reportType, err)
 	case "balance_sheet":
 		_, err := tx.ExecContext(ctx, `
-INSERT INTO balance_sheet
-  (company, period, account_name, opening_balance, closing_balance)
-VALUES (?, ?, ?, ?, ?)
-`, row["company"], row["period"], row["account_name"], row["opening_balance"], row["closing_balance"])
+INSERT OR REPLACE INTO balance_sheet
+  (company, period, account_code, account_name, opening_balance, closing_balance)
+VALUES (?, ?, ?, ?, ?, ?)
+`, row["company"], row["period"], row["account_code"], row["account_name"], row["opening_balance"], row["closing_balance"])
 		return wrapInsertErr(reportType, err)
 	case "balance_detail":
 		_, err := tx.ExecContext(ctx, `
-INSERT INTO balance_detail
+INSERT OR REPLACE INTO balance_detail
   (company, year, period, account_code, account_name, account_level, opening_debit, opening_credit, current_debit, current_credit, closing_debit, closing_credit)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, row["company"], row["year"], row["period"], row["account_code"], row["account_name"], row["account_level"], row["opening_debit"], row["opening_credit"], row["current_debit"], row["current_credit"], row["closing_debit"], row["closing_credit"])
@@ -142,7 +160,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			voucherDate = row["date"]
 		}
 		_, err := tx.ExecContext(ctx, `
-INSERT INTO journal
+INSERT OR REPLACE INTO journal
   (company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, row["company"], row["period"], voucherDate, row["voucher_no"], row["account_code"], row["account_name"], row["summary"], row["direction"], row["amount"], row["debit_amount"], row["credit_amount"], row["counterparty"])

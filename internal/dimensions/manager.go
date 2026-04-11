@@ -16,6 +16,97 @@ func NewManager(repo Repository) *Manager {
 	return &Manager{repo: repo}
 }
 
+// Mapper handles in-memory rule matching for a specific company.
+type Mapper struct {
+	Rules []MappingRule
+}
+
+func (m *Mapper) MapAccount(code, name, summary, counterparty string) (string, bool) {
+	for _, rule := range m.Rules {
+		if rule.Matches(code, name, summary, counterparty) {
+			return rule.MemberCode, true
+		}
+	}
+	return "", false
+}
+
+func (m *Mapper) GetCode(name string) string {
+	for _, rule := range m.Rules {
+		if rule.AccountNamePattern != nil && matchPattern(name, *rule.AccountNamePattern) {
+			return rule.MemberCode
+		}
+	}
+	return ""
+}
+
+// MapCategory acts as a bridge to translate mapped member codes into account categories.
+func (m *Mapper) MapCategory(code, name, summary, counterparty string, fallback func(string) string) string {
+	if memberCode, ok := m.MapAccount(code, name, summary, counterparty); ok {
+		// members are standard CAS codes like "6001", "6602" etc.
+		return memberCode
+	}
+	return fallback(code)
+}
+
+func (r *MappingRule) Matches(code, name, summary, cp string) bool {
+	if !r.IsActive {
+		return false
+	}
+	if r.AccountCodePattern != nil && *r.AccountCodePattern != "" {
+		if !matchPattern(code, *r.AccountCodePattern) {
+			return false
+		}
+	}
+	if r.AccountNamePattern != nil && *r.AccountNamePattern != "" {
+		if !matchPattern(name, *r.AccountNamePattern) {
+			return false
+		}
+	}
+	if r.SummaryPattern != nil && *r.SummaryPattern != "" {
+		if !matchPattern(summary, *r.SummaryPattern) {
+			return false
+		}
+	}
+	if r.CounterpartyPattern != nil && *r.CounterpartyPattern != "" {
+		if !matchPattern(cp, *r.CounterpartyPattern) {
+			return false
+		}
+	}
+	return true
+}
+
+func matchPattern(text, pattern string) bool {
+	if strings.Contains(pattern, "%") {
+		// Simple SQL-like prefix/suffix matching
+		p := strings.ReplaceAll(pattern, "%", "")
+		if strings.HasPrefix(pattern, "%") && strings.HasSuffix(pattern, "%") {
+			return strings.Contains(text, p)
+		}
+		if strings.HasSuffix(pattern, "%") {
+			return strings.HasPrefix(text, p)
+		}
+		if strings.HasPrefix(pattern, "%") {
+			return strings.HasSuffix(text, p)
+		}
+	}
+	return text == pattern
+}
+
+func (m *Manager) GetMapper(ctx context.Context, company string) (*Mapper, error) {
+	active := true
+	rules, _, err := m.repo.ListMappingRules(ctx, MappingRuleQueryOptions{
+		Company:  company,
+		IsActive: &active,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Sort by priority descending
+	// Note: ListMappingRules might already sort, but we ensure it here if needed.
+	// For now assume high priority comes first or sort manually.
+	return &Mapper{Rules: rules}, nil
+}
+
 func (m *Manager) CreateDimension(ctx context.Context, input CreateDimensionInput) (Dimension, error) {
 	code := strings.TrimSpace(input.Code)
 	name := strings.TrimSpace(input.Name)
@@ -24,7 +115,7 @@ func (m *Manager) CreateDimension(ctx context.Context, input CreateDimensionInpu
 	}
 	if _, err := m.repo.GetDimensionByCode(ctx, code); err == nil {
 		return Dimension{}, ErrAlreadyExists
-	} else if err != nil && err != ErrNotFound {
+	} else if err != ErrNotFound {
 		return Dimension{}, err
 	}
 
@@ -102,9 +193,9 @@ func (m *Manager) ListDimensions(ctx context.Context, opts DimensionQueryOptions
 		}
 	}
 	page := (opts.Offset / pageSize) + 1
-	totalPages := (total + pageSize - 1) / pageSize
-	if total == 0 {
-		totalPages = 0
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
 	}
 	return PaginatedResult[Dimension]{
 		Data:       items,
@@ -126,7 +217,7 @@ func (m *Manager) AddMember(ctx context.Context, input AddMemberInput) (Dimensio
 	}
 	if _, err := m.repo.GetMemberByCode(ctx, input.DimensionID, code); err == nil {
 		return DimensionMember{}, ErrAlreadyExists
-	} else if err != nil && err != ErrNotFound {
+	} else if err != ErrNotFound {
 		return DimensionMember{}, err
 	}
 
@@ -272,9 +363,9 @@ func (m *Manager) ListMembers(ctx context.Context, opts MemberQueryOptions) (Pag
 		}
 	}
 	page := (opts.Offset / pageSize) + 1
-	totalPages := (total + pageSize - 1) / pageSize
-	if total == 0 {
-		totalPages = 0
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
 	}
 	return PaginatedResult[DimensionMember]{
 		Data:       items,
@@ -359,7 +450,7 @@ func (m *Manager) CreateMappingRule(ctx context.Context, input CreateMappingRule
 
 	if _, err := m.repo.GetMappingRuleByName(ctx, company, ruleName); err == nil {
 		return MappingRule{}, ErrAlreadyExists
-	} else if err != nil && err != ErrNotFound {
+	} else if err != ErrNotFound {
 		return MappingRule{}, err
 	}
 
@@ -469,9 +560,9 @@ func (m *Manager) ListMappingRules(ctx context.Context, opts MappingRuleQueryOpt
 		}
 	}
 	page := (opts.Offset / pageSize) + 1
-	totalPages := (total + pageSize - 1) / pageSize
-	if total == 0 {
-		totalPages = 0
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
 	}
 	return PaginatedResult[MappingRule]{
 		Data:       items,
@@ -560,4 +651,27 @@ func (m *Manager) BuildExportPackage(ctx context.Context) (ExportDataPackage, er
 		Members:      members,
 		MappingRules: ruleExports,
 	}, nil
+}
+func (m *Manager) ResolveMemberByName(ctx context.Context, company, dimensionCode, name string) (DimensionMember, error) {
+	dim, err := m.repo.GetDimensionByCode(ctx, dimensionCode)
+	if err != nil {
+		return DimensionMember{}, err
+	}
+	dimID := dim.ID
+	active := true
+	members, _, err := m.repo.ListMembers(ctx, MemberQueryOptions{
+		DimensionID: &dimID,
+		Keyword:     name,
+		IsActive:    &active,
+		Limit:       10,
+	})
+	if err != nil {
+		return DimensionMember{}, err
+	}
+	for _, m := range members {
+		if m.Name == name {
+			return m, nil
+		}
+	}
+	return DimensionMember{}, ErrNotFound
 }

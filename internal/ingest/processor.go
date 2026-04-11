@@ -1,11 +1,19 @@
 package ingest
 
+import (
+	"financeqa/internal/dimensions"
+)
+
 type Processor struct {
 	importer *Importer
+	dim      *dimensions.Manager
 }
 
-func NewProcessor() *Processor {
-	return &Processor{importer: NewImporter()}
+func NewProcessor(dim *dimensions.Manager) *Processor {
+	return &Processor{
+		importer: NewImporter(dim),
+		dim:      dim,
+	}
 }
 
 func (p *Processor) ProcessFile(path string) (ImportSummary, error) {
