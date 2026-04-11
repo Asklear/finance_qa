@@ -351,20 +351,9 @@ func (e *Engine) queryFallback(question, from, to, priorErr string) Result {
 	if r := e.ruleFallback(question, from, to); r.Success {
 		return r
 	}
-	if r := e.queryLLMFallback(question, from, to); r.Success {
-		return r
-	}
-	if strings.TrimSpace(priorErr) == "" {
-		priorErr = "no rule-based or llm fallback matched"
-	}
-	return Result{
-		Success: false,
-		Message: priorErr,
-		Data: map[string]any{
-			"fallback_attempted": true,
-		},
-		SQL: "",
-	}
+	// 不再调用外部 LLM API，而是返回结构化提示，
+	// 让宿主 LLM（OpenClaw / Claude Code）自行理解后重新构造查询。
+	return e.buildFallbackHint(question, from, to, priorErr)
 }
 
 func (e *Engine) ruleFallback(question, from, to string) Result {
