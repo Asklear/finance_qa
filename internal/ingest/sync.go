@@ -1,0 +1,59 @@
+package ingest
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"financeqa/internal/parser"
+)
+
+type SyncSummary struct {
+	Directory string          `json:"directory"`
+	Processed []ImportSummary `json:"processed"`
+	Skipped   []string        `json:"skipped"`
+}
+
+func (i *Importer) SyncDirectory(ctx context.Context, dbPath, dir string) (SyncSummary, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return SyncSummary{}, err
+	}
+
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "~") || strings.HasPrefix(name, ".") {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(name))
+		if ext != ".xls" && ext != ".xlsx" && ext != ".csv" && ext != ".txt" && ext != ".tsv" {
+			continue
+		}
+		files = append(files, filepath.Join(dir, name))
+	}
+	sort.Strings(files)
+
+	summary := SyncSummary{
+		Directory: dir,
+		Processed: []ImportSummary{},
+		Skipped:   []string{},
+	}
+	for _, file := range files {
+		if _, err := parser.ParseFile(file); err != nil {
+			summary.Skipped = append(summary.Skipped, file)
+			continue
+		}
+		imported, err := i.ImportFile(ctx, dbPath, file)
+		if err != nil {
+			return summary, err
+		}
+		summary.Processed = append(summary.Processed, imported)
+	}
+	return summary, nil
+}
