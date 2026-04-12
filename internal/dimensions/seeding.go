@@ -15,6 +15,8 @@ type standardAccount struct {
 func getStandardCASChart() []standardAccount {
 	return []standardAccount{
 		{"1002", "银行存款", 1, ""},
+		{"1601", "固定资产", 1, ""},
+		{"160101", "固定资产-房屋及建筑物", 2, "1601"},
 		{"1122", "应收账款", 1, ""},
 		{"2202", "应付账款", 1, ""},
 		{"2211", "应付职工薪酬", 1, ""},

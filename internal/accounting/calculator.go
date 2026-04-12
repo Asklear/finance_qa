@@ -112,19 +112,19 @@ type BalanceDetailRow struct {
 
 // IncomeStatementResult holds the computed income statement (利润表).
 type IncomeStatementResult struct {
-	Period           string  `json:"period"`
-	Revenue          float64 `json:"revenue"`           // 营业收入
-	Cost             float64 `json:"cost"`              // 营业成本
-	TaxSurcharge     float64 `json:"tax_surcharge"`     // 税金及附加
-	SellingExpense   float64 `json:"selling_expense"`   // 销售费用
-	AdminExpense     float64 `json:"admin_expense"`     // 管理费用
-	FinanceExpense   float64 `json:"finance_expense"`   // 财务费用
-	NonOpIncome      float64 `json:"non_op_income"`     // 营业外收入
-	NonOpExpense     float64 `json:"non_op_expense"`    // 营业外支出
-	OperatingProfit  float64 `json:"operating_profit"`  // 营业利润
-	TotalProfit      float64 `json:"total_profit"`      // 利润总额
-	IncomeTax        float64 `json:"income_tax"`        // 所得税费用
-	NetProfit        float64 `json:"net_profit"`        // 净利润
+	Period          string  `json:"period"`
+	Revenue         float64 `json:"revenue"`          // 营业收入
+	Cost            float64 `json:"cost"`             // 营业成本
+	TaxSurcharge    float64 `json:"tax_surcharge"`    // 税金及附加
+	SellingExpense  float64 `json:"selling_expense"`  // 销售费用
+	AdminExpense    float64 `json:"admin_expense"`    // 管理费用
+	FinanceExpense  float64 `json:"finance_expense"`  // 财务费用
+	NonOpIncome     float64 `json:"non_op_income"`    // 营业外收入
+	NonOpExpense    float64 `json:"non_op_expense"`   // 营业外支出
+	OperatingProfit float64 `json:"operating_profit"` // 营业利润
+	TotalProfit     float64 `json:"total_profit"`     // 利润总额
+	IncomeTax       float64 `json:"income_tax"`       // 所得税费用
+	NetProfit       float64 `json:"net_profit"`       // 净利润
 }
 
 // MonthlyMetrics holds revenue/profit for a single month.
@@ -147,15 +147,15 @@ type CashPerspective struct {
 	Description string  `json:"说明"`
 	Income      float64 `json:"现金流入"` // 银行收入
 	Expense     float64 `json:"现金流出"` // 银行支出
-	Net         float64 `json:"净现金流"`  // 净现金流
+	Net         float64 `json:"净现金流"` // 净现金流
 }
 
 // AccrualPerspective is the "帐" view — accrual-basis accounting.
 type AccrualPerspective struct {
 	Description string  `json:"说明"`
-	Revenue     float64 `json:"营业收入"`   // 营业收入
+	Revenue     float64 `json:"营业收入"`    // 营业收入
 	TotalCost   float64 `json:"营业成本及费用"` // 营业成本+费用
-	Profit      float64 `json:"账面利润"`   // 净利润
+	Profit      float64 `json:"账面利润"`    // 净利润
 }
 
 // ComputeMonthlyFromJournal calculates revenue, cost and profit for a specific
@@ -168,12 +168,15 @@ func (c *Calculator) ComputeMonthlyFromJournal(company string, year, month int) 
 	sqlTxt := `
 SELECT account_code, direction, COALESCE(amount, 0) as amount, summary
 FROM journal
-WHERE company = ? AND DATE(voucher_date) >= DATE(?) AND DATE(voucher_date) <= DATE(?) AND summary NOT LIKE '%期间损益结转%'
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND DATE(voucher_date) >= DATE(?)
+  AND DATE(voucher_date) <= DATE(?)
+  AND summary NOT LIKE '%期间损益结转%'
 `
-	c.trace(fmt.Sprintf("ComputeMonthlyFromJournal: %s [args: %s, %s, %s]", sqlTxt, company, startDate, endDate), 
+	c.trace(fmt.Sprintf("ComputeMonthlyFromJournal: %s [args: %s, %s, %s]", sqlTxt, company, startDate, endDate),
 		fmt.Sprintf("汇总 %s %d年%d月 序时账数据（排除利润结转）", company, year, month))
 
-	rows, err := c.db.Query(sqlTxt, company, startDate, endDate)
+	rows, err := c.db.Query(sqlTxt, company, company, startDate, endDate)
 	if err != nil {
 		return nil, fmt.Errorf("query journal for month %d: %w", month, err)
 	}
@@ -227,7 +230,6 @@ WHERE company = ? AND DATE(voucher_date) >= DATE(?) AND DATE(voucher_date) <= DA
 	}, nil
 }
 
-
 // ComputeIncomeStatement computes the income statement from journal entries
 // up to and including the specified month (cumulative from January).
 func (c *Calculator) ComputeIncomeStatement(company string, year, month int) (*IncomeStatementResult, error) {
@@ -250,6 +252,7 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 	result := &IncomeStatementResult{
 		Period: fmt.Sprintf("%d-%02d", year, month),
 	}
+	c.trace("", fmt.Sprintf("计算年度累计利润表 (YTD): 起点 %s, 终点 %s", startDate, endDate))
 
 	for rows.Next() {
 		var code, direction string
@@ -274,32 +277,42 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 			signedAmount = -amount
 		}
 
-		parentCode := code
-		if len(code) > 4 {
-			parentCode = code[:4]
+		parentCode := finalCode
+		if len(finalCode) > 4 {
+			parentCode = finalCode[:4]
 		}
 
 		switch parentCode {
 		case "6001":
 			result.Revenue += signedAmount
+			c.trace("", fmt.Sprintf("  + 营业收入 %s: %.2f (摘要匹配)", code, signedAmount))
 		case "6051":
 			result.Revenue += signedAmount // 其他业务收入
+			c.trace("", fmt.Sprintf("  + 其他收入 %s: %.2f", code, signedAmount))
 		case "6401":
 			result.Cost += signedAmount
+			c.trace("", fmt.Sprintf("  - 营业成本 %s: %.2f", code, signedAmount))
 		case "6403":
 			result.TaxSurcharge += signedAmount
+			c.trace("", fmt.Sprintf("  - 税金及附加 %s: %.2f", code, signedAmount))
 		case "6601":
 			result.SellingExpense += signedAmount
+			c.trace("", fmt.Sprintf("  - 销售费用 %s: %.2f", code, signedAmount))
 		case "6602":
 			result.AdminExpense += signedAmount
+			c.trace("", fmt.Sprintf("  - 管理费用 %s: %.2f", code, signedAmount))
 		case "6603":
 			result.FinanceExpense += signedAmount
+			c.trace("", fmt.Sprintf("  - 财务费用 %s: %.2f", code, signedAmount))
 		case "6301":
 			result.NonOpIncome += signedAmount
+			c.trace("", fmt.Sprintf("  + 营业外收入 %s: %.2f", code, signedAmount))
 		case "6711":
 			result.NonOpExpense += signedAmount
+			c.trace("", fmt.Sprintf("  - 营业外支出 %s: %.2f", code, signedAmount))
 		case "6801":
 			result.IncomeTax += signedAmount
+			c.trace("", fmt.Sprintf("  - 所得税费用 %s: %.2f", code, signedAmount))
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -392,9 +405,11 @@ LIMIT 1
 		// Get net profit
 		row2 := c.db.QueryRow(`
 SELECT current_amount FROM income_statement
-WHERE company = ? AND period = ? AND item_name LIKE '%净利润%'
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND period = ?
+  AND item_name LIKE '%净利润%'
 LIMIT 1
-`, company, period)
+`, company, company, period)
 		var netProfit sql.NullFloat64
 		if err := row2.Scan(&netProfit); err == nil && netProfit.Valid {
 			profit = netProfit.Float64
