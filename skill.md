@@ -1,90 +1,284 @@
 ---
 name: "finance_qa_engine"
-description: "公司基于底层序时帐的财务数据查询与分析插件"
-version: "1.0.0"
+description: "面向老板问答的财务查询插件（双口径 + 可追溯过程 + 宿主LLM兜底）"
+version: "1.2.0"
 ---
 
-# 插件目标 (Objective)
-本插件专为高级管理层（如老板、CEO、CFO）设计，致力于打破传统复杂财务报表的黑盒盲区。它通过绕过被人工预提和折旧处理过的静态报表，直接对接最还原事实的**“会计录入序时账（Journal）”**和**“银行对账单”**，以“双口径”（真实业务现金流视角 vs 完税账簿视角）准确向您汇报公司的资金进出和财务健康度。
+# finance_qa OpenClaw 接入手册（全功能暴露）
 
-# 运行模式控制 (Execution Mode)
-**当前运行模式：【测试模式】**  *(注：正式发布前请手动修改此项为【正式版本】)*
+本文档目标：把本代码库所有已实现功能与接口完整暴露，便于 OpenClaw 直接调用。
 
-### 不同模式下的输出准则：
+## 1. 插件定位
 
-1.  **测试模式 (Test Mode)**: 
-    *   **必须展示中间思考过程**：在给出最终答案前，请先用一个明确的区块（如 `### 🛠️ 中间思考与执行过程`）详细列出：
-        *   **语义转换逻辑**：你是如何将用户的口语转化为插件指令或 SQL 查询逻辑的。
-        *   **使用的 SQL / 统计规则**：展示底层的查询意向或执行逻辑。
-        *   **合并计算过程**：如果有多个数据项的加减乘除（例如计算毛利、税率等），必须展示具体的算式和原始数据源。
-    *   **目的**：方便开发者调试和验证逻辑正确性。
+`finance_qa` 是老板财务助理引擎，能力分为四层：
 
-2.  **正式版本 (Production Mode)**:
-    *   **隐去所有中间过程**：严禁在回答中展露任何关于 “SQL”、“插件指令”、“语义转换”或“中间计算”的痕迹。
-    *   **端到端回答**：直接用老板能听懂的语言给出结果。回复应保持简洁、专业且富有洞察力。
-    *   **目的**：为老板提供极简且高效的决策支持。
+1. 数据层：初始化库、导入报表、目录同步。
+2. 规则层：自然语言意图识别、实体识别、账期识别。
+3. 计算层：双视角核算（银行卡实际进出账 + 财务报表确认）、税额、应收应付、项目收支等。
+4. 兜底层：输出 `llm_payload` 全量财报上下文给宿主 LLM 做最终判别。
 
+## 2. 运行模式与过程暴露
 
-# 核心功能 (Features)
-1. **多维度资金归集**：能够计算任意指定月份的营收、利润、各类费用（如人力成本、研发花销）以及增值税细项。
-2. **往来实体透视**：支持精准查询各类实体（如“合作伙伴A”、“阿里云”等供应商或客户）在特定周期的收付款互动，以及按月趋势变化。
-3. **“老板懂的语言”转化**：自动将冷冰冰的“贷方发生额”、“期间损益”等术语转换为直观的净现金流或可用钱款。并且遇到不带时间的宽泛问题能够自动平铺完整的**按月历史走势数据 (`history`)**。
-4. **安全底线回落**：当缺乏业务实体数据或者没有指定细化月份时，插件有自我降级或寻找最大范围最新安全数据的保护设计。
+### 2.1 模式开关（代码实际行为）
 
-# 怎么调用此包 (How to Call)
+1. 正式模式：`APP_ENV=production`。
+2. 测试模式：默认即测试模式（未设置 `APP_ENV=production`）。
+3. 本地兜底：代码中还会读取 `skill.md` 是否包含 `当前运行模式：【正式版本】` 文案作为备用判断。
 
-本插件经过 Go 语言编译打包成了一个单体无依赖的二进制可执行程序。在系统内的主要交互形式走标准的跨进程 CLI 执行。
+### 2.2 过程字段暴露约定（必须对外返回）
 
-**调用语法：**
-```bash
-# 格式
-./financeqa query --company "公司名称全称(可选)" "自然语言财务提问"
+所有查询响应都必须暴露以下字段，不可只返回结果值：
 
-# 示例
-./financeqa query "这个月的整体支出是多少？"
-./financeqa query "今年人力成本总计多少"
-./financeqa query "合作伙伴A这个客户今年发生了多少销售额"
-./financeqa query "公司财务健康度怎么样？"
+1. `success`
+2. `message`
+3. `answer_method`
+4. `data`
+5. `executed_sql`
+6. `calculation_logs`
+7. `data.trace.executed_sql`
+8. `data.trace.calculation_logs`
+
+说明：`withTraceData()` 会在缺失时自动补默认 trace，确保宿主可稳定读取中间过程。
+
+## 3. 对外接口总览（全量）
+
+## 3.1 CLI 命令接口（`cmd/financeqa/main.go`）
+
+1. `help | -h | --help`
+2. `init-db`
+3. `config show`
+4. `keywords intents`
+5. `query`
+6. `import`
+7. `sync`
+8. `host-data`
+9. `dimensions`（含完整子命令，见 3.2）
+
+补充：当首个参数不是上述命令时，CLI 会按 `query` 处理。
+
+## 3.2 dimensions 子命令全量接口
+
+1. `dimensions list [--db <path>]`
+2. `dimensions add-dimension --db <path> --code <code> --name <name> [--type <type>] [--hierarchical]`
+3. `dimensions add-member --db <path> --dimension <code> --code <code> --name <name>`
+4. `dimensions mapping-stats [--db <path>] [--company <name>]`
+5. `dimensions seed-standard [--db <path>] --company <name>`
+6. `dimensions export-package --db <path> --output <file> [--format json]`
+7. `dimensions import-dimensions --db <path> --file <file> [--validate-only] [--skip-existing] [--update-existing] [--format json]`
+8. `dimensions import-members --db <path> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing] [--format json]`
+9. `dimensions import-rules --db <path> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing] [--format json]`
+10. `dimensions preview-import --db <path> --type <dimensions|members> --file <file> [--dimension <code>] [--format json]`
+
+## 3.3 Go SDK 接口（可供宿主服务封装）
+
+1. `query.NewEngine(dbPath, company)`
+2. `(*Engine).Query(question)`
+3. `(*Engine).HostLLMPayload(from, to, question)`
+4. `(*Engine).Close()`
+
+## 4. 查询响应契约（OpenClaw 必须按此解析）
+
+## 4.1 顶层结构
+
+```json
+{
+  "success": true,
+  "message": "...",
+  "answer_method": "sql|llm_payload",
+  "data": {},
+  "executed_sql": ["..."],
+  "calculation_logs": ["..."]
+}
 ```
 
-> **系统返回值**：执行后系统会在 `STDOUT` 直接吐出一串标准的、极高信息密度的 **JSON 序列化字符串**供您阅读。如果包含了 `history` 数组，代表系统贴心地顺带查出了它此前几个月的连续履历。
+## 4.2 `answer_method` 含义
 
-# 注意事项 (Precautions for LLM)
+1. `sql`: 规则与SQL计算得到结果。
+2. `llm_payload`: 插件无法直接准确回答，转交宿主 LLM 基于全量数据推理。
 
-1. **绝对忠诚于 JSON 数字（不编造幻觉）**：一旦你在调用插件后拿到了 JSON 中的数据（尤其是含有小数点后两位的财务资产时），**你必须将其 100% 毫无偏差地复述给老板**。不可因你的内部权重而四舍五入甚至编造缺失月份。
-2. **双口径解释义务**：当报告“收入”或“利润”时，如果系统同时抛出了 `[业务现金流口径(看钱)]`（实际打进银行卡里的现钱）与 `[财务做账口径(看利润)]`（因为冲抵税务导致报表账面为负数利润），你必须站在老板的角度，用大白话向其解释这种由于“年底预提/计提冲账避税”导致的割裂现象。
-3. **数据为空或查询不到时 (Fallback Attempted)**：如果发现返回 `{"Success": false}`，或者 `count: 0`。你需要向用户委婉解释，“当前月份尚未关账”或“本地数据库还未同步该实体的凭证条目”。
-4. **查询未匹配的自动重试策略**：当返回结果中包含 `"fallback_attempted": true` 时，说明用户的原始提问超出了规则引擎的识别范围。此时系统会在 `data` 中附带以下辅助信息供你参考：
-   * `hint`：改写建议，告诉你如何调整查询措辞
-   * `supported_intents`：当前支持的所有查询类型及示例
-   * `available_accounts`：当前期间可查询的科目名列表（如“应付职工薪酬”、“应收账款”等）
-   * `counterparty_sample`：近期有交易记录的对手方名称样本
-   
-   **你应该利用这些信息，将老板的口语化提问重新翻译为更精确的查询语句，然后再次调用 `./financeqa query "改写后的问题"`**。如果重试仍然失败，则向老板解释当前系统暂不支持该类查询。
-6. **审计核一准则：身份多方校验 (Crucial Identity Check)**：
-   *   **原则**：一旦涉及到具体的公司实体、合作伙伴或报销人，严禁仅凭直觉或提问语义（如“付/收”）来判定其身份。
-   *   **核验逻辑**：系统必须执行“三位一体”校验：
-       1. **现金流方向 (Cash Flow)**：该实体在银行流水中是钱款流出（付给它）还是流进（它付来）？
-       2. **会计科目特征 (Ledger Context)**：它在序时账中是否关联了 `1122 (应收账款 - 客户)` 或 `2202 (应付账款 - 供应商)`？
-       3. **税务勾稽特征 (Tax Logic)**：它是否伴随有“销项税（收入特征）”或“进项税（成本特征）”？
-   *   **目标**：确保最终结论的“借贷定性”万无一失。
-7. **利用调试信息协助思考**：在返回的 JSON 中，除了核心业务数据外，还包含以下调试字段，请在**测试模式**下优先展示它们：
-    * `executed_sql`：底层真实运行的 SQL 查询语句列表。
-    * `calculation_logs`：记录了中间计算步进（如加总了哪些科目、扣除了哪些税项）的明细日志。
+## 4.3 失败兜底结构（`success=false` 常见字段）
 
-# 理解与转换老板提问的诀窍 (Prompt Translation Strategy)
+1. `data.fallback_attempted`
+2. `data.hint`
+3. `data.available_accounts`
+4. `data.counterparty_sample`
+5. `data.llm_payload`
 
-老板们的口语习惯往往是不规律且极其口语化的。你的任务是在调动本查询包前，先精准提纯语意，让请求尽可能击中底层实体。
+## 5. 意图识别与处理器映射（代码实装）
 
-* **口语化 ➔ 实体化**：
-  * 老板问：*“我们搞研发的人一个月得烧多少钱？”* 
-    ➔ 转换调用参数：`"近几个月人力成本与研发项目支出多少"` 
-  * 老板问：*“上个月那个叫什么‘未云’的甲方给我们打钱了吗？”* 
-    ➔ 转换调用参数：`"合作伙伴A上个月的回款金额"`
-* **宽泛无期 ➔ 带时间戳**：
-  * 遇到类似 *“公司花钱最多的是啥”* 时，不要盲猜测，你应该聪明地直接使用没有指定月份参数的查询，让我们的底层去拉取整体序时走势，并从返回结果中的 `history` 里提炼核心数值给老板总结。
-  * 当问 *“今年”* 时，不用担心，引擎里的 NLP 会自动把它泛化成对应的全年（例如 `2026年`），你直接喂给它 `今年` 这个词即可。
+`ClassifyIntent(question)` 输出意图后分流：
+
+1. `host_payload` -> `queryHostLLMPayload`
+2. `identity` -> `detectEntityRole`
+3. `arap` -> `queryARAP`
+4. `large_transaction` -> `queryLargeBankTransactions`
+5. `tax` -> `queryTax`
+6. `monthly_summary` -> `queryMonthlySummary`
+7. `analysis` -> `queryAnalysis`
+8. `fallback` -> `queryFallback`
+9. 其他 -> `queryPrecise`
+
+此外：
+1. 若命中核心指标（收入/成本/利润/销售额）且不属于排除场景，会强制走 `queryDualPerspectiveForCoreMetric`。
+2. 若精确查询失败且存在实体，会自动降级到 fallback 路径。
+
+## 6. 已支持问题能力清单（老板问法）
+
+以下问题均有代码路径支撑，且会返回中间过程：
+
+1. 月度收入/成本/利润（双视角：实际进出账 + 报表确认）。
+2. 某客户/供应商/主体在某期间金额（穿透审计）。
+3. 这个月整体支出。
+4. 人力成本。
+5. 供应商数量 + 供应商名单与净流出。
+6. 某实体某月数据是否已出。
+7. 某项目某月收入。
+8. 某项目某月成本。
+9. 某月销项税额。
+10. 某月进项税额。
+11. 某月总成本（走月度总结或双视角成本）。
+12. 某月应收账款（余额表口径）。
+13. 某月应付账款（余额表口径）。
+14. 某项目应收/应付（项目净流入口径）。
+15. 某主体身份识别（客户/供应商/员工/未知）。
+16. 某期间最大流入对手方/大额流水查询。
+17. 某科目期末余额精确查询（如“货币资金余额是多少”）。
+18. 账龄与健康度分析（应收/应付账龄桶与健康评分）。
+
+## 7. 双视角强制策略（核心指标）
+
+当问题涉及 `收入/成本/利润/销售额`，默认返回两套口径：
+
+1. 老板可理解表达：`卡上实际进出账`（对应内部 `money_view` / `money_value`）。
+2. 老板可理解表达：`财务报表确认`（对应内部 `account_view` / `account_value`）。
+
+并同步提供兼容字段：
+
+1. `现金流入`
+2. `现金流出`
+3. `净现金流`
+4. `财务做账口径(看利润)`
+
+## 8. 宿主 LLM 兜底接口（不可直接调宿主模型时）
+
+代码内不直接调用宿主 LLM，改为提供全量数据接口：
+
+1. `query` 自动 fallback 时返回 `data.llm_payload`。
+2. 可主动调用 `host-data` 直接获取 `llm_payload`。
+
+`llm_payload` 内容：
+
+1. `question`
+2. `company`
+3. `period`
+4. `financial_tables.balance_sheet`
+5. `financial_tables.income_statement`
+6. `financial_tables.balance_detail`
+7. `financial_tables.journal`
+8. `financial_tables.bank_statement`
+9. `trace.intent`
+10. `trace.strategy`
+
+## 9. OpenClaw 推荐工具封装（对接层）
+
+建议在 OpenClaw 暴露以下工具名（桥接到 CLI）：
+
+1. `finance-query`
+2. `finance-host-data`
+3. `finance-import`
+4. `finance-sync`
+5. `finance-dimensions`
+
+最小调用策略：
+
+1. 先调 `finance-query`。
+2. 若 `success=true`，直接回复并附中间过程字段。
+3. 若 `success=false` 或 `answer_method=llm_payload`，读取 `data.llm_payload` 交宿主推理。
+
+## 9.1 关键实现差异（必须注意）
+
+`financeqa query` 的 CLI 行为是：
+
+1. 成功：stdout 输出完整 JSON，exit code=0。
+2. 失败：仅 stderr 输出 `message`，exit code=1（不会输出 JSON 结构）。
+
+这意味着如果桥接层只依赖 CLI stdout，会丢失 `llm_payload/trace`。
+
+推荐做法：
+
+1. 优先在桥接层直接用 Go SDK（`Engine.Query`）拿结构化 `Result`。
+2. 若必须走 CLI，建议桥接层对失败场景二次调用 `host-data`，至少保证有全量 `llm_payload`。
+3. 桥接层对外接口要“统一输出JSON”，不要把 CLI 的非0退出直接透传给老板。
+
+## 10. OpenClaw 返回规范（必须透出中间过程）
+
+给老板回复时建议“双层输出”：
+
+1. 业务层：结论 + 双视角解释（用老板语言，不说术语）。
+2. 技术层：`executed_sql` + `calculation_logs` + `trace`（可折叠，但必须保留在接口结果中）。
+
+推荐响应示例：
+
+```json
+{
+  "answer": "2月公司卡上实际到账约180万，实际付出约120万，手里净增加约60万；财务报表确认收入约165万、确认成本约130万、账面利润约35万。两边有差异，主要是部分成本在下月才入账。",
+  "method": "sql",
+  "trace": {
+    "executed_sql": ["..."],
+    "calculation_logs": ["..."]
+  },
+  "raw": {
+    "success": true,
+    "answer_method": "sql",
+    "data": {"...": "..."}
+  }
+}
+```
+
+## 10.1 老板回复风格（强制）
+
+禁止只返回一个数字，必须按以下结构输出：
+
+1. 一句话结论：先回答老板最关心的结果（金额 + 时间）。
+2. 业务解释：用“卡上实际进出账”和“财务报表确认”解释差异。
+3. 管理动作：给 1-2 条可执行建议（催收、控费、回款跟进、税务检查等）。
+4. 过程可追溯：接口里保留 `executed_sql` / `calculation_logs`，但对老板默认折叠展示。
+
+推荐话术模板：
+
+1. `结论：{时间}公司实际到手{A}，实际花出{B}，净增加{C}。`
+2. `报表上确认收入{D}、成本{E}、利润{F}，和实际到手有差异，主要因为{原因}。`
+3. `建议：本周优先盯{客户/项目}回款，同时控制{费用项}，避免下月利润波动。`
+
+## 11. 常用调用示例
+
+```bash
+# 查询
+./financeqa query --db finance.db --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
+
+# 主动获取宿主LLM数据包
+./financeqa host-data --db finance.db --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
+
+# 单文件导入
+./financeqa import --db finance.db /path/to/report.xls
+
+# 目录同步
+./financeqa sync --db finance.db /path/to/reports
+
+# 查看维度
+./financeqa dimensions list --db finance.db
+```
+
+## 12. 集成注意事项
+
+1. 不要把“收入”直接等同“银行到账”。
+2. 不要把“成本”直接等同“银行支出”。
+3. 涉及核心指标，强制双视角返回。
+4. 缺数据时必须返回 `llm_payload` 或明确缺口，不可编造。
+5. 供应商相关回答要返回具体名单（`data.suppliers`），不能只给总数。
+6. 问“今年/本月/上个月”时，账期按数据库最新凭证日期自动锚定，不按自然月盲算。
+7. 公司名称支持简称/别名智能匹配，桥接层不要自行裁剪公司名再传入。
 
 ---
 
-*OpenClaw 专用提示: 请按照本文档的准则作为 System Instruction 向你的最终对话沙盒注入人格上下文。*
+若代码与文档冲突，以 `cmd/financeqa/main.go` 与 `internal/query/engine.go` 实际实现为准。
