@@ -1,9 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -46,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runImport(args[1:], stdout, stderr)
 	case "sync":
 		return runSync(args[1:], stdout, stderr)
+	case "host-data":
+		return runHostData(args[1:], stdout, stderr)
 	case "dimensions":
 		return runDimensions(args[1:], stdout, stderr)
 	default:
@@ -180,15 +182,42 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// Output control: Hide internal traces in production mode
-	if isProductionMode() {
-		result.ExecutedSQL = nil
-		result.CalculationLogs = nil
-	}
-
 	b, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "marshal query result failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, string(b))
+	return 0
+}
+
+func runHostData(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("host-data", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	company := fs.String("company", "模拟财务", "company name to query")
+	from := fs.String("from", "", "period start in YYYY-MM")
+	to := fs.String("to", "", "period end in YYYY-MM")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	question := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if question == "" {
+		question = "输出全量财报原始数据给宿主LLM"
+	}
+
+	engine, err := query.NewEngine(*dbPath, *company)
+	if err != nil {
+		fmt.Fprintf(stderr, "create query engine failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = engine.Close() }()
+
+	result := engine.HostLLMPayload(*from, *to, question)
+	b, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "marshal host-data result failed: %v\n", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, string(b))
@@ -369,9 +398,9 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return writeJSON(stdout, stderr, map[string]any{
-			"company":    *company,
-			"ruleCount":  rules.Total,
-			"rules":      rules.Data,
+			"company":   *company,
+			"ruleCount": rules.Total,
+			"rules":     rules.Data,
 		})
 	case "seed-standard":
 		fs := flag.NewFlagSet("dimensions seed-standard", flag.ContinueOnError)

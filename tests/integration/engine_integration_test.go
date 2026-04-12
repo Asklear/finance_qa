@@ -33,6 +33,12 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if !income.Success {
 		t.Fatalf("income query failed: %s", income.Message)
 	}
+	if m, ok := income.Data["metric"].(string); !ok || m != "收入" {
+		t.Fatalf("income metric should be 收入, got %v", income.Data["metric"])
+	}
+	if _, ok := income.Data["dual_perspective"].(map[string]any); !ok {
+		t.Fatalf("income should include dual_perspective, got %T", income.Data["dual_perspective"])
+	}
 	if v, ok := income.Data["现金流入"]; !ok || v.(float64) != 1500 {
 		t.Errorf("expected 现金流入=1500, got %v", v)
 	}
@@ -119,6 +125,17 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	}
 	if v := numberFromMap(t, customerSales.Data, "total"); v != 1000 {
 		t.Fatalf("customer sales = %.2f, want 1000", v)
+	}
+
+	hostPayload := eng.Query("给宿主LLM输出2026年2月全量财报原始数据")
+	if !hostPayload.Success {
+		t.Fatalf("host payload query failed: %s", hostPayload.Message)
+	}
+	if method, ok := hostPayload.Data["answer_method"].(string); !ok || method != "llm_payload" {
+		t.Fatalf("host payload answer_method should be llm_payload, got %v", hostPayload.Data["answer_method"])
+	}
+	if _, ok := hostPayload.Data["llm_payload"].(map[string]any); !ok {
+		t.Fatalf("host payload should include llm_payload map, got %T", hostPayload.Data["llm_payload"])
 	}
 }
 

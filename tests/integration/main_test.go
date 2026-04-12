@@ -17,7 +17,7 @@ import (
 func runCLI(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
 	// use go run to execute the main package
-	cmd := exec.Command("go", append([]string{"run", "../../cmd/financeqa/main.go"}, args...)...)
+	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa/main.go"}, args...)...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -30,6 +30,16 @@ func runCLI(args ...string) (int, string, string) {
 		}
 	}
 	return exitCode, stdout.String(), stderr.String()
+}
+
+func resolveGoBinary() string {
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	if _, err := os.Stat("/opt/homebrew/bin/go"); err == nil {
+		return "/opt/homebrew/bin/go"
+	}
+	return "go"
 }
 
 func sqlBootstrap(dbPath string) error {
@@ -91,6 +101,27 @@ func TestRunQueryCommandReturnsAnswer(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "\"现金流入\": 1500") {
 		t.Errorf("stdout should include income answer, got %s", stdout)
+	}
+}
+
+func TestRunHostDataCommandReturnsPayload(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "finance.db")
+	if err := seedQueryDB(dbPath); err != nil {
+		t.Fatalf("seed query db: %v", err)
+	}
+
+	exitCode, stdout, stderr := runCLI("host-data", "--db", dbPath, "--company", "模拟财务", "--from", "2026-02", "--to", "2026-02")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", exitCode, stderr)
+	}
+	if !strings.Contains(stdout, "\"llm_payload\"") {
+		t.Fatalf("stdout should include llm_payload, got %s", stdout)
+	}
+	if !strings.Contains(stdout, "\"answer_method\": \"llm_payload\"") {
+		t.Fatalf("stdout should include answer_method llm_payload, got %s", stdout)
 	}
 }
 
