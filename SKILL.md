@@ -1,7 +1,6 @@
 ---
-name: "finance_qa_engine"
-description: "面向老板问答的财务查询插件（双口径 + 可追溯过程 + 宿主LLM兜底）"
-version: "1.3.0"
+name: "finance"
+description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可追溯过程 + 宿主LLM兜底）"
 ---
 
 # finance_qa OpenClaw 接入手册（全功能暴露）
