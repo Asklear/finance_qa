@@ -55,6 +55,41 @@ go build ./cmd/financeqa/...
 go test ./internal/accounting/ -v
 ```
 
+### 4. 规则配置化（stopwords + 角色阈值）
+
+系统已支持把关键规则从硬编码抽离出来，便于线上快速调参。
+
+1. 默认规则文件：`config/rules.json`
+2. 启用文件覆盖：设置 `FINANCEQA_RULES_PATH`
+3. 也可用环境变量直接覆盖
+
+```bash
+# 方式 1：加载规则文件
+FINANCEQA_RULES_PATH=./config/rules.json ./financeqa query --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
+
+# 方式 2：直接覆盖 stopwords
+FINANCEQA_METRIC_STOPWORDS="收入,成本,利润,经营状况" ./financeqa query --company "南京优集数据科技有限公司" "飞未2月收入多少"
+```
+
+支持的规则字段（`rules.json`）：
+
+1. `generic_metric_stopwords`：泛指标词，避免被误识别成实体。
+2. `role_mixed_min_ratio`：次高分/最高分达到该比例时，判定为 `mixed`。
+3. `role_mixed_min_positive_score`：计入“有效角色”的最低分。
+4. `role_mixed_min_positive_roles`：触发 `mixed` 所需最少有效角色数量。
+5. `role_min_primary_score`：最高分低于该值时，判定为 `unknown`。
+6. `role_min_confidence`：置信度低于该值时，判定为 `unknown`。
+
+支持的环境变量覆盖项：
+
+1. `FINANCEQA_RULES_PATH`
+2. `FINANCEQA_METRIC_STOPWORDS`（逗号分隔）
+3. `FINANCEQA_ROLE_MIXED_MIN_RATIO`
+4. `FINANCEQA_ROLE_MIXED_MIN_POSITIVE_SCORE`
+5. `FINANCEQA_ROLE_MIXED_MIN_POSITIVE_ROLES`
+6. `FINANCEQA_ROLE_MIN_PRIMARY_SCORE`
+7. `FINANCEQA_ROLE_MIN_CONFIDENCE`
+
 ## 三、代码集成与调用指南 (API / SDK)
 
 除了使用 CLI 之外，本模块被设计为极具解耦性的 Go SDK。你可以非常简单地将其接入到任何现有的 HTTP 服务（如 Gin/Fiber/HTTPMUX）或者更大的 LLM RAG Agent 层中：
@@ -98,62 +133,18 @@ func main() {
 
 本项目采用分层解耦的 Go 后端架构，确保了从原始凭证解析到自然语言查询的全链路稳定性。
 
-### 1. 架构图 (Architectural Overview)
+### 1. 架构图（分三张图）
 
-```mermaid
-graph TB
-    subgraph "外部数据源 (External Data)"
-        A1["用友/金蝶 凭证 (.xls)"]
-        A2["标准银行流水 (.xlsx)"]
-    end
+为了提升可读性，原先“一张大图”已拆为三张独立图：
 
-    subgraph "数据接入流水线 (Ingestion Pipeline)"
-        P["解析层: Parser Layer"]
-        S["同步逻辑: Sync Logic"]
-        M["元数据提取与脱敏: Sanitize"]
-        A1 & A2 --> P
-        P --> M --> S
-    end
+1. [分层架构图（Layered Architecture）](docs/architecture/01-layered-architecture.md)
+2. [查询请求时序图（Query Sequence）](docs/architecture/02-query-sequence.md)
+3. [部署与运行图（Deployment & Runtime）](docs/architecture/03-deployment-runtime.md)
 
-    subgraph "知识库与配置 (Knowledge & Config)"
-        K["关键词管理: Keywords"]
-        D["数据库 Schema 与初始化"]
-        T["全局类型定义: Types"]
-    end
-
-    subgraph "自然语言查询引擎 (Query Engine)"
-        U["自然语言接口"]
-        Q["内核引擎: Engine"]
-        L["中控回退: LLM Fallback (OpenAI)"]
-        U --> Q
-        Q <--> L
-    end
-
-    subgraph "核心业务逻辑 (Business Logic)"
-        C["财务核算: Accounting"]
-        AN["财务分析: Analysis"]
-        DIM["会计分期建模: Dimensions"]
-    end
-
-    S --> DB[(SQLite 核心数据库)]
-    DB <--> DIM
-    Q --> C & AN
-    C & AN <--> DB
-    K -.-> Q
-    
-    subgraph "应用输出与报表 (Outputs)"
-        R1["账面利润口径 (Accrual)"]
-        R2["业务现金流视角 (Cash)"]
-        R3["风险分析预警 (Alerts)"]
-    end
-
-    C --> R1 & R2
-    AN --> R3
-    
-    style DB fill:#f9f,stroke:#333,stroke-width:2px
-    style L fill:#bbf,stroke:#333,stroke-dasharray: 5 5
-    style U fill:#dfd,stroke:#333
-```
+阅读建议：
+1. 先看分层图，理解系统边界；
+2. 再看时序图，理解一次查询如何流转；
+3. 最后看部署图，理解线上/本地如何运行与接入。
 
 ### 2. 逻辑分层
 *   **接入层 (Parser & Ingest)**：处理各版本用友、金蝶及银行导出的 Excel 原始数据。具备自动脱敏、元数据提取（日期/公司识别）及数据清洗能力。
