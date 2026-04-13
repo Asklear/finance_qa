@@ -23,7 +23,7 @@ go build -o "$OUTPUT_DIR/bin/financeqa" ./cmd/financeqa/...
 
 echo "📦 3. 规整并打包知识与附带资产..."
 # 将给 AI 读的说明手册放入根目录
-cp skill.md "$OUTPUT_DIR/"
+cp SKILL.md "$OUTPUT_DIR/"
 
 # 放入测试沙箱使用的 DB 供测试（如果有正式生产环境，这里不打包）
 # 如果目前库里没有任何 DB 也是没问题的, sync 指令可以自己通过导出的表格凭空生成
@@ -38,4 +38,4 @@ tar -czvf "${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
 
 echo "✅ 打包完成！"
 echo "👉 安装包路径: ./dist/${PACKAGE_NAME}.tar.gz"
-echo "上传或集成进 OpenClaw 时请参考压缩包内解压后的 skill.md 进行指令注册及对话对齐操作。"
+echo "上传或集成进 OpenClaw 时请参考压缩包内解压后的 SKILL.md 进行指令注册及对话对齐操作。"

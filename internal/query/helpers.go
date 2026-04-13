@@ -150,6 +150,11 @@ func ClassifyIntent(question string) Intent {
 		return IntentIdentityQuery
 	}
 
+	// 这些问题虽然可能包含“应付”，但业务语义是人力成本，不应被 AR/AP 分流截走。
+	if containsAny(q, []string{"人力成本", "工资成本", "薪酬成本", "应付职工薪酬"}) {
+		return IntentFallback
+	}
+
 	if containsAny(q, []string{"应收", "应付", "账款", "往来款"}) {
 		return IntentARAPQuery
 	}
@@ -167,7 +172,7 @@ func ClassifyIntent(question string) Intent {
 		return IntentAnalysis
 	}
 
-	if containsAny(q, []string{"供应商多少", "多少供应商", "供应商有多少", "人力成本", "工资成本", "薪酬成本", "整体支出", "总支出", "全部支出"}) {
+	if containsAny(q, []string{"供应商多少", "多少供应商", "供应商有多少", "人力成本", "工资成本", "薪酬成本", "应付职工薪酬", "整体支出", "总支出", "全部支出"}) {
 		return IntentFallback
 	}
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"financeqa/internal/query"
@@ -57,6 +58,29 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	}
 	if v := numberFromMap(t, profit.Data, "净现金流"); v != 1150 {
 		t.Fatalf("profit = %.2f, want 1150", v)
+	}
+	if !containsText(profit.ExecutedSQL, "dual_perspective(accrual)") {
+		t.Fatalf("profit should expose accrual SQL trace, got %v", profit.ExecutedSQL)
+	}
+
+	multiMetric := eng.Query("2026年2月收入/成本/利润分别是多少")
+	if !multiMetric.Success {
+		t.Fatalf("multi metric query failed: %s", multiMetric.Message)
+	}
+	if !strings.Contains(multiMetric.Message, "收入") || !strings.Contains(multiMetric.Message, "成本") || !strings.Contains(multiMetric.Message, "利润") {
+		t.Fatalf("multi metric message should contain 收入/成本/利润, got: %s", multiMetric.Message)
+	}
+	switch rm := multiMetric.Data["requested_metrics"].(type) {
+	case []any:
+		if len(rm) != 3 {
+			t.Fatalf("requested_metrics should expose 3 metrics, got %v", multiMetric.Data["requested_metrics"])
+		}
+	case []string:
+		if len(rm) != 3 {
+			t.Fatalf("requested_metrics should expose 3 metrics, got %v", multiMetric.Data["requested_metrics"])
+		}
+	default:
+		t.Fatalf("requested_metrics should expose 3 metrics, got %v", multiMetric.Data["requested_metrics"])
 	}
 
 	tax := eng.Query("2026年2月增值税是多少")
@@ -117,6 +141,13 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	}
 	if v := numberFromMap(t, hrCost.Data, "total"); v != 300 {
 		t.Fatalf("hr cost = %.2f, want 300", v)
+	}
+	hrCostByPayroll := eng.Query("2026年2月应付职工薪酬是多少")
+	if !hrCostByPayroll.Success {
+		t.Fatalf("payroll phrase should still route to hr cost fallback, got: %s", hrCostByPayroll.Message)
+	}
+	if v := numberFromMap(t, hrCostByPayroll.Data, "total"); v != 300 {
+		t.Fatalf("payroll phrase hr cost = %.2f, want 300", v)
 	}
 
 	customerSales := eng.Query("客户A客户2月销售额多少")
@@ -205,6 +236,9 @@ INSERT INTO balance_sheet VALUES ('模拟财务科技有限公司','2026-02','22
 INSERT INTO balance_sheet VALUES ('苏州模拟财务','2026-02','1002','货币资金',10,20);
 
 INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','营业收入',2000,3000);
+INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','营业成本',1000,1500);
+INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','管理费用',300,450);
+INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','净利润',700,1050);
 
 INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-10',1000,0,'客户A','回款');
 INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-11',0,300,'供应商B','付款');
@@ -241,6 +275,15 @@ func stringsReader(s string) *os.File {
 		panic(err)
 	}
 	return f
+}
+
+func containsText(lines []string, keyword string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func numberFromMap(t *testing.T, data map[string]any, key string) float64 {

@@ -39,11 +39,18 @@ func (r Result) withTraceData() Result {
 	if r.AnswerMethod == "" {
 		r.AnswerMethod = "sql"
 	}
-	r.Data["answer_method"] = r.AnswerMethod
-	r.Data["trace"] = map[string]any{
-		"executed_sql":     append([]string{}, r.ExecutedSQL...),
-		"calculation_logs": append([]string{}, r.CalculationLogs...),
+	executed := append([]string{}, r.ExecutedSQL...)
+	logs := append([]string{}, r.CalculationLogs...)
+	process := map[string]any{
+		"answer_method":    r.AnswerMethod,
+		"executed_sql":     executed,
+		"calculation_logs": logs,
 	}
+	r.Data["answer_method"] = r.AnswerMethod
+	r.Data["trace"] = process
+	r.Data["process"] = process
+	r.Data["executed_sql"] = executed
+	r.Data["calculation_logs"] = logs
 	return r
 }
 
@@ -103,10 +110,23 @@ func (e *Engine) Query(question string) Result {
 	intent := ClassifyIntent(q)
 
 	entity := e.extractNamedEntity(q)
+	hasRealEntity := e.isRealBusinessEntity(q, entity)
 
 	var result Result
-	if shouldForceDualPerspective(q) && !shouldBypassDualPerspective(q, entity) {
+	if shouldUseReconciliation(q) {
+		result = e.queryReconciliation(q, from, to)
+		if result.Success {
+			return result.withTraceData()
+		}
+	}
+	if shouldForceDualPerspective(q) && !shouldBypassDualPerspective(q, entity) && !hasRealEntity {
 		result = e.queryDualPerspectiveForCoreMetric(q, from, to)
+		if result.Success {
+			return result.withTraceData()
+		}
+	}
+	if hasRealEntity && containsAny(q, []string{"收入", "营收", "销售额", "回款", "到账", "收款", "成本", "费用", "支出", "付款", "付了", "支付"}) {
+		result = e.queryCounterpartyAmountFallback(q, entity, from, to)
 		if result.Success {
 			return result.withTraceData()
 		}
@@ -198,22 +218,31 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 	year, month := parsePeriod(to)
 	e.calc.ResetTrace()
 
-	// 1. 获取当月精确指标 (用于判断是否有数)
-	monthly, _ := e.calc.ComputeMonthlyFromJournal(e.Company, year, month)
-	// 2. 获取累计指标 (用于明细展现)
+	// 1) 帐口径当月核心指标：优先利润表当月发生额，缺项再回退序时账
+	book, bookSource, err := e.monthlyBookSummary(year, month)
+	if err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+	// 2) 累计指标（用于明细展现和回溯）
 	is, _ := e.calc.ComputeIncomeStatement(e.Company, year, month)
+	// 3) 钱口径
 	cash, _ := e.calc.ComputeCashFlow(e.Company, from, to)
 
 	logs := append([]string{}, e.calc.CalculationLogs...)
 	sqls := append([]string{}, e.calc.ExecutedSQLs...)
+	sqls = appendUniqueStrings(sqls,
+		"monthlyBookSummary(income_statement): SELECT item_name, current_amount FROM income_statement WHERE ... AND period = ?",
+		"monthlyBookSummary(fallback_journal): ComputeMonthlyFromJournal + ComputeIncomeStatement when income_statement missing required rows",
+	)
+	logs = append(logs, fmt.Sprintf("[月度口径] period=%s source=%s", to, bookSource))
 
-	revenue := monthly.Revenue
-	expense := monthly.Cost
+	revenue := book.Revenue
+	expense := book.TotalCost
 
-	mainMsg := fmt.Sprintf("%s 月度经营分析：当月收入 %.2f, 成本支出 %.2f, 净利润 %.2f", to, revenue, expense, monthly.Profit)
+	mainMsg := fmt.Sprintf("%s 月度经营分析：账上收入 %.2f 元，成本及费用 %.2f 元，账面利润 %.2f 元；同时银行卡收款 %.2f 元、付款 %.2f 元。", to, revenue, expense, book.Profit, cash.Income, cash.Expense)
 
 	// 智能回溯：如果本单月数据为空，则统计本年累计数据供参考
-	if revenue == 0 && expense == 0 {
+	if revenue == 0 && expense == 0 && book.Profit == 0 {
 		logs = append(logs, fmt.Sprintf("[智能回溯] %s 当月无经营记账，正在为您还原年度累计经营体量...", to))
 		if month > 1 {
 			mainMsg = fmt.Sprintf("%s 暂无经营数据。2026年1月以来（YTD）累计：收入 %.2f, 支出 %.2f, 累计利润 %.2f", to, is.Revenue, is.Cost, is.NetProfit)
@@ -228,13 +257,28 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 		Message:      mainMsg,
 		AnswerMethod: "sql",
 		Data: map[string]any{
-			"monthly": monthly, "cumulative": is, "cash_flow": cash,
+			"monthly": map[string]any{
+				"year":       year,
+				"month":      month,
+				"source":     bookSource,
+				"revenue":    book.Revenue,
+				"cost":       book.TotalCost,
+				"profit":     book.Profit,
+				"cost_detail": map[string]any{
+					"operating_cost":   book.Cost,
+					"tax_surcharge":    book.TaxSurcharge,
+					"selling_expense":  book.SellingExpense,
+					"admin_expense":    book.AdminExpense,
+					"finance_expense":  book.FinanceExpense,
+				},
+			},
+			"cumulative": is, "cash_flow": cash,
 			// 兼容旧版本 top-level 字段（测试与外部调用依赖）
 			"现金流入": cash.Income, "现金流出": cash.Expense, "净现金流": cash.Net,
 			"财务做账口径(看利润)": map[string]any{
-				"营业收入":    is.Revenue,
-				"营业成本及费用": is.Cost + is.TaxSurcharge + is.SellingExpense + is.AdminExpense + is.FinanceExpense,
-				"账面利润":    is.NetProfit,
+				"营业收入":    book.Revenue,
+				"营业成本及费用": book.TotalCost,
+				"账面利润":    book.Profit,
 			},
 		},
 		ExecutedSQL:     sqls,
@@ -250,14 +294,37 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		return Result{Success: false, Message: err.Error()}
 	}
 
+	// 核心指标账口径优先以利润表当月发生额为准，避免被序时账口径噪声影响。
+	if book, source, bookErr := e.monthlyBookSummary(year, month); bookErr == nil {
+		dual.Accrual.Revenue = book.Revenue
+		dual.Accrual.TotalCost = book.TotalCost
+		dual.Accrual.Profit = book.Profit
+		e.calc.CalculationLogs = append(e.calc.CalculationLogs, fmt.Sprintf("[双口径账上口径] income_statement优先, source=%s", source))
+	}
+
+	requestedMetrics := detectRequestedMetrics(question)
 	metric := detectCoreMetric(question)
+	if len(requestedMetrics) == 1 {
+		metric = requestedMetrics[0]
+	}
 	cashValue, accrualValue := pickMetricValue(metric, dual)
 	msg := fmt.Sprintf("%s 双口径%s：钱口径 %.2f 元，账口径 %.2f 元", to, metric, cashValue, accrualValue)
+	if len(requestedMetrics) > 1 {
+		msg = fmt.Sprintf("%s 双口径核心指标：钱口径 收入 %.2f 元、成本 %.2f 元、净额 %.2f 元；账口径 收入 %.2f 元、成本 %.2f 元、利润 %.2f 元。",
+			to,
+			round2(dual.Cash.Income), round2(dual.Cash.Expense), round2(dual.Cash.Net),
+			round2(dual.Accrual.Revenue), round2(dual.Accrual.TotalCost), round2(dual.Accrual.Profit),
+		)
+	}
 
 	logs := append([]string{}, e.calc.CalculationLogs...)
-	logs = append(logs, fmt.Sprintf("[双口径强制] metric=%s cash=%.2f accrual=%.2f", metric, cashValue, accrualValue))
+	logs = append(logs, fmt.Sprintf("[双口径强制] metric=%s requested=%v cash=%.2f accrual=%.2f", metric, requestedMetrics, cashValue, accrualValue))
 
 	sqls := append([]string{}, e.calc.ExecutedSQLs...)
+	sqls = appendUniqueStrings(sqls,
+		"dual_perspective(cash): ComputeCashFlow over bank_statement in selected period",
+		"dual_perspective(accrual): monthlyBookSummary => income_statement.current_amount (fallback journal if missing)",
+	)
 	return Result{
 		Success:      true,
 		Message:      msg,
@@ -269,6 +336,7 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 			"account_view":  dual.Accrual,
 			"money_value":   cashValue,
 			"account_value": accrualValue,
+			"requested_metrics": requestedMetrics,
 			"现金流入":          dual.Cash.Income,
 			"现金流出":          dual.Cash.Expense,
 			"净现金流":          dual.Cash.Net,
@@ -424,48 +492,139 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 	if entity == "" {
 		return Result{Success: false, Message: "no named counterparty found"}
 	}
-	role, _ := e.detectEntityRole(entity)
-
-	bankSql := `(LENGTH(counterparty_name) > 1 AND (? LIKE '%' || counterparty_name || '%' OR counterparty_name LIKE '%' || ? || '%'))`
-	journalSql := `(summary LIKE '%' || ? || '%')`
-
-	var bIn, bOut, jIn, jOut float64
-	bankSQL := fmt.Sprintf(`SELECT COALESCE(SUM(credit_amount), 0), COALESCE(SUM(debit_amount), 0) FROM bank_statement WHERE %s AND transaction_date BETWEEN '%s' AND '%s'`, bankSql, from+"-01", monthEndDay(to))
-	e.db.QueryRow(fmt.Sprintf(`SELECT COALESCE(SUM(credit_amount), 0), COALESCE(SUM(debit_amount), 0) FROM bank_statement WHERE %s AND transaction_date BETWEEN ? AND ?`, bankSql), entity, entity, from+"-01", monthEndDay(to)).Scan(&bIn, &bOut)
-
-	jourSQL := fmt.Sprintf(`SELECT COALESCE(SUM(CASE WHEN direction='贷' THEN amount ELSE 0 END), 0), COALESCE(SUM(CASE WHEN direction='借' THEN amount ELSE 0 END), 0) FROM journal WHERE %s AND voucher_date BETWEEN '%s' AND '%s'`, journalSql, from+"-01", monthEndDay(to))
-	e.db.QueryRow(fmt.Sprintf(`SELECT COALESCE(SUM(CASE WHEN direction='贷' THEN amount ELSE 0 END), 0), COALESCE(SUM(CASE WHEN direction='借' THEN amount ELSE 0 END), 0) FROM journal WHERE %s AND voucher_date BETWEEN ? AND ?`, journalSql), entity, from+"-01", monthEndDay(to)).Scan(&jIn, &jOut)
+	snap := e.buildCounterpartySnapshot(entity, from, to)
+	evidence := e.collectCounterpartyEvidence(entity, from, to)
+	classification := ClassifyCounterparty(entity, evidence)
+	taxReport := NormalizeTax(entity, evidence)
+	role := string(classification.Role)
+	if role == "" {
+		role = snap.Role
+	}
+	q := NormalizeQuestion(question)
+	usedRetro := false
+	if snap.BankIn == 0 && snap.BankOut == 0 && snap.RevenueNet == 0 && snap.BookCost == 0 && snap.BookExpense == 0 {
+		retroFrom := from[:4] + "-01"
+		snap = e.buildCounterpartySnapshot(entity, retroFrom, to)
+		evidence = e.collectCounterpartyEvidence(entity, retroFrom, to)
+		classification = ClassifyCounterparty(entity, evidence)
+		taxReport = NormalizeTax(entity, evidence)
+		role = string(classification.Role)
+		if role == "" {
+			role = snap.Role
+		}
+		usedRetro = true
+	}
+	roleLabel := fmt.Sprintf("（识别为[%s]）", role)
 
 	logs := []string{
-		fmt.Sprintf("[银行流水审计] 收入(贷):%.2f, 支出(借):%.2f, 净额:%.2f", bIn, bOut, math.Abs(bIn-bOut)),
-		fmt.Sprintf("[序时账审计] 贷方(收入/还款):%.2f, 借方(支出/报销):%.2f", jIn, jOut),
+		fmt.Sprintf("[对手方识别] entity=%s role=%s confidence=%.3f signals=%v", entity, role, classification.Confidence, classification.Signals),
+		fmt.Sprintf("[往来快照] bank_in=%.2f bank_out=%.2f revenue_net=%.2f cost=%.2f expense=%.2f output_vat=%.2f input_vat=%.2f basis=%s", snap.BankIn, snap.BankOut, snap.RevenueNet, snap.BookCost, snap.BookExpense, snap.OutputVAT, snap.InputVAT, snap.ComparisonBasis),
+		TraceTaxNormalization(taxReport),
+	}
+	if usedRetro {
+		logs = append(logs, fmt.Sprintf("[年度回溯] %s 当月无记录，已回溯到 %s~%s", entity, from[:4]+"-01", to))
+	}
+	sqls := []string{
+		"counterparty(bank_statement): SELECT counterparty_name, summary, debit_amount, credit_amount FROM bank_statement WHERE ... AND counterparty_name LIKE ?",
+		"counterparty(journal): SELECT counterparty, account_code, account_name, summary, direction, debit_amount, credit_amount FROM journal WHERE ... AND (summary LIKE ? OR counterparty LIKE ?)",
 	}
 
-	total := math.Max(math.Abs(bIn-bOut), math.Max(jIn, jOut))
-	isRetro := false
-	if total == 0 || (strings.Contains(question, "一年") || strings.Contains(question, "一共")) {
-		isRetro = true
-		logs = append(logs, "[策略触发] 由于月度数据不足或触发全量指令，切换至年度回溯审计模式")
-		start, end := from[:4]+"-01-01", from[:4]+"-12-31"
-		e.db.QueryRow(fmt.Sprintf(`SELECT COALESCE(SUM(credit_amount), 0), COALESCE(SUM(debit_amount), 0) FROM bank_statement WHERE %s AND transaction_date BETWEEN ? AND ?`, bankSql), entity, entity, start, end).Scan(&bIn, &bOut)
-		e.db.QueryRow(fmt.Sprintf(`SELECT COALESCE(SUM(CASE WHEN direction='贷' THEN amount ELSE 0 END), 0), COALESCE(SUM(CASE WHEN direction='借' THEN amount ELSE 0 END), 0) FROM journal WHERE %s AND voucher_date BETWEEN ? AND ?`, journalSql), entity, start, end).Scan(&jIn, &jOut)
-		total = math.Max(math.Abs(bIn-bOut), math.Max(jIn, jOut))
-		logs = append(logs, fmt.Sprintf("[年度还原] 银行流转:%.2f, 序时账最大侧:%.2f", math.Abs(bIn-bOut), math.Max(jIn, jOut)))
+	resultData := map[string]any{
+		"entity":            entity,
+		"role":              role,
+		"bank_in":           round2(snap.BankIn),
+		"bank_out":          round2(snap.BankOut),
+		"revenue_net":       round2(snap.RevenueNet),
+		"book_cost":         round2(snap.BookCost),
+		"book_expense":      round2(snap.BookExpense),
+		"output_vat":        round2(snap.OutputVAT),
+		"input_vat":         round2(snap.InputVAT),
+		"difference_reason": snap.DifferenceReason,
+		"comparison_basis":  snap.ComparisonBasis,
+		"evidence":          evidence,
+		"tax_breakdown":     taxReport,
 	}
 
-	total = math.Round(total*100) / 100
-	logs = append(logs, fmt.Sprintf("[最终判定] 采用 Max-Abs 算法锁定流转总额: %.2f 元", total))
-
-	if total != 0 {
-		return Result{
-			Success:         true,
-			Message:         fmt.Sprintf("[%s]（识别为[%s]）穿透审计成功，期间流水 %.2f 元", entity, role, total),
-			Data:            map[string]any{"entity": entity, "role": role, "amount": total, "total": total, "is_retro": isRetro},
-			ExecutedSQL:     []string{bankSQL, jourSQL},
-			CalculationLogs: logs,
+	switch {
+	case containsAny(q, []string{"回款", "到账", "收款"}):
+		amount := round2(snap.BankIn)
+		if amount == 0 {
+			return Result{Success: false, Message: fmt.Sprintf("[%s] 在 %s 未找到回款/到账记录", entity, to)}
+		}
+		msg := fmt.Sprintf("[%s]%s %s 回款 %.2f 元", entity, roleLabel, to, amount)
+		if snap.ComparisonBasis == "historical_receipt" || snap.ComparisonBasis == "historical_receipt_and_current_revenue" {
+			msg = fmt.Sprintf("[%s]%s %s 到账 %.2f 元。数据库能确认这是历史应收回款相关，但不能直接当成本月新收入。", entity, roleLabel, to, amount)
+		}
+		resultData["amount"] = amount
+		resultData["total"] = amount
+		return Result{Success: true, Message: msg, Data: resultData, ExecutedSQL: sqls, CalculationLogs: logs}
+	case containsAny(q, []string{"销售额", "收入", "营收"}):
+		if snap.RevenueNet > 0 {
+			amount := round2(snap.RevenueNet)
+			msg := fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元", entity, roleLabel, to, amount)
+			if snap.ComparisonBasis == "historical_receipt_and_current_revenue" {
+				msg = fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元；另有到账 %.2f 元属于历史应收回款相关，不能直接并成当月销售额。", entity, roleLabel, to, amount, round2(snap.BankIn))
+			} else if taxReport.Output.Included && taxReport.Output.TaxAmount > 0 && approxEqual(snap.BankIn, taxReport.Output.AccrualAmount+taxReport.Output.TaxAmount) {
+				msg = fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元；到账和收入的差额 %.2f 元主要是销项税。", entity, roleLabel, to, amount, round2(taxReport.Output.TaxAmount))
+			}
+			resultData["amount"] = amount
+			resultData["total"] = amount
+			return Result{Success: true, Message: msg, Data: resultData, ExecutedSQL: sqls, CalculationLogs: logs}
+		}
+		if snap.BankIn > 0 {
+			amount := round2(snap.BankIn)
+			msg := fmt.Sprintf("[%s]%s %s 仅看到到账 %.2f 元，暂未看到同月收入确认分录。", entity, roleLabel, to, amount)
+			resultData["amount"] = amount
+			resultData["total"] = amount
+			return Result{Success: true, Message: msg, Data: resultData, ExecutedSQL: sqls, CalculationLogs: logs}
+		}
+	case role == "employee" || strings.Contains(q, "报销"):
+		amount := round2(snap.BankOut)
+		if amount == 0 {
+			amount = round2(snap.BookExpense + snap.BookCost)
+		}
+		if amount > 0 {
+			msg := fmt.Sprintf("[%s]%s %s 报销/费用 %.2f 元", entity, roleLabel, to, amount)
+			resultData["amount"] = amount
+			resultData["total"] = amount
+			return Result{Success: true, Message: msg, Data: resultData, ExecutedSQL: sqls, CalculationLogs: logs}
+		}
+	case containsAny(q, []string{"成本", "费用", "支出", "付款"}):
+		amount := round2(snap.BookCost + snap.BookExpense)
+		label := "账上成本/费用"
+		if containsAny(q, []string{"付款", "付了", "支付"}) || amount == 0 {
+			amount = round2(snap.BankOut)
+			label = "付款"
+		}
+		if amount > 0 {
+			msg := fmt.Sprintf("[%s]%s %s %s %.2f 元", entity, roleLabel, to, label, amount)
+			if role == "supplier" || role == "mixed" {
+				msg = fmt.Sprintf("[%s]%s %s 属于供应商相关，%s %.2f 元，不应归到收入差异里。", entity, roleLabel, to, label, amount)
+			}
+			resultData["amount"] = amount
+			resultData["total"] = amount
+			if label == "付款" {
+				resultData["payment"] = amount
+			} else {
+				resultData["cost"] = amount
+			}
+			return Result{Success: true, Message: msg, Data: resultData, ExecutedSQL: sqls, CalculationLogs: logs}
 		}
 	}
-	return Result{Success: false, Message: fmt.Sprintf("穿透审计失败：[%s] 无发生额", entity)}
+
+	fallbackAmount := round2(math.Max(snap.BankIn, math.Max(snap.BankOut, math.Max(snap.RevenueNet, snap.BookCost+snap.BookExpense))))
+	if fallbackAmount == 0 {
+		return Result{Success: false, Message: fmt.Sprintf("穿透审计失败：[%s] 无发生额", entity)}
+	}
+	resultData["amount"] = fallbackAmount
+	resultData["total"] = fallbackAmount
+	return Result{
+		Success:         true,
+		Message:         fmt.Sprintf("[%s]%s 已提取相关发生额 %.2f 元", entity, roleLabel, fallbackAmount),
+		Data:            resultData,
+		ExecutedSQL:     sqls,
+		CalculationLogs: logs,
+	}
 }
 
 func (e *Engine) queryLargeBankTransactions(question, from, to string) Result {
@@ -496,35 +655,14 @@ func (e *Engine) queryLargeBankTransactions(question, from, to string) Result {
 }
 
 func (e *Engine) detectEntityRole(name string) (role string, log string) {
-	var bankOut, bankIn float64
-	e.db.QueryRow(`SELECT COALESCE(SUM(debit_amount), 0), COALESCE(SUM(credit_amount), 0) FROM bank_statement WHERE counterparty_name LIKE ?`, "%"+name+"%").Scan(&bankOut, &bankIn)
-	var hasSalary bool
-	var employeeSignals, total int
-	rows, _ := e.db.Query(`SELECT account_code, summary FROM journal WHERE summary LIKE ? OR account_name LIKE ?`, "%"+name+"%", "%"+name+"%")
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var code, summary string
-			rows.Scan(&code, &summary)
-			total++
-			if strings.HasPrefix(code, "2211") {
-				hasSalary = true
-			}
-			if strings.Contains(summary, "报销") || strings.Contains(summary, "工资") {
-				employeeSignals++
-			}
-		}
-	}
-	switch {
-	case hasSalary || (total > 0 && float64(employeeSignals)/float64(total) > 0.3):
-		return "employee", "employee"
-	case bankIn > bankOut*2 && bankIn > 0:
-		return "customer", "customer"
-	case bankOut > bankIn*2 && bankOut > 0:
-		return "supplier", "supplier"
-	default:
+	endDate := monthEndDay(e.getLatestPeriodAnchor().Format("2006-01"))
+	startDate := "2000-01-01"
+	evidence := e.collectCounterpartyEvidence(name, startDate[:7], endDate[:7])
+	classification := ClassifyCounterparty(name, evidence)
+	if classification.Role == CounterpartyUnknown {
 		return "unknown", "unknown"
 	}
+	return string(classification.Role), fmt.Sprintf("role=%s confidence=%.3f signals=%v", classification.Role, classification.Confidence, classification.Signals)
 }
 
 var namedEntityPattern = regexp.MustCompile(`([A-Za-z0-9_\-\(\)（）\x{4e00}-\x{9fa5}]{2,})(?:客户|供应商|公司|项目|单位|人|报销|报账|支出|往来|金|账|款|明细)`)
@@ -545,13 +683,13 @@ func (e *Engine) extractNamedEntity(question string) string {
 		for length := len(runes); length >= 2; length-- {
 			for i := 0; i <= len(runes)-length; i++ {
 				sub := string(runes[i : i+length])
-				if len(sub) < 2 || containsAny(sub, []string{"帮我", "一下", "查询", "多少", "哪些", "价格", "一共", "支出", "报销", "经营", "分析", "风险", "健康", "评价", "应收", "应付", "账款", "费用", "资金", "货币", "流水"}) {
+				if len(sub) < 2 || isGenericMetricEntity(sub) || containsAny(sub, []string{"帮我", "一下", "查询", "多少", "哪些", "价格", "一共", "支出", "报销", "经营", "分析", "风险", "健康", "评价", "应收", "应付", "账款", "费用", "资金", "货币", "流水"}) {
 					continue
 				}
 				var exists int
 				e.db.QueryRow(`SELECT 1 FROM bank_statement WHERE counterparty_name LIKE ? LIMIT 1`, "%"+sub+"%").Scan(&exists)
 				if exists == 0 {
-					e.db.QueryRow(`SELECT 1 FROM journal WHERE summary LIKE ? OR account_name LIKE ? LIMIT 1`, "%"+sub+"%", "%"+sub+"%").Scan(&exists)
+					e.db.QueryRow(`SELECT 1 FROM journal WHERE summary LIKE ? OR counterparty LIKE ? LIMIT 1`, "%"+sub+"%", "%"+sub+"%").Scan(&exists)
 				}
 				if exists == 1 && len(sub) > len(best) {
 					best = sub
@@ -559,7 +697,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 			}
 		}
 	}
-	if best != "" {
+	if best != "" && !isGenericMetricEntity(best) {
 		return best
 	}
 
@@ -568,7 +706,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 	if m := namedEntityPattern.FindStringSubmatch(q); len(m) == 2 {
 		entity = strings.TrimSpace(m[1])
 		// 最终清洗：剔除年份、代词及核算科目干扰
-		garbage := []string{"2024", "2025", "2026", "年", "一共", "总计", "的", "多少", "是", "在", "发生", "产生了", "合计", "账款", "收入", "支出", "费用", "成本", "利润"}
+		garbage := []string{"2024", "2025", "2026", "年", "一共", "总计", "的", "多少", "是", "在", "发生", "产生了", "合计", "账款", "收入", "支出", "费用", "成本", "利润", "营收", "销售额", "总成本", "人力成本", "销项税", "进项税", "应收", "应付", "应收账款", "应付账款"}
 		for m := 1; m <= 12; m++ {
 			garbage = append(garbage, fmt.Sprintf("%d月", m))
 		}
@@ -582,10 +720,31 @@ func (e *Engine) extractNamedEntity(question string) string {
 		entity = strings.TrimSpace(entity)
 	}
 
-	if len(entity) >= 2 {
+	if len(entity) >= 2 && !isGenericMetricEntity(entity) {
 		return entity
 	}
 	return ""
+}
+
+func (e *Engine) isRealBusinessEntity(question, entity string) bool {
+	name := strings.TrimSpace(entity)
+	if len([]rune(name)) < 2 || isGenericMetricEntity(name) {
+		return false
+	}
+
+	// 项目问法不强依赖往来名录，先放行（例如“XX项目2月收入多少”）
+	if strings.Contains(question, "项目") {
+		return true
+	}
+
+	like := "%" + name + "%"
+	var exists int
+	e.db.QueryRow(`SELECT 1 FROM bank_statement WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND counterparty_name LIKE ? LIMIT 1`, e.Company, e.Company, like).Scan(&exists)
+	if exists == 1 {
+		return true
+	}
+	e.db.QueryRow(`SELECT 1 FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND IFNULL(TRIM(counterparty),'') <> '' AND counterparty LIKE ? LIMIT 1`, e.Company, e.Company, like).Scan(&exists)
+	return exists == 1
 }
 
 func (e *Engine) queryAnalysis(period string) Result {
@@ -645,7 +804,7 @@ func (e *Engine) ruleFallback(q, from, to string) Result {
 		return e.querySupplierCount()
 	}
 	// 人力成本
-	if containsAny(q, []string{"人力成本", "工资成本", "薪酬成本"}) {
+	if containsAny(q, []string{"人力成本", "工资成本", "薪酬成本", "应付职工薪酬"}) {
 		return e.queryHRCost(from, to)
 	}
 	// 整体支出
@@ -720,10 +879,23 @@ ORDER BY net_out DESC
 			})
 		}
 	}
+	topNames := make([]string, 0, 5)
+	for i, s := range suppliers {
+		if i >= 5 {
+			break
+		}
+		if n, ok := s["name"].(string); ok && n != "" {
+			topNames = append(topNames, n)
+		}
+	}
+	msg := fmt.Sprintf("供应商数量约为 %d 个", count)
+	if len(topNames) > 0 {
+		msg = fmt.Sprintf("%s，典型供应商包括：%s", msg, strings.Join(topNames, "、"))
+	}
 
 	return Result{
 		Success: true,
-		Message: fmt.Sprintf("供应商数量约为 %d 个", count),
+		Message: msg,
 		Data:    map[string]any{"count": count, "suppliers": suppliers},
 		ExecutedSQL: []string{
 			fmt.Sprintf("querySupplierCount: %s [args: %s]", sqlTxt, e.Company),
@@ -806,31 +978,38 @@ func (e *Engine) queryEntityDataReady(entity, from, to string) Result {
 }
 
 func (e *Engine) queryProjectIncomeCost(entity, from, to, question string) Result {
-	sqlTxt := `SELECT COALESCE(SUM(credit_amount), 0), COALESCE(SUM(debit_amount), 0) FROM bank_statement WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND counterparty_name LIKE ? AND transaction_date BETWEEN ? AND ?`
-	var inAmt, outAmt float64
-	e.db.QueryRow(sqlTxt, e.Company, e.Company, "%"+entity+"%", from+"-01", monthEndDay(to)).Scan(&inAmt, &outAmt)
+	snap := e.buildCounterpartySnapshot(entity, from, to)
+	sqlTxt := `SELECT counterparty_name, credit_amount, debit_amount FROM bank_statement WHERE ... AND counterparty_name LIKE ?`
 	if strings.Contains(question, "收入") {
+		amount := round2(snap.RevenueNet)
+		if amount == 0 {
+			amount = round2(snap.BankIn)
+		}
 		return Result{
 			Success: true,
-			Message: fmt.Sprintf("%s %s 项目收入 %.2f 元", to, entity, inAmt),
-			Data:    map[string]any{"entity": entity, "period": to, "income": inAmt},
+			Message: fmt.Sprintf("%s %s 项目收入 %.2f 元", to, entity, amount),
+			Data:    map[string]any{"entity": entity, "period": to, "income": amount, "bank_in": round2(snap.BankIn), "revenue_net": round2(snap.RevenueNet)},
 			ExecutedSQL: []string{
 				fmt.Sprintf("queryProjectIncomeCost: %s [args: %s, %s, %s]", sqlTxt, e.Company, "%"+entity+"%", from+"-01"),
 			},
 			CalculationLogs: []string{
-				fmt.Sprintf("[项目收支] 收入=%.2f, 成本=%.2f", inAmt, outAmt),
+				fmt.Sprintf("[项目收支] bank_in=%.2f revenue_net=%.2f", snap.BankIn, snap.RevenueNet),
 			},
 		}
 	}
+	amount := round2(snap.BookCost + snap.BookExpense)
+	if amount == 0 {
+		amount = round2(snap.BankOut)
+	}
 	return Result{
 		Success: true,
-		Message: fmt.Sprintf("%s %s 项目成本 %.2f 元", to, entity, outAmt),
-		Data:    map[string]any{"entity": entity, "period": to, "cost": outAmt},
+		Message: fmt.Sprintf("%s %s 项目成本 %.2f 元", to, entity, amount),
+		Data:    map[string]any{"entity": entity, "period": to, "cost": amount, "bank_out": round2(snap.BankOut), "book_cost": round2(snap.BookCost), "book_expense": round2(snap.BookExpense)},
 		ExecutedSQL: []string{
 			fmt.Sprintf("queryProjectIncomeCost: %s [args: %s, %s, %s]", sqlTxt, e.Company, "%"+entity+"%", from+"-01"),
 		},
 		CalculationLogs: []string{
-			fmt.Sprintf("[项目收支] 收入=%.2f, 成本=%.2f", inAmt, outAmt),
+			fmt.Sprintf("[项目收支] bank_out=%.2f book_cost=%.2f book_expense=%.2f", snap.BankOut, snap.BookCost, snap.BookExpense),
 		},
 	}
 }
@@ -993,10 +1172,38 @@ func shouldForceDualPerspective(q string) bool {
 }
 
 func shouldBypassDualPerspective(q, entity string) bool {
-	if strings.TrimSpace(entity) == "" {
-		return false
+	return strings.TrimSpace(entity) != "" && !isGenericMetricEntity(entity)
+}
+
+func isGenericMetricEntity(entity string) bool {
+	key := normalizeEntityText(entity)
+	if key == "" {
+		return true
 	}
-	return containsAny(q, []string{"客户", "供应商", "项目", "报销", "数据出来", "应收", "应付", "往来"})
+	cfg := getRuleConfig()
+	for _, s := range cfg.GenericMetricStopwords {
+		if normalizeEntityText(s) == key {
+			return true
+		}
+	}
+	return false
+}
+
+func detectRequestedMetrics(q string) []string {
+	metrics := make([]string, 0, 3)
+	if containsAny(q, []string{"收入", "营收", "销售额"}) {
+		metrics = append(metrics, "收入")
+	}
+	if strings.Contains(q, "成本") {
+		metrics = append(metrics, "成本")
+	}
+	if strings.Contains(q, "利润") {
+		metrics = append(metrics, "利润")
+	}
+	if len(metrics) == 0 {
+		metrics = append(metrics, detectCoreMetric(q))
+	}
+	return metrics
 }
 
 func detectCoreMetric(q string) string {

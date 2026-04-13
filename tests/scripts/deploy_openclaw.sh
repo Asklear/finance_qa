@@ -57,7 +57,7 @@ ssh -i "$KEY" $SERVER << REMOTE_SCRIPT
     go mod tidy
     go build -o financeqa ./cmd/financeqa/...
     
-    echo ">> (可选) 将 skill.md 注册进 OpenClaw..."
+    echo ">> (可选) 将 SKILL.md 注册进 OpenClaw..."
     echo "============================================="
     echo "✅ 部署大功告成！"
     echo "当前服务端运行库入口已就绪:"
