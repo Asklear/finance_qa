@@ -71,7 +71,7 @@ func TestEntityYearCumulativeUsesYearRangeInsteadOfSingleMonth(t *testing.T) {
 	if amount != 2000 {
 		t.Fatalf("want cumulative amount=2000, got=%v message=%s", amount, res.Message)
 	}
-	if !strings.Contains(res.Message, "2026-01~2026-02") {
+	if !strings.Contains(res.Message, "2026-01~2026-03") {
 		t.Fatalf("expected period range in message, got: %s", res.Message)
 	}
 }
@@ -126,6 +126,41 @@ func TestAmbiguousPreShouKuanRoutesToARAPWithoutFallback(t *testing.T) {
 		if _, ok := tr[k]; !ok {
 			t.Fatalf("intent_trace missing key=%s", k)
 		}
+	}
+}
+
+func TestHRBreakdownQuestionShouldNotRouteToCounterpartyEntity(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月人力成本多少？工资、社保、公积金分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "[公积金]") {
+		t.Fatalf("should not route to counterparty fallback: %s", res.Message)
+	}
+	hr, ok := res.Data["hr_breakdown"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hr_breakdown: %+v", res.Data)
+	}
+	acc, ok := hr["accounting"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing accounting breakdown: %+v", hr)
+	}
+	if acc["工资"] != float64(30000) || acc["社保"] != float64(3000) || acc["公积金"] != float64(600) {
+		t.Fatalf("unexpected accounting breakdown: %+v", acc)
+	}
+	cash, ok := hr["cash"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing cash breakdown: %+v", hr)
+	}
+	if cash["工资"] != float64(15000) || cash["社保"] != float64(2500) || cash["公积金"] != float64(600) {
+		t.Fatalf("unexpected cash breakdown: %+v", cash)
 	}
 }
 
@@ -204,6 +239,24 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 		 VALUES ('南京优集数据科技有限公司', '2026-02', '应付职工薪酬', '2211', 0, 300)`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
 		 VALUES ('南京优集数据科技有限公司', '2026-02-15', '飞未云科', '2月回款', 0, 904)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-31', '66020101', '工资', '借', 10000, '计提3月工资', '', 10000, 0)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-31', '66022301', '工资', '借', 20000, '计提3月工资', '', 20000, 0)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-31', '66020102', '社保', '借', 1000, '3月社保扣款', '', 1000, 0)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-31', '66022302', '社保', '借', 2000, '3月社保扣款', '', 2000, 0)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-31', '66020103', '公积金', '借', 200, '3月公积金', '', 200, 0)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-31', '66022303', '公积金', '借', 400, '3月公积金', '', 400, 0)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-10', '100201', '招商银行', '贷', 15000, '发放2月工资', '', 0, 15000)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-25', '100201', '招商银行', '贷', 2500, '3月社保扣款', '', 0, 2500)`,
+		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-26', '100201', '招商银行', '贷', 600, '3月公积金', '', 0, 600)`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
 		 VALUES ('南京优集数据科技有限公司', '2026-02-13', '南京汇智互娱教育科技有限公司', '供应商付款', 53750, 0)`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)

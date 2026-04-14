@@ -122,11 +122,18 @@ func (e *Engine) Query(question string) Result {
 
 	anchor := e.getLatestPeriodAnchor()
 	from, to := ExtractPeriodWithNow(q, anchor)
+	cfg := getRuleConfig()
+	var result Result
+
+	if shouldUseHRBreakdown(q, cfg) {
+		result = e.queryHRBreakdown(from, to)
+		if result.Success {
+			return finalize(result)
+		}
+	}
 
 	entity := e.extractNamedEntity(q)
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
-
-	var result Result
 	if shouldUseReconciliation(q) {
 		result = e.queryReconciliation(q, from, to)
 		if result.Success {
@@ -721,7 +728,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 		for length := len(runes); length >= 2; length-- {
 			for i := 0; i <= len(runes)-length; i++ {
 				sub := string(runes[i : i+length])
-				if len(sub) < 2 || isGenericMetricEntity(sub) || containsAny(sub, []string{"帮我", "一下", "查询", "多少", "哪些", "价格", "一共", "支出", "报销", "经营", "分析", "风险", "健康", "评价", "应收", "应付", "账款", "费用", "资金", "货币", "流水"}) {
+				if len(sub) < 2 || isGenericMetricEntity(sub) || containsAny(sub, []string{"帮我", "一下", "查询", "多少", "哪些", "价格", "一共", "支出", "报销", "经营", "分析", "风险", "健康", "评价", "应收", "应付", "账款", "费用", "资金", "货币", "流水", "工资", "社保", "公积金", "人力成本", "薪酬"}) {
 					continue
 				}
 				var exists int
@@ -744,7 +751,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 	if m := namedEntityPattern.FindStringSubmatch(q); len(m) == 2 {
 		entity = strings.TrimSpace(m[1])
 		// 最终清洗：剔除年份、代词及核算科目干扰
-		garbage := []string{"2024", "2025", "2026", "年", "一共", "总计", "的", "多少", "是", "在", "发生", "产生了", "合计", "账款", "收入", "支出", "费用", "成本", "利润", "营收", "销售额", "总成本", "人力成本", "销项税", "进项税", "应收", "应付", "应收账款", "应付账款"}
+		garbage := []string{"2024", "2025", "2026", "年", "一共", "总计", "的", "多少", "是", "在", "发生", "产生了", "合计", "账款", "收入", "支出", "费用", "成本", "利润", "营收", "销售额", "总成本", "人力成本", "工资", "社保", "公积金", "薪酬", "销项税", "进项税", "应收", "应付", "应收账款", "应付账款"}
 		for m := 1; m <= 12; m++ {
 			garbage = append(garbage, fmt.Sprintf("%d月", m))
 		}
@@ -844,7 +851,7 @@ func (e *Engine) ruleFallback(q, from, to string) Result {
 	}
 	// 人力成本
 	if containsAny(q, cfg.IntentHRCostKeywords) {
-		return e.queryHRCost(from, to)
+		return e.queryHRBreakdown(from, to)
 	}
 	// 整体支出
 	if containsAny(q, cfg.FallbackMonthlyExpenseKeywords) {
@@ -946,36 +953,84 @@ ORDER BY net_out DESC
 }
 
 func (e *Engine) queryHRCost(from, to string) Result {
-	sqlTxt := `
-SELECT COALESCE(SUM(CASE WHEN direction='借' THEN amount ELSE 0 END), 0)
+	return e.queryHRBreakdown(from, to)
+}
+
+func (e *Engine) queryHRBreakdown(from, to string) Result {
+	start := from + "-01"
+	end := monthEndDay(to)
+	periodLabel := displayPeriod(from, to)
+
+	accountSQL := `
+SELECT
+  COALESCE(SUM(CASE WHEN direction='借' AND account_code IN ('66020101','66022301') THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS wage,
+  COALESCE(SUM(CASE WHEN direction='借' AND account_code IN ('66020102','66022302') THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS social,
+  COALESCE(SUM(CASE WHEN direction='借' AND account_code IN ('66020103','66022303') THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS housing
 FROM journal
 WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
   AND voucher_date BETWEEN ? AND ?
-  AND (account_name IN ('工资','社保','公积金','福利费') OR account_code LIKE '2211%' OR account_code LIKE '660201%')
 `
-	var total float64
-	e.db.QueryRow(sqlTxt, e.Company, e.Company, from+"-01", monthEndDay(to)).Scan(&total)
+	cashSQL := `
+SELECT
+  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND summary LIKE '%工资%' THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS wage,
+  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND (summary LIKE '%社保%' OR summary LIKE '%社保扣款%') THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS social,
+  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND summary LIKE '%公积金%' THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS housing
+FROM journal
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND voucher_date BETWEEN ? AND ?
+`
+
+	var accountWage, accountSocial, accountHousing float64
+	var cashWage, cashSocial, cashHousing float64
+	e.db.QueryRow(accountSQL, e.Company, e.Company, start, end).Scan(&accountWage, &accountSocial, &accountHousing)
+	e.db.QueryRow(cashSQL, e.Company, e.Company, start, end).Scan(&cashWage, &cashSocial, &cashHousing)
+
+	accountTotal := round2(accountWage + accountSocial + accountHousing)
+	cashTotal := round2(cashWage + cashSocial + cashHousing)
 	usedFallback := false
-	if total == 0 {
-		// 兜底：有些库只保留余额表，不保留工资分录
+	if accountTotal == 0 {
+		var fallbackTotal float64
 		e.db.QueryRow(`
 SELECT COALESCE(SUM(closing_balance), 0)
 FROM balance_sheet
 WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
   AND period = ?
   AND (account_name LIKE '%应付职工薪酬%' OR account_code LIKE '2211%')
-`, e.Company, e.Company, to).Scan(&total)
-		usedFallback = true
+`, e.Company, e.Company, to).Scan(&fallbackTotal)
+		if fallbackTotal > 0 {
+			accountTotal = round2(fallbackTotal)
+			usedFallback = true
+		}
 	}
+
 	return Result{
 		Success: true,
-		Message: fmt.Sprintf("%s 人力成本 %.2f 元", to, total),
-		Data:    map[string]any{"total": total, "period": to},
+		Message: fmt.Sprintf("%s 人力成本（账上）%.2f 元；银行卡实际支出 %.2f 元。工资/社保/公积金已拆分返回。", periodLabel, accountTotal, cashTotal),
+		Data: map[string]any{
+			"period": periodLabel,
+			"total":  accountTotal,
+			"hr_breakdown": map[string]any{
+				"accounting": map[string]any{
+					"工资": round2(accountWage),
+					"社保": round2(accountSocial),
+					"公积金": round2(accountHousing),
+					"合计": accountTotal,
+				},
+				"cash": map[string]any{
+					"工资": round2(cashWage),
+					"社保": round2(cashSocial),
+					"公积金": round2(cashHousing),
+					"合计": cashTotal,
+				},
+			},
+		},
 		ExecutedSQL: []string{
-			fmt.Sprintf("queryHRCost: %s [args: %s, %s, %s]", sqlTxt, e.Company, from+"-01", monthEndDay(to)),
+			fmt.Sprintf("queryHRBreakdown(accounting): %s [args: %s, %s, %s]", accountSQL, e.Company, start, end),
+			fmt.Sprintf("queryHRBreakdown(cash): %s [args: %s, %s, %s]", cashSQL, e.Company, start, end),
 		},
 		CalculationLogs: []string{
-			fmt.Sprintf("[人力成本口径] 工资/社保/公积金/福利费借方合计 %.2f 元", total),
+			fmt.Sprintf("[人力成本-账上] 工资=%.2f 社保=%.2f 公积金=%.2f 合计=%.2f", round2(accountWage), round2(accountSocial), round2(accountHousing), accountTotal),
+			fmt.Sprintf("[人力成本-现金] 工资=%.2f 社保=%.2f 公积金=%.2f 合计=%.2f", round2(cashWage), round2(cashSocial), round2(cashHousing), cashTotal),
 			fmt.Sprintf("[兜底触发] %v", usedFallback),
 		},
 	}
@@ -1212,6 +1267,14 @@ func shouldForceDualPerspective(q string) bool {
 
 func shouldBypassDualPerspective(q, entity string) bool {
 	return strings.TrimSpace(entity) != "" && !isGenericMetricEntity(entity)
+}
+
+func shouldUseHRBreakdown(q string, cfg RuleConfig) bool {
+	asksBreakdown := containsAny(q, []string{"工资", "社保", "公积金", "分别", "拆分", "拆开", "明细", "构成"})
+	if containsAny(q, cfg.IntentHRCostKeywords) && asksBreakdown {
+		return true
+	}
+	return containsAny(q, []string{"工资", "社保", "公积金"}) && containsAny(q, []string{"多少", "明细", "分别", "合计", "成本"})
 }
 
 func isGenericMetricEntity(entity string) bool {
