@@ -83,6 +83,17 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 		}
 	}
 
+	// 1.1) 显式年份累计: 2026年累计/全年/年内
+	yearCumulativeRe := regexp.MustCompile(`(20\d{2})年\s*(?:累计|全年|年内|累计销售额|累计收入|累计营收|累计回款)`)
+	if m := yearCumulativeRe.FindStringSubmatch(q); len(m) == 2 {
+		y := mustAtoi(m[1])
+		endMonth := 12
+		if y == year {
+			endMonth = anchorMonth
+		}
+		return fmt.Sprintf("%04d-01", y), fmt.Sprintf("%04d-%02d", y, endMonth)
+	}
+
 	// 2) 明确的年月出现（可包含中文月份）
 	ymRe := regexp.MustCompile(`(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月`)
 	yms := ymRe.FindAllStringSubmatch(q, -1)

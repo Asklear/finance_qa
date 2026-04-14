@@ -50,6 +50,32 @@ func TestQueryRealEntityQuestionStillUsesCounterpartyPath(t *testing.T) {
 	}
 }
 
+func TestEntityYearCumulativeUsesYearRangeInsteadOfSingleMonth(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("飞未云科2026年累计销售额多少")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	amount, ok := res.Data["amount"].(float64)
+	if !ok {
+		t.Fatalf("missing amount in response: %+v", res.Data)
+	}
+	// test db has 2026-01 revenue=1200 and 2026-02 revenue=800 for 飞未云科
+	if amount != 2000 {
+		t.Fatalf("want cumulative amount=2000, got=%v message=%s", amount, res.Message)
+	}
+	if !strings.Contains(res.Message, "2026-01~2026-02") {
+		t.Fatalf("expected period range in message, got: %s", res.Message)
+	}
+}
+
 func TestEntityCoreMetricStillUsesMandatoryDualPerspective(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)

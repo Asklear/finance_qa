@@ -552,6 +552,7 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 		usedRetro = true
 	}
 	roleLabel := fmt.Sprintf("（识别为[%s]）", role)
+	periodLabel := displayPeriod(from, to)
 
 	logs := []string{
 		fmt.Sprintf("[对手方识别] entity=%s role=%s confidence=%.3f signals=%v", entity, role, classification.Confidence, classification.Signals),
@@ -586,11 +587,11 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 	case containsAny(q, []string{"回款", "到账", "收款"}) && !containsAny(q, []string{"预收款", "应收款"}):
 		amount := round2(snap.BankIn)
 		if amount == 0 {
-			return Result{Success: false, Message: fmt.Sprintf("[%s] 在 %s 未找到回款/到账记录", entity, to)}
+			return Result{Success: false, Message: fmt.Sprintf("[%s] 在 %s 未找到回款/到账记录", entity, periodLabel)}
 		}
-		msg := fmt.Sprintf("[%s]%s %s 回款 %.2f 元", entity, roleLabel, to, amount)
+		msg := fmt.Sprintf("[%s]%s %s 回款 %.2f 元", entity, roleLabel, periodLabel, amount)
 		if snap.ComparisonBasis == "historical_receipt" || snap.ComparisonBasis == "historical_receipt_and_current_revenue" {
-			msg = fmt.Sprintf("[%s]%s %s 到账 %.2f 元。数据库能确认这是历史应收回款相关，但不能直接当成本月新收入。", entity, roleLabel, to, amount)
+			msg = fmt.Sprintf("[%s]%s %s 到账 %.2f 元。数据库能确认这是历史应收回款相关，但不能直接当成当期新收入。", entity, roleLabel, periodLabel, amount)
 		}
 		resultData["amount"] = amount
 		resultData["total"] = amount
@@ -598,11 +599,11 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 	case containsAny(q, []string{"销售额", "收入", "营收"}):
 		if snap.RevenueNet > 0 {
 			amount := round2(snap.RevenueNet)
-			msg := fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元", entity, roleLabel, to, amount)
+			msg := fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元", entity, roleLabel, periodLabel, amount)
 			if snap.ComparisonBasis == "historical_receipt_and_current_revenue" {
-				msg = fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元；另有到账 %.2f 元属于历史应收回款相关，不能直接并成当月销售额。", entity, roleLabel, to, amount, round2(snap.BankIn))
+				msg = fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元；另有到账 %.2f 元属于历史应收回款相关，不能直接并成当期销售额。", entity, roleLabel, periodLabel, amount, round2(snap.BankIn))
 			} else if taxReport.Output.Included && taxReport.Output.TaxAmount > 0 && approxEqual(snap.BankIn, taxReport.Output.AccrualAmount+taxReport.Output.TaxAmount) {
-				msg = fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元；到账和收入的差额 %.2f 元主要是销项税。", entity, roleLabel, to, amount, round2(taxReport.Output.TaxAmount))
+				msg = fmt.Sprintf("[%s]%s %s 账上确认收入 %.2f 元；到账和收入的差额 %.2f 元主要是销项税。", entity, roleLabel, periodLabel, amount, round2(taxReport.Output.TaxAmount))
 			}
 			resultData["amount"] = amount
 			resultData["total"] = amount
@@ -610,7 +611,7 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 		}
 		if snap.BankIn > 0 {
 			amount := round2(snap.BankIn)
-			msg := fmt.Sprintf("[%s]%s %s 仅看到到账 %.2f 元，暂未看到同月收入确认分录。", entity, roleLabel, to, amount)
+			msg := fmt.Sprintf("[%s]%s %s 仅看到到账 %.2f 元，暂未看到同期间收入确认分录。", entity, roleLabel, periodLabel, amount)
 			resultData["amount"] = amount
 			resultData["total"] = amount
 			return Result{Success: true, Message: msg, Data: resultData, ExecutedSQL: sqls, CalculationLogs: logs}
@@ -621,7 +622,7 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 			amount = round2(snap.BookExpense + snap.BookCost)
 		}
 		if amount > 0 {
-			msg := fmt.Sprintf("[%s]%s %s 报销/费用 %.2f 元", entity, roleLabel, to, amount)
+			msg := fmt.Sprintf("[%s]%s %s 报销/费用 %.2f 元", entity, roleLabel, periodLabel, amount)
 			resultData["amount"] = amount
 			resultData["total"] = amount
 			return Result{Success: true, Message: msg, Data: resultData, ExecutedSQL: sqls, CalculationLogs: logs}
@@ -634,9 +635,9 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 			label = "付款"
 		}
 		if amount > 0 {
-			msg := fmt.Sprintf("[%s]%s %s %s %.2f 元", entity, roleLabel, to, label, amount)
+			msg := fmt.Sprintf("[%s]%s %s %s %.2f 元", entity, roleLabel, periodLabel, label, amount)
 			if role == "supplier" || role == "mixed" {
-				msg = fmt.Sprintf("[%s]%s %s 属于供应商相关，%s %.2f 元，不应归到收入差异里。", entity, roleLabel, to, label, amount)
+				msg = fmt.Sprintf("[%s]%s %s 属于供应商相关，%s %.2f 元，不应归到收入差异里。", entity, roleLabel, periodLabel, label, amount)
 			}
 			resultData["amount"] = amount
 			resultData["total"] = amount
@@ -1412,4 +1413,14 @@ func parsePeriod(period string) (int, int) {
 		return y, m
 	}
 	return 0, 0
+}
+
+func displayPeriod(from, to string) string {
+	if strings.TrimSpace(from) == "" {
+		return to
+	}
+	if from == to {
+		return to
+	}
+	return from + "~" + to
 }
