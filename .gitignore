@@ -8,6 +8,10 @@ financeqa
 # Database
 *.db
 *.db-*
+*.db.bak*
+*.bak.db
+*.bak.sqlite
+*.sqlite.bak*
 
 # OS
 .DS_Store

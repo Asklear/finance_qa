@@ -1,30 +1,22 @@
 ---
 name: "finance"
-description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可追溯过程 + 宿主LLM兜底）"
+description: "v1.4.0｜面向老板问答的财务查询能力说明（双视角 + 可追溯过程 + 上层Agent兜底）"
 ---
 
-# finance_qa OpenClaw 接入手册（全功能暴露）
+# finance_qa Agent 调用手册（全功能暴露）
 
-本文档目标：把本代码库所有已实现功能与接口完整暴露，便于 OpenClaw 直接调用。
+本文档目标：把本代码库所有已实现功能与接口完整暴露，便于各类 Agent 直接调用。
 
-## 1. 插件定位
+## 1. 能力定位
 
 `finance_qa` 是老板财务助理引擎，能力分为四层：
 
 1. 数据层：初始化库、导入报表、目录同步。
 2. 规则层：自然语言意图识别、实体识别、账期识别。
 3. 计算层：双视角核算（银行卡实际进出账 + 财务报表确认）、税额、应收应付、项目收支等。
-4. 兜底层：输出 `llm_payload` 全量财报上下文给宿主 LLM 做最终判别。
+4. 兜底层：输出 `llm_payload` 全量财报上下文给上层 Agent 或宿主模型做最终判别。
 
-## 2. 运行模式与过程暴露
-
-### 2.1 模式开关（代码实际行为）
-
-1. 正式模式：`APP_ENV=production`。
-2. 测试模式：默认即测试模式（未设置 `APP_ENV=production`）。
-3. 本地兜底：代码中还会读取 `SKILL.md` 是否包含 `当前运行模式：【正式版本】` 文案作为备用判断。
-
-### 2.2 过程字段暴露约定（必须对外返回）
+## 2. 过程暴露要求
 
 所有查询响应都必须暴露以下字段，不可只返回结果值：
 
@@ -37,11 +29,11 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 7. `data.trace.executed_sql`
 8. `data.trace.calculation_logs`
 
-说明：`withTraceData()` 会在缺失时自动补默认 trace，确保宿主可稳定读取中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
+说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
 
 ## 3. 对外接口总览（全量）
 
-## 3.1 CLI 命令接口（`cmd/financeqa/main.go`）
+## 3.1 CLI 命令接口
 
 1. `help | -h | --help`
 2. `init-db`
@@ -68,14 +60,14 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 9. `dimensions import-rules --db <path> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing] [--format json]`
 10. `dimensions preview-import --db <path> --type <dimensions|members> --file <file> [--dimension <code>] [--format json]`
 
-## 3.3 Go SDK 接口（可供宿主服务封装）
+## 3.3 Go SDK 接口（可供上层服务封装）
 
 1. `query.NewEngine(dbPath, company)`
 2. `(*Engine).Query(question)`
 3. `(*Engine).HostLLMPayload(from, to, question)`
 4. `(*Engine).Close()`
 
-## 4. 查询响应契约（OpenClaw 必须按此解析）
+## 4. 查询响应契约（Agent 必须按此解析）
 
 ## 4.1 顶层结构
 
@@ -93,7 +85,7 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 ## 4.2 `answer_method` 含义
 
 1. `sql`: 规则与SQL计算得到结果。
-2. `llm_payload`: 插件无法直接准确回答，转交宿主 LLM 基于全量数据推理。
+2. `llm_payload`: 系统无法直接准确回答，转交上层 Agent 基于全量数据推理。
 
 ## 4.3 失败兜底结构（`success=false` 常见字段）
 
@@ -103,27 +95,29 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 4. `data.counterparty_sample`
 5. `data.llm_payload`
 
-## 5. 意图识别与处理器映射（代码实装）
+## 5. 问题类型与处理模块
 
-`ClassifyIntent(question)` 输出意图后分流：
+系统会根据老板的问题，自动分配到以下处理模块：
 
-1. `host_payload` -> `queryHostLLMPayload`
-2. `identity` -> `detectEntityRole`
-3. `arap` -> `queryARAP`
-4. `large_transaction` -> `queryLargeBankTransactions`
-5. `tax` -> `queryTax`
-6. `monthly_summary` -> `queryMonthlySummary`
-7. `analysis` -> `queryAnalysis`
-8. `fallback` -> `queryFallback`
-9. 其他 -> `queryPrecise`
+1. 原始数据包输出：把全量财报与过程数据打包给上层 Agent。
+2. 主体身份识别：判断某个名字更像客户、供应商、员工，还是混合往来。
+3. 应收应付查询：查应收账款、应付账款、项目应收应付。
+4. 大额流水查询：查最大流入对手方、最大流出对手方、单笔大额流水。
+5. 税额查询：查销项税、进项税、净税额。
+6. 月度经营总结：查当月收入、成本、利润、支出、经营情况。
+7. 经营分析：查账龄、健康度、差异原因分析。
+8. 兜底查询：处理供应商数量、人力成本、整体支出、项目收入成本、某主体金额等问题。
+9. 精确余额查询：查货币资金、银行存款、指定科目期末余额。
 
-此外：
-1. 若命中核心指标（收入/成本/利润/销售额）且不属于排除场景，会强制走 `queryDualPerspectiveForCoreMetric`。
-2. 若精确查询失败且存在实体，会自动降级到 fallback 路径。
+补充规则：
+
+1. 总量型核心指标问题（收入/成本/利润/销售额）默认优先返回双视角结果。
+2. 如果问题里带有明确的真实主体，优先回答这个主体的金额或状态，不强行改成整月汇总。
+3. 当直接规则无法稳定回答时，自动降级输出 `llm_payload` 给上层 Agent 继续判断。
 
 ## 6. 已支持问题能力清单（老板问法）
 
-以下问题均有代码路径支撑，且会返回中间过程：
+以下问题当前都已支持，且会返回中间过程：
 
 1. 月度收入/成本/利润（双视角：实际进出账 + 报表确认）。
 2. 某客户/供应商/主体在某期间金额（穿透审计）。
@@ -139,17 +133,17 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 12. 某月应收账款（余额表口径）。
 13. 某月应付账款（余额表口径）。
 14. 某项目应收/应付（项目净流入口径）。
-15. 某主体身份识别（客户/供应商/员工/未知）。
+15. 某主体身份识别（客户/供应商/员工/混合/未知）。
 16. 某期间最大流入对手方/大额流水查询。
 17. 某科目期末余额精确查询（如“货币资金余额是多少”）。
 18. 账龄与健康度分析（应收/应付账龄桶与健康评分）。
 
-## 7. 双视角强制策略（核心指标）
+## 7. 双视角返回规则（核心指标）
 
-当问题涉及 `收入/成本/利润/销售额`，默认返回两套口径：
+当问题涉及总量型 `收入/成本/利润/销售额`，默认返回两套口径：
 
-1. 老板可理解表达：`银行卡上看` 或 `卡上实际进出账`（对应内部 `money_view` / `money_value`）。
-2. 老板可理解表达：`账上看` 或 `财务报表确认`（对应内部 `account_view` / `account_value`）。
+1. 老板可理解表达：`银行卡上看` 或 `卡上实际进出账`。
+2. 老板可理解表达：`账上看` 或 `财务报表确认`。
 
 并同步提供兼容字段：
 
@@ -158,15 +152,18 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 3. `净现金流`
 4. `账上看利润` / `财务报表确认利润`
 
-说明：对老板的回复里不要直接说“钱口径/账口径”，统一用“银行卡上看/账上看”这类自然说法。
+说明：
 
-## 8. 宿主 LLM 兜底接口（不可直接调宿主模型时）
+1. 对老板的回复里不要直接说“钱口径/账口径”，统一用“银行卡上看/账上看”这类自然说法。
+2. 如果问题明确在问某个客户、供应商、员工或项目，优先返回该主体结果，不强行展开整月双视角。
 
-代码内不直接调用宿主 LLM，改为提供全量数据接口：
+## 8. 上层 Agent 兜底接口
+
+代码内不直接调用上层模型，改为提供全量数据接口：
 
 1. `query` 自动 fallback 时返回 `data.llm_payload`。
 2. 可主动调用 `host-data` 直接获取 `llm_payload`。
-3. 宿主 LLM/接口层职责分离：接口负责完整暴露中间过程、证据等级、SQL 与规则链；宿主 LLM 只负责最终自然语言判断与归纳，老板最终回复默认不展开这些过程字段。
+3. 上层 Agent/接口层职责分离：接口负责完整暴露中间过程、证据等级、SQL 与规则链；上层 Agent 只负责最终自然语言判断与归纳，老板最终回复默认不展开这些过程字段。
 
 `llm_payload` 内容：
 
@@ -181,39 +178,41 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 9. `trace.intent`
 10. `trace.strategy`
 
-## 9. OpenClaw 推荐工具封装（对接层）
+## 9. 推荐工具封装（对接层）
 
-建议在 OpenClaw 暴露以下工具名（桥接到 CLI）：
+建议在任意 Agent 平台暴露以下工具名（桥接到 CLI）：
 
 1. `finance-query`
 2. `finance-host-data`
 3. `finance-import`
 4. `finance-sync`
 5. `finance-dimensions`
-6. 对 OpenClaw / Claude Code 的桥接层，优先保留原始结构化响应与全部已实现字段，不要提前做摘要裁剪或白名单过滤。
+6. 对任意 Agent 的桥接层，优先保留原始结构化响应与全部已实现字段，不要提前做摘要裁剪或白名单过滤。
 
 最小调用策略：
 
 1. 先调 `finance-query`。
 2. 若 `success=true`，直接回复并附中间过程字段。
-3. 若 `success=false` 或 `answer_method=llm_payload`，读取 `data.llm_payload` 交宿主推理。
+3. 若 `success=false` 或 `answer_method=llm_payload`，读取 `data.llm_payload` 交上层 Agent 推理。
 
 ## 9.1 关键实现差异（必须注意）
 
 `financeqa query` 的 CLI 行为是：
 
 1. 成功：stdout 输出完整 JSON，exit code=0。
-2. 失败：仅 stderr 输出 `message`，exit code=1（不会输出 JSON 结构）。
+2. 业务失败：stdout 仍输出完整 JSON，stderr 额外输出 `message`，exit code=1。
+3. 参数错误或系统错误：可能只有 stderr，没有完整业务 JSON。
 
-这意味着如果桥接层只依赖 CLI stdout，会丢失 `llm_payload/trace`。
+这意味着对接层不能只盯 `exit code`，而要优先解析 stdout 里的结构化结果。
 
 推荐做法：
 
-1. 优先在桥接层直接用 Go SDK（`Engine.Query`）拿结构化 `Result`。
-2. 若必须走 CLI，建议桥接层对失败场景二次调用 `host-data`，至少保证有全量 `llm_payload`。
-3. 桥接层对外接口要“统一输出JSON”，不要把 CLI 的非0退出直接透传给老板。
+1. 优先解析 stdout JSON，再看 `success` 和 `answer_method`。
+2. 若对接层支持 Go SDK，可直接拿结构化结果。
+3. 若 stdout 没拿到结构化结果，再调用 `host-data` 兜底。
+4. 对外接口要“统一输出 JSON”，不要把 CLI 的非0退出直接透传给老板。
 
-## 10. OpenClaw 返回规范（必须透出中间过程）
+## 10. Agent 返回规范（必须透出中间过程）
 
 给老板回复时建议“双层输出”：
 
@@ -292,7 +291,7 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 # 查询
 ./financeqa query --db finance.db --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
 
-# 主动获取宿主LLM数据包
+# 主动获取上层 Agent 数据包
 ./financeqa host-data --db finance.db --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
 
 # 单文件导入
@@ -358,9 +357,11 @@ description: "v1.3.0｜面向老板问答的财务查询插件（双口径 + 可
 4. 缺数据时必须返回 `llm_payload` 或明确缺口，不可编造。
 5. 供应商相关回答要返回具体名单（`data.suppliers`），不能只给总数。
 6. 问”今年/本月/上个月”时，账期按数据库最新凭证日期自动锚定，不按自然月盲算。
-7. 公司名称支持简称/别名智能匹配，桥接层不要自行裁剪公司名再传入。
-8. **回答老板前，过一遍第12节原则，确认没有犯反例中的错误。**
+7. 公司名称支持简称/别名智能匹配，对接层不要自行裁剪公司名再传入。
+8. 主体身份是按当前问题和证据实时判断的，同一家公司可能既是客户也是供应商。
+9. 高频问法关键词支持配置化调整，尤其是人力成本、税、经营状态、整体支出这几类常见问法。
+10. **回答老板前，过一遍第12节原则，确认没有犯反例中的错误。**
 
 ---
 
-若代码与文档冲突，以 `cmd/financeqa/main.go` 与 `internal/query/engine.go` 实际实现为准。
+若文档与程序返回结果冲突，以实际接口返回字段为准。

@@ -29,7 +29,7 @@
 
 ### 1. 环境依赖
 * **开发环境**：`Go >= 1.20`
-* **底层库依赖**：请确保系统已安装 `Python3` 及 `xlrd` 库（用于保障老系统账本解析稳定）。
+* **底层库依赖（可选）**：`Python3 + xlrd` 仅在解析极老旧 XLS 文件时作为回退路径；常规场景可不安装。
 * **数据库**：使用原生的 `SQLite3` (默认路径 `finance.db` 和测试表 `test_data/`)。
 
 ### 2. 构建与运行
@@ -74,11 +74,20 @@ FINANCEQA_METRIC_STOPWORDS="收入,成本,利润,经营状况" ./financeqa query
 支持的规则字段（`rules.json`）：
 
 1. `generic_metric_stopwords`：泛指标词，避免被误识别成实体。
-2. `role_mixed_min_ratio`：次高分/最高分达到该比例时，判定为 `mixed`。
-3. `role_mixed_min_positive_score`：计入“有效角色”的最低分。
-4. `role_mixed_min_positive_roles`：触发 `mixed` 所需最少有效角色数量。
-5. `role_min_primary_score`：最高分低于该值时，判定为 `unknown`。
-6. `role_min_confidence`：置信度低于该值时，判定为 `unknown`。
+2. `intent_arap_keywords`：应收/应付/往来类问法关键词。
+3. `intent_hr_cost_keywords`：人力成本类高频词，同步用于意图识别与 fallback 路由。
+4. `intent_tax_keywords`：税类高频词，例如“税/销项/进项/增值税”。
+5. `intent_health_keywords`：经营健康度/状态类问法关键词。
+6. `intent_fallback_keywords`：兜底问法关键词。
+7. `intent_analysis_keywords`：分析/评分/风险类问法关键词。
+8. `intent_host_payload_keywords`：要求输出原始数据包给宿主 LLM 的关键词。
+9. `intent_monthly_summary_keywords`：月度经营概括/总结类关键词。
+10. `fallback_monthly_expense_keywords`：整体支出/支出汇总类关键词。
+11. `role_mixed_min_ratio`：次高分/最高分达到该比例时，判定为 `mixed`。
+12. `role_mixed_min_positive_score`：计入“有效角色”的最低分。
+13. `role_mixed_min_positive_roles`：触发 `mixed` 所需最少有效角色数量。
+14. `role_min_primary_score`：最高分低于该值时，判定为 `unknown`。
+15. `role_min_confidence`：置信度低于该值时，判定为 `unknown`。
 
 支持的环境变量覆盖项：
 
@@ -89,6 +98,28 @@ FINANCEQA_METRIC_STOPWORDS="收入,成本,利润,经营状况" ./financeqa query
 5. `FINANCEQA_ROLE_MIXED_MIN_POSITIVE_ROLES`
 6. `FINANCEQA_ROLE_MIN_PRIMARY_SCORE`
 7. `FINANCEQA_ROLE_MIN_CONFIDENCE`
+8. `FINANCEQA_INTENT_ARAP_KEYWORDS`
+9. `FINANCEQA_INTENT_HR_COST_KEYWORDS`
+10. `FINANCEQA_INTENT_TAX_KEYWORDS`
+11. `FINANCEQA_INTENT_HEALTH_KEYWORDS`
+12. `FINANCEQA_INTENT_FALLBACK_KEYWORDS`
+13. `FINANCEQA_INTENT_ANALYSIS_KEYWORDS`
+14. `FINANCEQA_INTENT_HOST_PAYLOAD_KEYWORDS`
+15. `FINANCEQA_INTENT_MONTHLY_SUMMARY_KEYWORDS`
+16. `FINANCEQA_FALLBACK_MONTHLY_EXPENSE_KEYWORDS`
+
+低频硬编码保留清单：
+
+1. 大额交易识别词：如“最大”“单笔”“流入对手方”“流出对手方”。这类问法比较稳定，且误配风险高，暂时保留在代码里做强约束。
+2. 身份识别词：如“是谁”“身份”“谁是”“哪里的”。这类词数量少、语义边界清楚，继续硬编码能减少配置污染。
+3. 精确余额词：如“期末”“余额”“查询余额”“还有多少”。这类属于通用财务问法基座，不计划频繁调参。
+4. 少量项目组合判断：例如“项目”与“收入/成本/支出/应收/应付/数据出来”的组合分流。这里不仅是关键词命中，还带上下文组合关系，放在代码里更容易保持可读性。
+
+保留原则：
+
+1. 高频、经常需要线上微调的词放到 `rules.json`。
+2. 低频、语义稳定、误配代价高的词保留在代码里。
+3. 若某类硬编码词在真实老板问法里开始频繁出现变体，再升级为配置项。
 
 ## 三、代码集成与调用指南 (API / SDK)
 
@@ -181,7 +212,7 @@ finance_qa/
 
 ### 1. 环境依赖
 *   **Go**: `>= 1.20`
-*   **Python3**: 部分老旧 XLS 解析需依赖 `xlrd` 插件作为容错回退。
+*   **Python3（可选）**: 仅在极老旧 XLS 容错回退场景下需要 `xlrd`。
 *   **环境变量**: 若需启用 LLM 回退功能，请配置 `OPENAI_API_KEY`。
 
 ### 2. 运行测试

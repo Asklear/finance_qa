@@ -40,28 +40,33 @@ func main() {
 	}
 	defer db.Close()
 
+	latestPeriod := detectLatestPeriod(db)
+	prev2Period := shiftMonth(latestPeriod, -2)
+	latestMonthLabel := monthLabel(latestPeriod)
+	prev2MonthLabel := monthLabel(prev2Period)
+
 	questions := []AuditQuestion{
-		{1, "2026年1月收入/成本多少", []validator{mustSuccess, noMetricEntityTrap, mustExposeTrace, mustContainRevenueAndCost}},
-		{2, "2026年2月收入/成本/利润分别是多少", []validator{mustSuccess, noMetricEntityTrap, mustExposeTrace, mustContainRevenueCostProfit}},
-		{3, "2026年2月整体支出多少", []validator{mustSuccess, mustExposeTrace}},
-		{4, "1月人力成本（应付职工薪酬）", []validator{mustSuccess, mustExposeTrace}},
+		{1, fmt.Sprintf("%s收入/成本多少", periodAsCN(prev2Period)), []validator{mustSuccess, noMetricEntityTrap, mustExposeTrace, mustContainRevenueAndCostFor(prev2Period)}},
+		{2, fmt.Sprintf("%s收入/成本/利润分别是多少", periodAsCN(latestPeriod)), []validator{mustSuccess, noMetricEntityTrap, mustExposeTrace, mustContainRevenueCostProfitFor(latestPeriod)}},
+		{3, fmt.Sprintf("%s整体支出多少", periodAsCN(latestPeriod)), []validator{mustSuccess, mustExposeTrace}},
+		{4, fmt.Sprintf("%s人力成本（应付职工薪酬）", prev2MonthLabel), []validator{mustSuccess, mustExposeTrace}},
 		{5, "供应商有多少个？", []validator{mustSuccess, mustExposeTrace, mustListSuppliers}},
 		{6, "南京林悦智能科技有限公司数据出来了吗", []validator{mustSuccess, mustExposeTrace}},
 		{7, "梁梦瑶报销了多少钱", []validator{mustSuccess, mustExposeTrace}},
 		{8, "飞未云科(深圳)技术有限公司支付的成本是多少", []validator{mustSuccess, mustExposeTrace}},
-		{9, "2026年2月销项税额是多少", []validator{mustSuccess, mustExposeTrace}},
-		{10, "2026年2月进项税额是多少", []validator{mustSuccess, mustExposeTrace}},
-		{11, "2026年2月总成本", []validator{mustSuccess, mustExposeTrace}},
-		{12, "资产负债表：2026年2月货币资金余额", []validator{mustSuccess, mustExposeTrace}},
+		{9, fmt.Sprintf("%s销项税额是多少", periodAsCN(latestPeriod)), []validator{mustSuccess, mustExposeTrace}},
+		{10, fmt.Sprintf("%s进项税额是多少", periodAsCN(latestPeriod)), []validator{mustSuccess, mustExposeTrace}},
+		{11, fmt.Sprintf("%s总成本", periodAsCN(latestPeriod)), []validator{mustSuccess, mustExposeTrace}},
+		{12, fmt.Sprintf("资产负债表：%s货币资金余额", periodAsCN(latestPeriod)), []validator{mustSuccess, mustExposeTrace}},
 		{13, "当前的应收账款汇总", []validator{mustSuccess, mustExposeTrace}},
 		{14, "南京市中闻（南京）律师事务所的付款记录", []validator{mustSuccess, mustExposeTrace}},
 		{15, "公司经营状况深度评估", []validator{mustExposeTrace}},
-		{16, "辽宁金程信息科技有限公司2月销售额多少", []validator{mustSuccess, mustExposeTrace, mustDifferentiateSettlementVsRecognition}},
-		{17, "南京林悦智能科技有限公司2月成本多少", []validator{mustSuccess, mustExposeTrace, mustTreatSupplierAsCost}},
+		{16, fmt.Sprintf("辽宁金程信息科技有限公司%s销售额多少", latestMonthLabel), []validator{mustSuccess, mustExposeTrace, mustDifferentiateSettlementVsRecognition}},
+		{17, fmt.Sprintf("南京林悦智能科技有限公司%s成本多少", latestMonthLabel), []validator{mustSuccess, mustExposeTrace, mustTreatSupplierAsCost}},
 	}
 
 	fmt.Println("# 🚀 南京优集生产数据：全量回归审计报告 (Strict)")
-	fmt.Printf("> 生成时间: %s | 锚定账期: 2026-02 | 数据库: %s\n\n", time.Now().Format("2006-01-02 15:04:05"), dbPath)
+	fmt.Printf("> 生成时间: %s | 锚定账期: %s | 数据库: %s\n\n", time.Now().Format("2006-01-02 15:04:05"), latestPeriod, dbPath)
 	fmt.Println("| ID | 审计提问 | 状态 | 关键原因 | 耗时 |")
 	fmt.Println("|:---|:---|:---:|:---|---:|")
 
@@ -100,7 +105,8 @@ func main() {
 }
 
 func runQuery(company, question string) (QueryResult, error, string) {
-	cmd := exec.Command("go", "run", "cmd/financeqa/main.go", "query", "--company", company, question)
+	goBin := resolveGoBin()
+	cmd := exec.Command(goBin, "run", "cmd/financeqa/main.go", "query", "--company", company, question)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -110,6 +116,16 @@ func runQuery(company, question string) (QueryResult, error, string) {
 	var res QueryResult
 	err := json.Unmarshal([]byte(raw), &res)
 	return res, err, raw
+}
+
+func resolveGoBin() string {
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	if _, err := os.Stat("/opt/homebrew/bin/go"); err == nil {
+		return "/opt/homebrew/bin/go"
+	}
+	return "go"
 }
 
 func mustLocateFinanceDB() string {
@@ -164,56 +180,120 @@ func noMetricEntityTrap(res QueryResult, _ *sql.DB) []string {
 	return nil
 }
 
-func mustContainRevenueAndCost(res QueryResult, db *sql.DB) []string {
-	expectedRevenue, expectedCost := queryRevenueAndCost(db, "2026-01")
-	book, ok := asMap(res.Data["财务做账口径(看利润)"])
-	if !ok {
-		return []string{"缺少 财务做账口径(看利润)"}
-	}
+func mustContainRevenueAndCostFor(period string) validator {
+	return func(res QueryResult, db *sql.DB) []string {
+		expectedRevenue, expectedCost := queryRevenueAndCost(db, period)
+		book, ok := asMap(res.Data["财务做账口径(看利润)"])
+		if !ok {
+			return []string{"缺少 财务做账口径(看利润)"}
+		}
 
-	reasons := make([]string, 0)
-	rev, revOK := findFloat(book, []string{"营业收入", "收入"})
-	cost, costOK := findFloat(book, []string{"营业成本及费用", "总成本", "成本"})
-	if !revOK {
-		reasons = append(reasons, "未返回营业收入")
+		reasons := make([]string, 0)
+		rev, revOK := findFloat(book, []string{"营业收入", "收入"})
+		cost, costOK := findFloat(book, []string{"营业成本及费用", "总成本", "成本"})
+		if !revOK {
+			reasons = append(reasons, "未返回营业收入")
+		}
+		if !costOK {
+			reasons = append(reasons, "未返回成本")
+		}
+		if revOK && expectedRevenue > 0 && !approxEqual(rev, expectedRevenue) {
+			reasons = append(reasons, fmt.Sprintf("营业收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
+		}
+		if costOK && expectedCost > 0 && !approxEqual(cost, expectedCost) {
+			reasons = append(reasons, fmt.Sprintf("成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
+		}
+		return reasons
 	}
-	if !costOK {
-		reasons = append(reasons, "未返回成本")
+}
+
+func mustContainRevenueCostProfitFor(period string) validator {
+	return func(res QueryResult, db *sql.DB) []string {
+		expectedRevenue, expectedCost := queryRevenueAndCost(db, period)
+		expectedProfit := queryNetProfit(db, period)
+		book, ok := asMap(res.Data["财务做账口径(看利润)"])
+		if !ok {
+			return []string{"缺少 财务做账口径(看利润)"}
+		}
+
+		reasons := make([]string, 0)
+		rev, revOK := findFloat(book, []string{"营业收入", "收入"})
+		cost, costOK := findFloat(book, []string{"营业成本及费用", "总成本", "成本"})
+		profit, profitOK := findFloat(book, []string{"账面利润", "利润", "净利润"})
+		if !revOK || !costOK || !profitOK {
+			return append(reasons, "未完整返回收入/成本/利润")
+		}
+		if expectedRevenue > 0 && !approxEqual(rev, expectedRevenue) {
+			reasons = append(reasons, fmt.Sprintf("收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
+		}
+		if expectedCost > 0 && !approxEqual(cost, expectedCost) {
+			reasons = append(reasons, fmt.Sprintf("成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
+		}
+		if expectedProfit != 0 && !approxEqual(profit, expectedProfit) {
+			reasons = append(reasons, fmt.Sprintf("利润不匹配: got=%.2f want=%.2f", profit, expectedProfit))
+		}
+		return reasons
 	}
-	if revOK && expectedRevenue > 0 && !approxEqual(rev, expectedRevenue) {
-		reasons = append(reasons, fmt.Sprintf("营业收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
-	}
-	if costOK && expectedCost > 0 && !approxEqual(cost, expectedCost) {
-		reasons = append(reasons, fmt.Sprintf("成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
-	}
-	return reasons
+}
+
+func mustContainRevenueAndCost(res QueryResult, db *sql.DB) []string {
+	// Backward compatible wrapper
+	return mustContainRevenueAndCostFor("2026-01")(res, db)
 }
 
 func mustContainRevenueCostProfit(res QueryResult, db *sql.DB) []string {
-	expectedRevenue, expectedCost := queryRevenueAndCost(db, "2026-02")
-	expectedProfit := queryNetProfit(db, "2026-02")
-	book, ok := asMap(res.Data["财务做账口径(看利润)"])
-	if !ok {
-		return []string{"缺少 财务做账口径(看利润)"}
+	// Backward compatible wrapper
+	return mustContainRevenueCostProfitFor("2026-02")(res, db)
+}
+
+func detectLatestPeriod(db *sql.DB) string {
+	candidates := []string{}
+
+	var p string
+	_ = db.QueryRow(`SELECT MAX(period) FROM income_statement WHERE company LIKE '%南京优集%' AND period IS NOT NULL AND period<>''`).Scan(&p)
+	if p != "" {
+		candidates = append(candidates, p)
+	}
+	_ = db.QueryRow(`SELECT MAX(period) FROM balance_detail WHERE company LIKE '%南京优集%' AND period IS NOT NULL AND period<>''`).Scan(&p)
+	if p != "" {
+		candidates = append(candidates, p)
+	}
+	_ = db.QueryRow(`SELECT MAX(substr(transaction_date,1,7)) FROM bank_statement WHERE company LIKE '%南京优集%' AND transaction_date IS NOT NULL AND transaction_date<>''`).Scan(&p)
+	if p != "" {
+		candidates = append(candidates, p)
 	}
 
-	reasons := make([]string, 0)
-	rev, revOK := findFloat(book, []string{"营业收入", "收入"})
-	cost, costOK := findFloat(book, []string{"营业成本及费用", "总成本", "成本"})
-	profit, profitOK := findFloat(book, []string{"账面利润", "利润", "净利润"})
-	if !revOK || !costOK || !profitOK {
-		return append(reasons, "未完整返回收入/成本/利润")
+	latest := "2026-02"
+	for _, c := range candidates {
+		if c > latest {
+			latest = c
+		}
 	}
-	if expectedRevenue > 0 && !approxEqual(rev, expectedRevenue) {
-		reasons = append(reasons, fmt.Sprintf("收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
+	return latest
+}
+
+func shiftMonth(period string, delta int) string {
+	t, err := time.Parse("2006-01", period)
+	if err != nil {
+		return period
 	}
-	if expectedCost > 0 && !approxEqual(cost, expectedCost) {
-		reasons = append(reasons, fmt.Sprintf("成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
+	return t.AddDate(0, delta, 0).Format("2006-01")
+}
+
+func periodAsCN(period string) string {
+	t, err := time.Parse("2006-01", period)
+	if err != nil {
+		return period
 	}
-	if expectedProfit != 0 && !approxEqual(profit, expectedProfit) {
-		reasons = append(reasons, fmt.Sprintf("利润不匹配: got=%.2f want=%.2f", profit, expectedProfit))
+	return fmt.Sprintf("%d年%d月", t.Year(), int(t.Month()))
+}
+
+func monthLabel(period string) string {
+	t, err := time.Parse("2006-01", period)
+	if err != nil {
+		return period
 	}
-	return reasons
+	return fmt.Sprintf("%d月", int(t.Month()))
 }
 
 func mustListSuppliers(res QueryResult, _ *sql.DB) []string {
@@ -259,25 +339,40 @@ func mustTreatSupplierAsCost(res QueryResult, _ *sql.DB) []string {
 
 func queryRevenueAndCost(db *sql.DB, period string) (float64, float64) {
 	var revenue float64
-	_ = db.QueryRow(`SELECT COALESCE(SUM(current_amount),0) FROM income_statement
-WHERE company LIKE '%南京优集%' AND period = ? AND item_name LIKE '%营业收入%'`, period).Scan(&revenue)
+	_ = db.QueryRow(`
+SELECT COALESCE(SUM(v),0) FROM (
+  SELECT item_name, MAX(current_amount) AS v
+  FROM income_statement
+  WHERE company LIKE '%南京优集%' AND period = ? AND item_name LIKE '%营业收入%'
+  GROUP BY item_name
+)`, period).Scan(&revenue)
 
 	var cost float64
-	_ = db.QueryRow(`SELECT COALESCE(SUM(current_amount),0) FROM income_statement
-WHERE company LIKE '%南京优集%' AND period = ? AND (
+	_ = db.QueryRow(`
+SELECT COALESCE(SUM(v),0) FROM (
+  SELECT item_name, MAX(current_amount) AS v
+  FROM income_statement
+  WHERE company LIKE '%南京优集%' AND period = ? AND (
 	item_name LIKE '%营业成本%' OR
 	item_name LIKE '%税金及附加%' OR
 	item_name LIKE '%销售费用%' OR
 	item_name LIKE '%管理费用%' OR
 	item_name LIKE '%财务费用%'
+  )
+  GROUP BY item_name
 )`, period).Scan(&cost)
 	return round2(revenue), round2(cost)
 }
 
 func queryNetProfit(db *sql.DB, period string) float64 {
 	var profit float64
-	_ = db.QueryRow(`SELECT COALESCE(SUM(current_amount),0) FROM income_statement
-WHERE company LIKE '%南京优集%' AND period = ? AND item_name LIKE '%净利润%'`, period).Scan(&profit)
+	_ = db.QueryRow(`
+SELECT COALESCE(SUM(v),0) FROM (
+  SELECT item_name, MAX(current_amount) AS v
+  FROM income_statement
+  WHERE company LIKE '%南京优集%' AND period = ? AND item_name LIKE '%净利润%'
+  GROUP BY item_name
+)`, period).Scan(&profit)
 	return round2(profit)
 }
 
