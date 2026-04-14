@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -27,6 +29,17 @@ type Importer struct {
 	dim *dimensions.Manager
 }
 
+type ImportOptions struct {
+	Incremental     bool
+	CompanyOverride string
+}
+
+type idempotencyPolicy struct {
+	UpdateMode       string
+	DedupeKeyColumns []string
+	Enabled          bool
+}
+
 func NewImporter(dim *dimensions.Manager) *Importer {
 	return &Importer{dim: dim}
 }
@@ -36,18 +49,24 @@ func (i *Importer) ParseFile(path string) (parser.ParseResult, error) {
 }
 
 func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string, incremental bool) (ImportSummary, error) {
+	return i.ImportFileWithOptions(ctx, dbPath, filePath, ImportOptions{
+		Incremental: incremental,
+	})
+}
+
+func (i *Importer) ImportFileWithOptions(ctx context.Context, dbPath, filePath string, opts ImportOptions) (ImportSummary, error) {
 	// Compatibility mode for merged "财报" files:
 	// try importing both balance_sheet(sheet1) and income_statement(sheet2)
 	// while keeping legacy separate-file imports unchanged.
 	if strings.Contains(strings.ToLower(filepath.Base(filePath)), "财报") {
-		return i.importMergedFinancialReport(ctx, dbPath, filePath, incremental)
+		return i.importMergedFinancialReport(ctx, dbPath, filePath, opts)
 	}
 
 	result, err := parser.ParseFile(filePath)
 	if err != nil {
 		return ImportSummary{}, err
 	}
-	if err := i.ImportParsed(ctx, dbPath, result, incremental); err != nil {
+	if err := i.ImportParsedWithOptions(ctx, dbPath, result, opts); err != nil {
 		return ImportSummary{}, err
 	}
 	return ImportSummary{
@@ -60,7 +79,7 @@ func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string, incr
 	}, nil
 }
 
-func (i *Importer) importMergedFinancialReport(ctx context.Context, dbPath, filePath string, incremental bool) (ImportSummary, error) {
+func (i *Importer) importMergedFinancialReport(ctx context.Context, dbPath, filePath string, opts ImportOptions) (ImportSummary, error) {
 	totalRecords := 0
 	company := ""
 	periodStart := ""
@@ -77,7 +96,7 @@ func (i *Importer) importMergedFinancialReport(ctx context.Context, dbPath, file
 		if len(result.Data) == 0 {
 			continue
 		}
-		if err := i.ImportParsed(ctx, dbPath, result, incremental); err != nil {
+		if err := i.ImportParsedWithOptions(ctx, dbPath, result, opts); err != nil {
 			return ImportSummary{}, err
 		}
 		totalRecords += len(result.Data)
@@ -108,6 +127,12 @@ func (i *Importer) importMergedFinancialReport(ctx context.Context, dbPath, file
 }
 
 func (i *Importer) ImportParsed(ctx context.Context, dbPath string, result parser.ParseResult, incremental bool) error {
+	return i.ImportParsedWithOptions(ctx, dbPath, result, ImportOptions{
+		Incremental: incremental,
+	})
+}
+
+func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, result parser.ParseResult, opts ImportOptions) error {
 	if err := dbschema.Bootstrap(ctx, dbPath); err != nil {
 		return fmt.Errorf("bootstrap sqlite db: %w", err)
 	}
@@ -124,12 +149,31 @@ func (i *Importer) ImportParsed(ctx context.Context, dbPath string, result parse
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if !incremental {
+	resolvedCompany, err := resolveCompanyForImport(ctx, tx, result.Metadata.Company, opts.CompanyOverride)
+	if err != nil {
+		return err
+	}
+	result.Metadata.Company = resolvedCompany
+
+	policy, hasPolicy, err := loadIdempotencyPolicy(ctx, tx, result.Metadata.ReportType)
+	if err != nil {
+		return fmt.Errorf("load idempotency policy: %w", err)
+	}
+	shouldClear := !opts.Incremental
+	if hasPolicy && policy.Enabled {
+		shouldClear = policy.UpdateMode == "full_replace"
+	}
+
+	if shouldClear {
 		if err := clearExisting(ctx, tx, result); err != nil {
 			return err
 		}
 	}
+
 	for _, row := range result.Data {
+		if resolvedCompany != "" {
+			row["company"] = resolvedCompany
+		}
 		// Auto-map missing account codes across all report types using dimension manager
 		if (row["account_code"] == nil || row["account_code"] == "") && row["account_name"] != nil && row["account_name"] != "" {
 			if i.dim != nil {
@@ -146,10 +190,246 @@ func (i *Importer) ImportParsed(ctx context.Context, dbPath string, result parse
 			return err
 		}
 	}
+
+	if hasPolicy && policy.Enabled {
+		if err := dedupeKeepLatest(ctx, tx, result.Metadata.ReportType, policy.DedupeKeyColumns); err != nil {
+			return fmt.Errorf("dedupe keep latest: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit import: %w", err)
 	}
 	return nil
+}
+
+func loadIdempotencyPolicy(ctx context.Context, tx *sql.Tx, tableName string) (idempotencyPolicy, bool, error) {
+	var mode, keys string
+	var enabled int
+	err := tx.QueryRowContext(ctx, `
+SELECT update_mode, dedupe_key_columns, enabled
+FROM table_idempotency_policies
+WHERE table_name = ? AND enabled = 1
+`, tableName).Scan(&mode, &keys, &enabled)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return idempotencyPolicy{}, false, nil
+		}
+		return idempotencyPolicy{}, false, err
+	}
+
+	keyCols := parseColumns(keys)
+	if len(keyCols) == 0 {
+		keyCols = defaultDedupeColumns(tableName)
+	}
+	return idempotencyPolicy{
+		UpdateMode:       mode,
+		DedupeKeyColumns: keyCols,
+		Enabled:          enabled == 1,
+	}, true, nil
+}
+
+func parseColumns(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		col := strings.TrimSpace(part)
+		if col == "" {
+			continue
+		}
+		out = append(out, col)
+	}
+	return out
+}
+
+func defaultDedupeColumns(tableName string) []string {
+	switch tableName {
+	case "bank_statement":
+		return []string{"company", "account_no", "account_name", "currency", "transaction_date", "transaction_time", "transaction_type", "debit_amount", "credit_amount", "balance", "summary", "counterparty_name", "counterparty_account"}
+	case "journal":
+		return []string{"company", "voucher_date", "voucher_no", "account_code", "summary", "debit_amount", "credit_amount"}
+	case "income_statement":
+		return []string{"company", "period", "item_name"}
+	case "balance_sheet":
+		return []string{"company", "period", "account_name"}
+	case "balance_detail":
+		return []string{"company", "period", "account_code"}
+	default:
+		return nil
+	}
+}
+
+func dedupeKeepLatest(ctx context.Context, tx *sql.Tx, tableName string, keyColumns []string) error {
+	keyColumns = sanitizeColumns(keyColumns)
+	if len(keyColumns) == 0 {
+		return nil
+	}
+
+	var keyExprs []string
+	for _, col := range keyColumns {
+		keyExprs = append(keyExprs, fmt.Sprintf("COALESCE(CAST(%s AS TEXT), '')", col))
+	}
+	partition := strings.Join(keyExprs, ", ")
+	query := fmt.Sprintf(`
+DELETE FROM %s
+WHERE id IN (
+  SELECT id FROM (
+    SELECT id,
+           ROW_NUMBER() OVER (
+             PARTITION BY %s
+             ORDER BY imported_at DESC, id DESC
+           ) AS rn
+    FROM %s
+  )
+  WHERE rn > 1
+)
+`, tableName, partition, tableName)
+	_, err := tx.ExecContext(ctx, query)
+	return err
+}
+
+func sanitizeColumns(cols []string) []string {
+	allowed := map[string]struct{}{
+		"company":              {},
+		"period":               {},
+		"account_name":         {},
+		"account_code":         {},
+		"item_name":            {},
+		"account_no":           {},
+		"currency":             {},
+		"transaction_date":     {},
+		"transaction_time":     {},
+		"transaction_type":     {},
+		"debit_amount":         {},
+		"credit_amount":        {},
+		"balance":              {},
+		"summary":              {},
+		"counterparty_name":    {},
+		"counterparty_account": {},
+		"voucher_date":         {},
+		"voucher_no":           {},
+	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(cols))
+	for _, col := range cols {
+		c := strings.TrimSpace(col)
+		if _, ok := allowed[c]; !ok {
+			continue
+		}
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func resolveCompanyForImport(ctx context.Context, tx *sql.Tx, parsedCompany, override string) (string, error) {
+	override = strings.TrimSpace(override)
+	if override != "" {
+		return override, nil
+	}
+
+	parsed := strings.TrimSpace(parsedCompany)
+	if parsed == "" || isInvalidDerivedCompany(parsed) {
+		inferred, err := inferSingleKnownCompany(ctx, tx)
+		if err != nil {
+			return "", err
+		}
+		if inferred != "" {
+			return inferred, nil
+		}
+		return "", fmt.Errorf("unable to determine company from file metadata (%q), please pass --company", parsedCompany)
+	}
+
+	canonical, err := canonicalizeCompanyAlias(ctx, tx, parsed)
+	if err != nil {
+		return "", err
+	}
+	if canonical != "" {
+		return canonical, nil
+	}
+	return parsed, nil
+}
+
+func isInvalidDerivedCompany(company string) bool {
+	c := strings.TrimSpace(company)
+	if c == "" {
+		return true
+	}
+	if strings.EqualFold(c, "defaultcompany") {
+		return true
+	}
+	matched, _ := regexp.MatchString(`^\d{8}-\d{8}$`, c)
+	return matched
+}
+
+func canonicalizeCompanyAlias(ctx context.Context, tx *sql.Tx, company string) (string, error) {
+	candidates, err := listKnownCompanies(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	matches := make([]string, 0, 2)
+	for _, c := range candidates {
+		if strings.Contains(c, company) || strings.Contains(company, c) {
+			matches = append(matches, c)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	return "", nil
+}
+
+func inferSingleKnownCompany(ctx context.Context, tx *sql.Tx) (string, error) {
+	candidates, err := listKnownCompanies(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	return "", nil
+}
+
+func listKnownCompanies(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT DISTINCT company FROM (
+  SELECT company FROM bank_statement
+  UNION ALL SELECT company FROM journal
+  UNION ALL SELECT company FROM balance_sheet
+  UNION ALL SELECT company FROM income_statement
+  UNION ALL SELECT company FROM balance_detail
+)
+WHERE company IS NOT NULL AND TRIM(company) <> ''
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	uniq := map[string]struct{}{}
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		c = strings.TrimSpace(c)
+		if c == "" || isInvalidDerivedCompany(c) {
+			continue
+		}
+		if _, ok := uniq[c]; ok {
+			continue
+		}
+		uniq[c] = struct{}{}
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	return out, rows.Err()
 }
 
 func clearExisting(ctx context.Context, tx *sql.Tx, result parser.ParseResult) error {

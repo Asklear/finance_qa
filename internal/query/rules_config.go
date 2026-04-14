@@ -9,39 +9,47 @@ import (
 
 // RuleConfig 定义查询层可调规则（默认值 + 外部覆盖）。
 type RuleConfig struct {
-	GenericMetricStopwords         []string `json:"generic_metric_stopwords"`
-	IntentARAPKeywords             []string `json:"intent_arap_keywords"`
-	IntentHRCostKeywords           []string `json:"intent_hr_cost_keywords"`
-	IntentTaxKeywords              []string `json:"intent_tax_keywords"`
-	IntentHealthKeywords           []string `json:"intent_health_keywords"`
-	IntentFallbackKeywords         []string `json:"intent_fallback_keywords"`
-	IntentAnalysisKeywords         []string `json:"intent_analysis_keywords"`
-	IntentHostPayloadKeywords      []string `json:"intent_host_payload_keywords"`
-	IntentMonthlySummaryKeywords   []string `json:"intent_monthly_summary_keywords"`
-	FallbackMonthlyExpenseKeywords []string `json:"fallback_monthly_expense_keywords"`
-	RoleMixedMinRatio              float64  `json:"role_mixed_min_ratio"`
-	RoleMixedMinPositiveScore      float64  `json:"role_mixed_min_positive_score"`
-	RoleMixedMinPositiveRoles      int      `json:"role_mixed_min_positive_roles"`
-	RoleMinPrimaryScore            float64  `json:"role_min_primary_score"`
-	RoleMinConfidence              float64  `json:"role_min_confidence"`
+	GenericMetricStopwords         []string            `json:"generic_metric_stopwords"`
+	IntentARAPKeywords             []string            `json:"intent_arap_keywords"`
+	IntentHRCostKeywords           []string            `json:"intent_hr_cost_keywords"`
+	IntentTaxKeywords              []string            `json:"intent_tax_keywords"`
+	IntentHealthKeywords           []string            `json:"intent_health_keywords"`
+	IntentFallbackKeywords         []string            `json:"intent_fallback_keywords"`
+	IntentAnalysisKeywords         []string            `json:"intent_analysis_keywords"`
+	IntentHostPayloadKeywords      []string            `json:"intent_host_payload_keywords"`
+	IntentMonthlySummaryKeywords   []string            `json:"intent_monthly_summary_keywords"`
+	FallbackMonthlyExpenseKeywords []string            `json:"fallback_monthly_expense_keywords"`
+	HighPriorityPhrases            map[string][]string `json:"high_priority_phrases"`
+	IntentPriority                 map[string]int      `json:"intent_priority"`
+	IntentConflicts                map[string][]string `json:"intent_conflicts"`
+	IntentMinConfidence            map[string]float64  `json:"intent_min_confidence"`
+	RoleMixedMinRatio              float64             `json:"role_mixed_min_ratio"`
+	RoleMixedMinPositiveScore      float64             `json:"role_mixed_min_positive_score"`
+	RoleMixedMinPositiveRoles      int                 `json:"role_mixed_min_positive_roles"`
+	RoleMinPrimaryScore            float64             `json:"role_min_primary_score"`
+	RoleMinConfidence              float64             `json:"role_min_confidence"`
 }
 
 type ruleConfigFile struct {
-	GenericMetricStopwords         []string `json:"generic_metric_stopwords"`
-	IntentARAPKeywords             []string `json:"intent_arap_keywords"`
-	IntentHRCostKeywords           []string `json:"intent_hr_cost_keywords"`
-	IntentTaxKeywords              []string `json:"intent_tax_keywords"`
-	IntentHealthKeywords           []string `json:"intent_health_keywords"`
-	IntentFallbackKeywords         []string `json:"intent_fallback_keywords"`
-	IntentAnalysisKeywords         []string `json:"intent_analysis_keywords"`
-	IntentHostPayloadKeywords      []string `json:"intent_host_payload_keywords"`
-	IntentMonthlySummaryKeywords   []string `json:"intent_monthly_summary_keywords"`
-	FallbackMonthlyExpenseKeywords []string `json:"fallback_monthly_expense_keywords"`
-	RoleMixedMinRatio              *float64 `json:"role_mixed_min_ratio"`
-	RoleMixedMinPositiveScore      *float64 `json:"role_mixed_min_positive_score"`
-	RoleMixedMinPositiveRoles      *int     `json:"role_mixed_min_positive_roles"`
-	RoleMinPrimaryScore            *float64 `json:"role_min_primary_score"`
-	RoleMinConfidence              *float64 `json:"role_min_confidence"`
+	GenericMetricStopwords         []string            `json:"generic_metric_stopwords"`
+	IntentARAPKeywords             []string            `json:"intent_arap_keywords"`
+	IntentHRCostKeywords           []string            `json:"intent_hr_cost_keywords"`
+	IntentTaxKeywords              []string            `json:"intent_tax_keywords"`
+	IntentHealthKeywords           []string            `json:"intent_health_keywords"`
+	IntentFallbackKeywords         []string            `json:"intent_fallback_keywords"`
+	IntentAnalysisKeywords         []string            `json:"intent_analysis_keywords"`
+	IntentHostPayloadKeywords      []string            `json:"intent_host_payload_keywords"`
+	IntentMonthlySummaryKeywords   []string            `json:"intent_monthly_summary_keywords"`
+	FallbackMonthlyExpenseKeywords []string            `json:"fallback_monthly_expense_keywords"`
+	HighPriorityPhrases            map[string][]string `json:"high_priority_phrases"`
+	IntentPriority                 map[string]int      `json:"intent_priority"`
+	IntentConflicts                map[string][]string `json:"intent_conflicts"`
+	IntentMinConfidence            map[string]float64  `json:"intent_min_confidence"`
+	RoleMixedMinRatio              *float64            `json:"role_mixed_min_ratio"`
+	RoleMixedMinPositiveScore      *float64            `json:"role_mixed_min_positive_score"`
+	RoleMixedMinPositiveRoles      *int                `json:"role_mixed_min_positive_roles"`
+	RoleMinPrimaryScore            *float64            `json:"role_min_primary_score"`
+	RoleMinConfidence              *float64            `json:"role_min_confidence"`
 }
 
 func defaultRuleConfig() RuleConfig {
@@ -86,6 +94,31 @@ func defaultRuleConfig() RuleConfig {
 		FallbackMonthlyExpenseKeywords: []string{
 			"整体支出", "总支出", "全部支出", "支出汇总",
 		},
+		HighPriorityPhrases: map[string][]string{
+			string(IntentARAPQuery): {"预收款", "预付款", "应收账款", "应付账款"},
+		},
+		IntentPriority: map[string]int{
+			string(IntentHostPayload):    120,
+			string(IntentARAPQuery):      100,
+			string(IntentTaxQuery):       90,
+			string(IntentMonthlySummary): 70,
+			string(IntentAnalysis):       50,
+			string(IntentFallback):       40,
+			string(IntentPrecise):        20,
+			string(IntentGeneral):        10,
+		},
+		IntentConflicts: map[string][]string{
+			string(IntentARAPQuery):      {string(IntentFallback), string(IntentGeneral)},
+			string(IntentTaxQuery):       {string(IntentFallback), string(IntentGeneral)},
+			string(IntentMonthlySummary): {string(IntentGeneral)},
+		},
+		IntentMinConfidence: map[string]float64{
+			string(IntentARAPQuery):      0.6,
+			string(IntentTaxQuery):       0.55,
+			string(IntentMonthlySummary): 0.5,
+			string(IntentAnalysis):       0.5,
+			string(IntentFallback):       0.45,
+		},
 		RoleMixedMinRatio:         0.45,
 		RoleMixedMinPositiveScore: 1.0,
 		RoleMixedMinPositiveRoles: 2,
@@ -99,6 +132,11 @@ func getRuleConfig() RuleConfig {
 	mergeRuleConfigFromFile(&cfg)
 	mergeRuleConfigFromEnv(&cfg)
 	return cfg
+}
+
+// CurrentRuleConfig 返回当前生效规则（默认值 + 文件覆盖 + 环境变量覆盖）。
+func CurrentRuleConfig() RuleConfig {
+	return getRuleConfig()
 }
 
 func mergeRuleConfigFromFile(cfg *RuleConfig) {
@@ -143,6 +181,18 @@ func mergeRuleConfigFromFile(cfg *RuleConfig) {
 	}
 	if len(raw.FallbackMonthlyExpenseKeywords) > 0 {
 		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(raw.FallbackMonthlyExpenseKeywords)
+	}
+	if len(raw.HighPriorityPhrases) > 0 {
+		cfg.HighPriorityPhrases = normalizeStringSliceMap(raw.HighPriorityPhrases)
+	}
+	if len(raw.IntentPriority) > 0 {
+		cfg.IntentPriority = normalizeIntMap(raw.IntentPriority)
+	}
+	if len(raw.IntentConflicts) > 0 {
+		cfg.IntentConflicts = normalizeStringSliceMap(raw.IntentConflicts)
+	}
+	if len(raw.IntentMinConfidence) > 0 {
+		cfg.IntentMinConfidence = normalizeFloatMap(raw.IntentMinConfidence)
 	}
 	if raw.RoleMixedMinRatio != nil {
 		cfg.RoleMixedMinRatio = *raw.RoleMixedMinRatio
@@ -192,6 +242,18 @@ func mergeRuleConfigFromEnv(cfg *RuleConfig) {
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_FALLBACK_MONTHLY_EXPENSE_KEYWORDS")); raw != "" {
 		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(strings.Split(raw, ","))
 	}
+	if v, ok := parseEnvStringSliceMap("FINANCEQA_HIGH_PRIORITY_PHRASES"); ok {
+		cfg.HighPriorityPhrases = normalizeStringSliceMap(v)
+	}
+	if v, ok := parseEnvIntMap("FINANCEQA_INTENT_PRIORITY"); ok {
+		cfg.IntentPriority = normalizeIntMap(v)
+	}
+	if v, ok := parseEnvStringSliceMap("FINANCEQA_INTENT_CONFLICTS"); ok {
+		cfg.IntentConflicts = normalizeStringSliceMap(v)
+	}
+	if v, ok := parseEnvFloatMap("FINANCEQA_INTENT_MIN_CONFIDENCE"); ok {
+		cfg.IntentMinConfidence = normalizeFloatMap(v)
+	}
 	if v, ok := parseEnvFloat("FINANCEQA_ROLE_MIXED_MIN_RATIO"); ok {
 		cfg.RoleMixedMinRatio = v
 	}
@@ -231,6 +293,82 @@ func parseEnvInt(key string) (int, bool) {
 		return 0, false
 	}
 	return v, true
+}
+
+func parseEnvStringSliceMap(key string) (map[string][]string, bool) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil, false
+	}
+	var v map[string][]string
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+func parseEnvIntMap(key string) (map[string]int, bool) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil, false
+	}
+	var v map[string]int
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+func parseEnvFloatMap(key string) (map[string]float64, bool) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil, false
+	}
+	var v map[string]float64
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+func normalizeStringSliceMap(input map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(input))
+	for key, values := range input {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		normalizedValues := dedupeNonEmpty(values)
+		if len(normalizedValues) == 0 {
+			continue
+		}
+		out[trimmedKey] = normalizedValues
+	}
+	return out
+}
+
+func normalizeIntMap(input map[string]int) map[string]int {
+	out := make(map[string]int, len(input))
+	for key, value := range input {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		out[trimmedKey] = value
+	}
+	return out
+}
+
+func normalizeFloatMap(input map[string]float64) map[string]float64 {
+	out := make(map[string]float64, len(input))
+	for key, value := range input {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		out[trimmedKey] = value
+	}
+	return out
 }
 
 func dedupeNonEmpty(items []string) []string {

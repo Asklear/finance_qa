@@ -1,6 +1,6 @@
 ---
 name: "finance"
-description: "v1.4.0｜面向老板问答的财务查询能力说明（双视角 + 可追溯过程 + 上层Agent兜底）"
+description: "v1.5.0｜面向老板问答的财务查询能力说明（双视角 + 可追溯过程 + 上层Agent兜底）"
 ---
 
 # finance_qa Agent 调用手册（全功能暴露）
@@ -28,6 +28,11 @@ description: "v1.4.0｜面向老板问答的财务查询能力说明（双视角
 6. `calculation_logs`
 7. `data.trace.executed_sql`
 8. `data.trace.calculation_logs`
+9. `data.intent_trace.router_version`
+10. `data.intent_trace.matched`
+11. `data.intent_trace.scores`
+12. `data.intent_trace.final_intent`
+13. `data.intent_trace.confidence`
 
 说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
 
@@ -86,6 +91,8 @@ description: "v1.4.0｜面向老板问答的财务查询能力说明（双视角
 
 1. `sql`: 规则与SQL计算得到结果。
 2. `llm_payload`: 系统无法直接准确回答，转交上层 Agent 基于全量数据推理。
+
+补充：当前默认意图路由为 `Intent Router V2`，会返回 `intent_trace` 说明命中的规则、得分和最终意图，便于审计与排错。
 
 ## 4.3 失败兜底结构（`success=false` 常见字段）
 
@@ -155,7 +162,7 @@ description: "v1.4.0｜面向老板问答的财务查询能力说明（双视角
 说明：
 
 1. 对老板的回复里不要直接说“钱口径/账口径”，统一用“银行卡上看/账上看”这类自然说法。
-2. 如果问题明确在问某个客户、供应商、员工或项目，优先返回该主体结果，不强行展开整月双视角。
+2. 如果问题明确在问某个客户、供应商、员工或项目，且同时问了多个核心指标（如“收入/成本/利润”），仍强制返回双视角；主体明细作为补充信息返回。
 
 ## 8. 上层 Agent 兜底接口
 
@@ -303,6 +310,20 @@ description: "v1.4.0｜面向老板问答的财务查询能力说明（双视角
 # 查看维度
 ./financeqa dimensions list --db finance.db
 ```
+
+## 11.1 测试与验收入口（建议发布前执行）
+
+```bash
+# 严格真实数据回归（17题）
+/opt/homebrew/bin/go run tests/scripts/prod_audit_regression.go
+
+# 20道老板高频问题真实数据测试（JSON题库驱动）
+./tests/scripts/run_top20_realdata_check.sh
+```
+
+20题测试报告输出路径：
+
+1. `docs/2026-04-14-20问真实数据测试报告.md`
 
 ## 12. 财务统计基本原则（不可违反）
 

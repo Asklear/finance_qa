@@ -17,6 +17,12 @@ type SyncSummary struct {
 }
 
 func (i *Importer) SyncDirectory(ctx context.Context, dbPath, dir string, incremental bool) (SyncSummary, error) {
+	return i.SyncDirectoryWithOptions(ctx, dbPath, dir, ImportOptions{
+		Incremental: incremental,
+	})
+}
+
+func (i *Importer) SyncDirectoryWithOptions(ctx context.Context, dbPath, dir string, opts ImportOptions) (SyncSummary, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return SyncSummary{}, err
@@ -49,7 +55,7 @@ func (i *Importer) SyncDirectory(ctx context.Context, dbPath, dir string, increm
 			summary.Skipped = append(summary.Skipped, file)
 			continue
 		}
-		imported, err := i.ImportFile(ctx, dbPath, file, incremental)
+		imported, err := i.ImportFileWithOptions(ctx, dbPath, file, opts)
 		if err != nil {
 			return summary, err
 		}

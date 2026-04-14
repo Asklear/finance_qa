@@ -230,6 +230,7 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
 	incremental := fs.Bool("incremental", false, "incremental import (don't clear existing data)")
+	company := fs.String("company", "", "override company name for imported file")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -248,7 +249,10 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(db))
 
 	importer := ingest.NewImporter(manager)
-	summary, err := importer.ImportFile(context.Background(), *dbPath, filePath, *incremental)
+	summary, err := importer.ImportFileWithOptions(context.Background(), *dbPath, filePath, ingest.ImportOptions{
+		Incremental:     *incremental,
+		CompanyOverride: strings.TrimSpace(*company),
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "import failed: %v\n", err)
 		return 1
@@ -268,6 +272,7 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
 	incremental := fs.Bool("incremental", false, "incremental sync (don't clear existing data)")
+	company := fs.String("company", "", "override company name for all imported files in this sync")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -286,7 +291,10 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(db))
 
 	importer := ingest.NewImporter(manager)
-	summary, err := importer.SyncDirectory(context.Background(), *dbPath, dirPath, *incremental)
+	summary, err := importer.SyncDirectoryWithOptions(context.Background(), *dbPath, dirPath, ingest.ImportOptions{
+		Incremental:     *incremental,
+		CompanyOverride: strings.TrimSpace(*company),
+	})
 	if err != nil {
 		fmt.Fprintf(stderr, "sync failed: %v\n", err)
 		return 1

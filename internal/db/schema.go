@@ -78,12 +78,20 @@ CREATE TABLE IF NOT EXISTS bank_statement (
     file_version INTEGER DEFAULT 1,
     imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS table_idempotency_policies (
+    table_name TEXT PRIMARY KEY,
+    update_mode TEXT NOT NULL CHECK (update_mode IN ('full_replace', 'incremental_latest')),
+    dedupe_key_columns TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 CREATE INDEX IF NOT EXISTS idx_balance_sheet_period ON balance_sheet(company, period);
 CREATE INDEX IF NOT EXISTS idx_balance_sheet_account ON balance_sheet(company, period, account_name);
 CREATE INDEX IF NOT EXISTS idx_income_statement_period ON income_statement(company, period);
 CREATE INDEX IF NOT EXISTS idx_balance_detail_period ON balance_detail(company, period);
 CREATE INDEX IF NOT EXISTS idx_journal_date ON journal(company, voucher_date);
 CREATE INDEX IF NOT EXISTS idx_bank_statement_date ON bank_statement(company, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_table_idempotency_enabled ON table_idempotency_policies(enabled);
 CREATE TABLE IF NOT EXISTS dimensions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT UNIQUE NOT NULL,       
@@ -133,4 +141,15 @@ CREATE INDEX IF NOT EXISTS idx_dimension_members_lookup ON dimension_members(dim
 CREATE INDEX IF NOT EXISTS idx_dimension_members_parent ON dimension_members(dimension_id, parent_id);
 CREATE INDEX IF NOT EXISTS idx_mapping_rules_company ON mapping_rules(company, is_active);
 CREATE INDEX IF NOT EXISTS idx_mapping_rules_priority ON mapping_rules(company, priority);
+INSERT OR IGNORE INTO table_idempotency_policies(table_name, update_mode, dedupe_key_columns, enabled)
+VALUES
+('balance_sheet', 'full_replace', 'company,period,account_name', 1),
+('income_statement', 'full_replace', 'company,period,item_name', 1),
+('balance_detail', 'incremental_latest', 'company,period,account_code', 1),
+('journal', 'incremental_latest', 'company,voucher_date,voucher_no,account_code,summary,debit_amount,credit_amount', 1),
+('bank_statement', 'incremental_latest', 'company,account_no,account_name,currency,transaction_date,transaction_time,transaction_type,debit_amount,credit_amount,balance,summary,counterparty_name,counterparty_account', 1);
+UPDATE table_idempotency_policies
+SET update_mode = 'incremental_latest',
+    dedupe_key_columns = 'company,period,account_code'
+WHERE table_name = 'balance_detail';
 `

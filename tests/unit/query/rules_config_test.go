@@ -1,6 +1,8 @@
 package query_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,5 +83,44 @@ func TestFallbackHRCostKeywordsCanBeConfiguredByEnv(t *testing.T) {
 	}
 	if total, ok := res.Data["total"].(float64); !ok || total != 300 {
 		t.Fatalf("custom hr keyword should route to hr cost fallback, got %v", res.Data["total"])
+	}
+}
+
+func TestRulesConfigLoadsIntentV2Fields(t *testing.T) {
+	rulesPath := filepath.Join(t.TempDir(), "rules.json")
+	if err := os.WriteFile(rulesPath, []byte(`{
+  "high_priority_phrases": {
+    "arap": ["预收款", "应收账款"]
+  },
+  "intent_priority": {
+    "arap": 100,
+    "fallback": 10
+  },
+  "intent_conflicts": {
+    "arap": ["fallback"]
+  },
+  "intent_min_confidence": {
+    "arap": 0.65
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("write rules file: %v", err)
+	}
+
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+	t.Setenv("FINANCEQA_INTENT_PRIORITY", `{"arap":180}`)
+	t.Setenv("FINANCEQA_INTENT_MIN_CONFIDENCE", `{"arap":0.7}`)
+
+	cfg := query.CurrentRuleConfig()
+	if got := cfg.HighPriorityPhrases["arap"]; len(got) != 2 || got[0] != "预收款" || got[1] != "应收账款" {
+		t.Fatalf("high_priority_phrases not loaded, got=%v", got)
+	}
+	if got := cfg.IntentPriority["arap"]; got != 180 {
+		t.Fatalf("intent_priority env override not effective, got=%d", got)
+	}
+	if got := cfg.IntentConflicts["arap"]; len(got) != 1 || got[0] != "fallback" {
+		t.Fatalf("intent_conflicts not loaded, got=%v", got)
+	}
+	if got := cfg.IntentMinConfidence["arap"]; got != 0.7 {
+		t.Fatalf("intent_min_confidence env override not effective, got=%v", got)
 	}
 }

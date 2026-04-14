@@ -73,13 +73,16 @@ func main() {
 	failCount := 0
 	for _, aq := range questions {
 		start := time.Now()
-		res, parseErr, raw := runQuery(company, aq.Question)
+		res, parseErr, rawStdout, rawStderr := runQuery(company, aq.Question)
 		dur := time.Since(start)
 
 		reasons := make([]string, 0)
 		if parseErr != nil {
 			reasons = append(reasons, fmt.Sprintf("JSON解析失败: %v", parseErr))
-			reasons = append(reasons, truncate(raw, 220))
+			reasons = append(reasons, "stdout="+truncate(rawStdout, 220))
+			if strings.TrimSpace(rawStderr) != "" {
+				reasons = append(reasons, "stderr="+truncate(rawStderr, 180))
+			}
 		} else {
 			for _, v := range aq.Validators {
 				reasons = append(reasons, v(res, db)...)
@@ -104,18 +107,19 @@ func main() {
 	fmt.Println("## 结论: ✅ 全部通过（严格语义断言）。")
 }
 
-func runQuery(company, question string) (QueryResult, error, string) {
+func runQuery(company, question string) (QueryResult, error, string, string) {
 	goBin := resolveGoBin()
 	cmd := exec.Command(goBin, "run", "cmd/financeqa/main.go", "query", "--company", company, question)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	_ = cmd.Run()
 
-	raw := strings.TrimSpace(out.String())
+	raw := strings.TrimSpace(stdout.String())
+	rawErr := strings.TrimSpace(stderr.String())
 	var res QueryResult
 	err := json.Unmarshal([]byte(raw), &res)
-	return res, err, raw
+	return res, err, raw, rawErr
 }
 
 func resolveGoBin() string {

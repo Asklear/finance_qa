@@ -109,6 +109,48 @@
     "全部支出",
     "支出汇总"
   ],
+  "high_priority_phrases": {
+    "arap": [
+      "预收款",
+      "预付款",
+      "应收账款",
+      "应付账款"
+    ],
+    "fallback": [
+      "供应商有多少",
+      "人力成本多少"
+    ]
+  },
+  "intent_priority": {
+    "host_payload": 120,
+    "arap": 100,
+    "tax": 90,
+    "monthly_summary": 70,
+    "analysis": 50,
+    "fallback": 40,
+    "precise": 20,
+    "general": 10
+  },
+  "intent_conflicts": {
+    "arap": [
+      "fallback",
+      "general"
+    ],
+    "tax": [
+      "fallback",
+      "general"
+    ],
+    "monthly_summary": [
+      "general"
+    ]
+  },
+  "intent_min_confidence": {
+    "arap": 0.6,
+    "tax": 0.55,
+    "monthly_summary": 0.5,
+    "analysis": 0.5,
+    "fallback": 0.45
+  },
   "role_mixed_min_ratio": 0.45,
   "role_mixed_min_positive_score": 1.0,
   "role_mixed_min_positive_roles": 2,

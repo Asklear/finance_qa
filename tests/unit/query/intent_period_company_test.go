@@ -1,6 +1,7 @@
 package query_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -58,5 +59,36 @@ func TestClassifyIntent(t *testing.T) {
 		if got := query.ClassifyIntent(tc.question); got != tc.want {
 			t.Fatalf("ClassifyIntent(%q) = %q, want %q", tc.question, got, tc.want)
 		}
+	}
+}
+
+func TestClassifyIntentV2TraceContract(t *testing.T) {
+	intent, tr := query.ClassifyIntentV2("汇智在2026年2月这笔是供应商付款还是预收款？")
+	if intent == "" {
+		t.Fatalf("expected non-empty intent")
+	}
+
+	raw, err := json.Marshal(tr)
+	if err != nil {
+		t.Fatalf("marshal trace: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal trace: %v", err)
+	}
+
+	for _, k := range []string{"router_version", "matched", "scores", "final_intent", "confidence"} {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("missing trace key=%s", k)
+		}
+	}
+	if tr.FinalIntent != string(intent) {
+		t.Fatalf("trace final_intent=%q does not match returned intent=%q", tr.FinalIntent, intent)
+	}
+	if tr.Confidence < 0 || tr.Confidence > 1 {
+		t.Fatalf("unexpected confidence=%f", tr.Confidence)
+	}
+	if len(tr.Scores) == 0 {
+		t.Fatalf("expected non-empty scores")
 	}
 }

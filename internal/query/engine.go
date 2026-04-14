@@ -104,10 +104,24 @@ func (e *Engine) Query(question string) Result {
 	if resolved != "" && resolved != e.Company {
 		e.Company = resolved
 	}
+	intent, intentTrace := ClassifyIntentV2(q)
+	traceMap := map[string]any{
+		"router_version": intentTrace.RouterVersion,
+		"matched":        append([]string{}, intentTrace.Matched...),
+		"scores":         intentTrace.Scores,
+		"final_intent":   intentTrace.FinalIntent,
+		"confidence":     intentTrace.Confidence,
+	}
+	finalize := func(r Result) Result {
+		if r.Data == nil {
+			r.Data = map[string]any{}
+		}
+		r.Data["intent_trace"] = traceMap
+		return r.withTraceData()
+	}
 
 	anchor := e.getLatestPeriodAnchor()
 	from, to := ExtractPeriodWithNow(q, anchor)
-	intent := ClassifyIntent(q)
 
 	entity := e.extractNamedEntity(q)
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
@@ -116,20 +130,25 @@ func (e *Engine) Query(question string) Result {
 	if shouldUseReconciliation(q) {
 		result = e.queryReconciliation(q, from, to)
 		if result.Success {
-			return result.withTraceData()
+			return finalize(result)
 		}
 	}
-	// 核心指标问题触发双口径；若问题已识别出真实实体，则优先走实体精细分析路径。
-	if shouldForceDualPerspective(q) && !hasRealEntity {
+	// 核心指标问题触发双口径：
+	// 1) 无实体时，保持默认强制双口径；
+	// 2) 有实体但同时问了多个核心指标（如“收入/成本/利润”）时，也强制双口径，
+	//    避免只返回单主体单指标导致老板看不到“银行卡上看 vs 账上看”。
+	requestedMetrics := detectRequestedMetrics(q)
+	forceDualWithEntity := hasRealEntity && len(requestedMetrics) > 1
+	if shouldForceDualPerspective(q) && (!hasRealEntity || forceDualWithEntity) {
 		result = e.queryDualPerspectiveForCoreMetric(q, from, to)
 		if result.Success {
-			return result.withTraceData()
+			return finalize(result)
 		}
 	}
 	if hasRealEntity && containsAny(q, []string{"收入", "营收", "销售额", "回款", "到账", "收款", "成本", "费用", "支出", "付款", "付了", "支付"}) {
 		result = e.queryCounterpartyAmountFallback(q, entity, from, to)
 		if result.Success {
-			return result.withTraceData()
+			return finalize(result)
 		}
 	}
 
@@ -167,21 +186,21 @@ func (e *Engine) Query(question string) Result {
 	}
 
 	if result.Success {
-		return result.withTraceData()
+		return finalize(result)
 	}
 
 	// 智能分流降级：如果精确查询由于科目未发现而失败，且存在实体，则自动滑入往来款审计
 	if entity != "" && (result.Message == "account not found" || !strings.Contains(result.Message, "no named")) {
-		return e.queryFallback(q, from, to, result.Message).withTraceData()
+		return finalize(e.queryFallback(q, from, to, result.Message))
 	}
 	if result.Message == "account not found" || strings.Contains(result.Message, "语义模糊") {
-		return e.queryFallback(q, from, to, result.Message).withTraceData()
+		return finalize(e.queryFallback(q, from, to, result.Message))
 	}
 
 	if result.Message != "" {
-		return result.withTraceData()
+		return finalize(result)
 	}
-	return e.queryFallback(q, from, to, result.Message).withTraceData()
+	return finalize(e.queryFallback(q, from, to, result.Message))
 }
 
 func (e *Engine) queryPrecise(question, period string) Result {
@@ -290,38 +309,38 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Result {
 	year, month := parsePeriod(to)
 	e.calc.ResetTrace()
-	dual, err := e.calc.ComputeDualPerspective(e.Company, year, month)
+	unified, sqls, logs, err := e.computeUnifiedCoreMetrics(from, to, year, month)
 	if err != nil {
 		return Result{Success: false, Message: err.Error()}
 	}
-
-	// 核心指标账口径优先以利润表当月发生额为准，避免被序时账口径噪声影响。
-	if book, source, bookErr := e.monthlyBookSummary(year, month); bookErr == nil {
-		dual.Accrual.Revenue = book.Revenue
-		dual.Accrual.TotalCost = book.TotalCost
-		dual.Accrual.Profit = book.Profit
-		e.calc.CalculationLogs = append(e.calc.CalculationLogs, fmt.Sprintf("[双口径账上口径] income_statement优先, source=%s", source))
-	}
+	dualCash := unified.Cash
+	dualAccrual := unified.Accrual
 
 	requestedMetrics := detectRequestedMetrics(question)
 	metric := detectCoreMetric(question)
 	if len(requestedMetrics) == 1 {
 		metric = requestedMetrics[0]
 	}
-	cashValue, accrualValue := pickMetricValue(metric, dual)
-	msg := fmt.Sprintf("%s 双口径%s：钱口径 %.2f 元，账口径 %.2f 元", to, metric, cashValue, accrualValue)
-	if len(requestedMetrics) > 1 {
-		msg = fmt.Sprintf("%s 双口径核心指标：钱口径 收入 %.2f 元、成本 %.2f 元、净额 %.2f 元；账口径 收入 %.2f 元、成本 %.2f 元、利润 %.2f 元。",
-			to,
-			round2(dual.Cash.Income), round2(dual.Cash.Expense), round2(dual.Cash.Net),
-			round2(dual.Accrual.Revenue), round2(dual.Accrual.TotalCost), round2(dual.Accrual.Profit),
-		)
+	cashValue, accrualValue := pickMetricValue(metric, &accounting.DualPerspective{
+		Cash: accounting.CashPerspective{
+			Description: dualCash.Description,
+			Income:      dualCash.Income,
+			Expense:     dualCash.Expense,
+			Net:         dualCash.Net,
+		},
+		Accrual: accounting.AccrualPerspective{
+			Description: "账上看",
+			Revenue:     dualAccrual.Revenue,
+			TotalCost:   dualAccrual.TotalCost,
+			Profit:      dualAccrual.Profit,
+		},
+	})
+	msg := buildBossDualPerspectiveMessage(to, dualCash, dualAccrual)
+	if len(requestedMetrics) == 1 {
+		msg = fmt.Sprintf("%s\n补充你当前关注的指标：%s - 银行卡上看 %.2f 元，账上看 %.2f 元。", msg, metric, cashValue, accrualValue)
 	}
 
-	logs := append([]string{}, e.calc.CalculationLogs...)
 	logs = append(logs, fmt.Sprintf("[双口径强制] metric=%s requested=%v cash=%.2f accrual=%.2f", metric, requestedMetrics, cashValue, accrualValue))
-
-	sqls := append([]string{}, e.calc.ExecutedSQLs...)
 	sqls = appendUniqueStrings(sqls,
 		"dual_perspective(cash): ComputeCashFlow over bank_statement in selected period",
 		"dual_perspective(accrual): monthlyBookSummary => income_statement.current_amount (fallback journal if missing)",
@@ -333,22 +352,39 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		Data: map[string]any{
 			"period":            to,
 			"metric":            metric,
-			"money_view":        dual.Cash,
-			"account_view":      dual.Accrual,
+			"money_view":        dualCash,
+			"account_view":      dualAccrual,
 			"money_value":       cashValue,
 			"account_value":     accrualValue,
 			"requested_metrics": requestedMetrics,
-			"现金流入":              dual.Cash.Income,
-			"现金流出":              dual.Cash.Expense,
-			"净现金流":              dual.Cash.Net,
+			"一致性守卫":             unified.Guard,
+			"现金流入":              dualCash.Income,
+			"现金流出":              dualCash.Expense,
+			"净现金流":              dualCash.Net,
 			"财务做账口径(看利润)": map[string]any{
-				"营业收入":    dual.Accrual.Revenue,
-				"营业成本及费用": dual.Accrual.TotalCost,
-				"账面利润":    dual.Accrual.Profit,
+				"营业收入":    dualAccrual.Revenue,
+				"营业成本及费用": dualAccrual.TotalCost,
+				"账面利润":    dualAccrual.Profit,
+			},
+			"difference_bridge": map[string]any{
+				"利润与现金净额差":  round2(dualAccrual.Profit - dualCash.Net),
+				"收入确认回款时间差": round2(dualAccrual.Revenue - dualCash.Income),
+				"成本付款确认时间差": round2(dualCash.Expense - dualAccrual.TotalCost),
+				"其他调节项":     round2((dualAccrual.Profit - dualCash.Net) - (dualAccrual.Revenue - dualCash.Income) - (dualCash.Expense - dualAccrual.TotalCost)),
 			},
 			"dual_perspective": map[string]any{
-				"cash":    dual.Cash,
-				"accrual": dual.Accrual,
+				"cash": map[string]any{
+					"说明":   "银行卡上看",
+					"现金流入": dualCash.Income,
+					"现金流出": dualCash.Expense,
+					"净现金流": dualCash.Net,
+				},
+				"accrual": map[string]any{
+					"说明":      "账上看",
+					"营业收入":    dualAccrual.Revenue,
+					"营业成本及费用": dualAccrual.TotalCost,
+					"账面利润":    dualAccrual.Profit,
+				},
 			},
 		},
 		ExecutedSQL:     sqls,
@@ -547,7 +583,7 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 	}
 
 	switch {
-	case containsAny(q, []string{"回款", "到账", "收款"}):
+	case containsAny(q, []string{"回款", "到账", "收款"}) && !containsAny(q, []string{"预收款", "应收款"}):
 		amount := round2(snap.BankIn)
 		if amount == 0 {
 			return Result{Success: false, Message: fmt.Sprintf("[%s] 在 %s 未找到回款/到账记录", entity, to)}

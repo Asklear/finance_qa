@@ -19,6 +19,7 @@
 ## 核心能力
 
 - **三位一体身份核验 (Trinity Identity Detector)**：系统不再盲目识别动词，而是通过**银行现金流向（In/Out）**、**会计科目归属（AR/AP）**及**税务特征（进项/销项）**三位一体交叉核验，自动锁定实体身为“客户”、“供应商”或“项目”。
+- **Intent Router V2（可解释路由）**：查询入口统一走 V2 路由，返回 `intent_trace`（命中规则、得分、最终意图、置信度），支持冲突裁决和最小置信度回退。
 - **数据库辅助识别 (DB-Assisted Recognition)**：集成动态回溯算法，解决口语化提问（如“飞未云科多少钱”）中由于缺少后缀、动词导致的解析难题。
 - **审计穿透挖掘 (Summary Penetration)**：自动扫描序时账摘要字段，提取银行流水中缺失的往来单位信息。
 - **自动日期锚定 (Dynamic Anchoring)**：智能识别数据库最新业务月份，确保模糊时间查询（如“今年”、“本月”）准确命中。
@@ -48,7 +49,7 @@ go build ./cmd/financeqa/...
 ### 3. 运行测试套件
 新重构版本的测试已深度囊括各项业务边界：
 ```bash
-# 执行审计回归报告，一键核验 15 道核心生产审计刁测题 (南京优集实测集)
+# 执行审计回归报告，一键核验 17 道核心生产审计题 (南京优集实测集)
 /opt/homebrew/bin/go run tests/scripts/prod_audit_regression.go
 
 # 执行后端核心模块单测
@@ -88,6 +89,10 @@ FINANCEQA_METRIC_STOPWORDS="收入,成本,利润,经营状况" ./financeqa query
 13. `role_mixed_min_positive_roles`：触发 `mixed` 所需最少有效角色数量。
 14. `role_min_primary_score`：最高分低于该值时，判定为 `unknown`。
 15. `role_min_confidence`：置信度低于该值时，判定为 `unknown`。
+16. `high_priority_phrases`：高优先短语命中后直接抬高对应意图分值（如“预收款”优先归类到往来类）。
+17. `intent_priority`：同分时的意图优先级裁决（数值越高越优先）。
+18. `intent_conflicts`：意图冲突消解规则（命中强意图时剔除弱冲突意图）。
+19. `intent_min_confidence`：按意图设置最低置信度，低于阈值自动回退到 `fallback`。
 
 支持的环境变量覆盖项：
 
@@ -107,6 +112,10 @@ FINANCEQA_METRIC_STOPWORDS="收入,成本,利润,经营状况" ./financeqa query
 14. `FINANCEQA_INTENT_HOST_PAYLOAD_KEYWORDS`
 15. `FINANCEQA_INTENT_MONTHLY_SUMMARY_KEYWORDS`
 16. `FINANCEQA_FALLBACK_MONTHLY_EXPENSE_KEYWORDS`
+17. `FINANCEQA_HIGH_PRIORITY_PHRASES`（JSON 对象）
+18. `FINANCEQA_INTENT_PRIORITY`（JSON 对象）
+19. `FINANCEQA_INTENT_CONFLICTS`（JSON 对象）
+20. `FINANCEQA_INTENT_MIN_CONFIDENCE`（JSON 对象）
 
 低频硬编码保留清单：
 
@@ -181,7 +190,7 @@ func main() {
 *   **接入层 (Parser & Ingest)**：处理各版本用友、金蝶及银行导出的 Excel 原始数据。具备自动脱敏、元数据提取（日期/公司识别）及数据清洗能力。
 *   **持久层 (DB & Dimensions)**：基于 SQLite。采用多维模型（Dimensions）管理财务周期，支持快速切换公司与会计月份。
 *   **计算层 (Accounting)**：核心业务大脑。实现了从“序时账”自动平衡“科目余额表”及“利润表”的算法，支持“钱（现金流）”与“账（权责发生制）”的双口径核算。
-*   **查询层 (Query)**：混合式自然语言引擎。集成业务规则库、正则表达式匹配，并在意图不明时自动回退（Fallback）至 LLM（如 GPT-4o-mini）进行语义理解。
+*   **查询层 (Query)**：混合式自然语言引擎。集成业务规则库、正则表达式匹配与 Intent Router V2；当规则计算无法稳定回答时，返回 `llm_payload` 给上层 Agent 做最终判别（本仓库不直接调用宿主 LLM）。
 
 ### 2. 目录结构
 ```text
@@ -196,12 +205,12 @@ finance_qa/
 │   ├── dimensions/         # 财务维度建模与仓储模式
 │   ├── ingest/             # 数据流水线与同步处理器
 │   ├── parser/             # Excel 解析器与元数据自动提取
-│   ├── query/              # 自然语言查询引擎 (含词法归一化与 LLM Fallback)
+│   ├── query/              # 自然语言查询引擎 (含词法归一化、Intent Router V2、llm_payload 输出)
 │   ├── support/            # 全局路径与工具支持
 │   └── types/              # 通用数据结构定义
 ├── tests/                  # 质量保障体系 (完全独立于源代码)
 │   ├── unit/               # 单元测试 (按模块镜像排列，执行黑盒验证)
-│   ├── integration/        # 集成测试 (覆盖 15 道核心财务刁测)
+│   ├── integration/        # 集成测试 (覆盖核心财务场景，配套严格回归与20题真实数据检查)
 │   ├── testdata/           # 样本库 (已脱敏的典型财务报表样本)
 │   └── scripts/            # 开发工具脚本 (test_runner.go)
 ├── docs/                   # 项目说明文档
@@ -213,7 +222,7 @@ finance_qa/
 ### 1. 环境依赖
 *   **Go**: `>= 1.20`
 *   **Python3（可选）**: 仅在极老旧 XLS 容错回退场景下需要 `xlrd`。
-*   **环境变量**: 若需启用 LLM 回退功能，请配置 `OPENAI_API_KEY`。
+*   **环境变量**: 默认无需 `OPENAI_API_KEY`；本仓库在兜底时输出 `llm_payload` 供上层 Agent 使用，不直接调用宿主 LLM。
 
 ### 2. 运行测试
 本项目采用全自动化的集成测试套件，可一键验证重构后的业务逻辑对齐情况：
@@ -224,6 +233,36 @@ go test ./internal/...
 # 运行集成测试 (全量覆盖业务场景)
 go test ./tests/integration/...
 
-# 运行回归检查工具 (自动输出 15 道生产提问的审计对照表)
+# 运行回归检查工具 (自动输出生产提问审计对照表)
 /opt/homebrew/bin/go run tests/scripts/prod_audit_regression.go
+
+# 运行 20 道老板高频问题真实数据检查（JSON 题库驱动）
+./tests/scripts/run_top20_realdata_check.sh
 ```
+
+## 六、查询结果契约（对接层必读）
+
+`query` 返回统一 JSON，至少包含以下字段：
+
+1. `success`
+2. `message`
+3. `answer_method`（`sql` 或 `llm_payload`）
+4. `data`
+5. `executed_sql`
+6. `calculation_logs`
+
+`data` 中建议重点消费：
+
+1. `intent_trace.router_version`
+2. `intent_trace.matched`
+3. `intent_trace.scores`
+4. `intent_trace.final_intent`
+5. `intent_trace.confidence`
+6. `trace.executed_sql`
+7. `trace.calculation_logs`
+
+核心指标（收入/成本/利润/销售额）默认强制双视角输出：
+
+1. `银行卡上看`：实际进出账与净现金流。
+2. `账上看`：报表确认收入、成本、利润。
+3. `差异桥`：解释“为什么账上盈利但卡上没增钱”。
