@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Sync finance bridge script + SKILL.md to server, then wire OpenClaw skills symlink.
+# Defaults match current production host; can be overridden via env vars.
+
+ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SERVER="${SERVER:-root@8.129.14.124}"
+KEY_PATH="${KEY_PATH:-$HOME/Downloads/未命名文件夹 2/lzh-key.pem}"
+
+LOCAL_SKILL="$ROOT_DIR/SKILL.md"
+LOCAL_BRIDGE="$ROOT_DIR/plugin/openclaw-finance/server/finance_bridge.py"
+
+REMOTE_REPO_DIR="${REMOTE_REPO_DIR:-/root/finance_qa}"
+REMOTE_OPENCLAW_EXT_DIR="${REMOTE_OPENCLAW_EXT_DIR:-/root/.openclaw/extensions/openclaw-finance/server}"
+REMOTE_OPENCLAW_SKILL_DIR="${REMOTE_OPENCLAW_SKILL_DIR:-/root/.openclaw/skills/finance}"
+
+if [[ ! -f "$LOCAL_SKILL" ]]; then
+  echo "missing local SKILL.md: $LOCAL_SKILL" >&2
+  exit 1
+fi
+if [[ ! -f "$LOCAL_BRIDGE" ]]; then
+  echo "missing local bridge file: $LOCAL_BRIDGE" >&2
+  exit 1
+fi
+
+echo "[1/4] upload SKILL.md to ${SERVER}:${REMOTE_REPO_DIR}/SKILL.md"
+scp -i "$KEY_PATH" "$LOCAL_SKILL" "$SERVER:$REMOTE_REPO_DIR/SKILL.md"
+
+echo "[2/4] upload finance_bridge.py to ${SERVER}:${REMOTE_OPENCLAW_EXT_DIR}/finance_bridge.py"
+scp -i "$KEY_PATH" "$LOCAL_BRIDGE" "$SERVER:$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py"
+
+echo "[3/4] create OpenClaw skills symlink to repo SKILL.md"
+ssh -i "$KEY_PATH" "$SERVER" "set -e; \
+  mkdir -p '$REMOTE_OPENCLAW_SKILL_DIR'; \
+  ln -sfn '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md'; \
+  chmod 444 '$REMOTE_REPO_DIR/SKILL.md'"
+
+echo "[4/4] verify skill path and bridge candidates on server"
+ssh -i "$KEY_PATH" "$SERVER" "set -e; \
+  ls -l '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md'; \
+  grep -n 'DEFAULT_SKILL_CANDIDATES' -n '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'; \
+  sed -n '1,30p' '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'"
+
+echo "done."
