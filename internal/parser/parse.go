@@ -17,7 +17,21 @@ func ParseFile(path string) (ParseResult, error) {
 	if err != nil {
 		return ParseResult{}, err
 	}
+	return parseFileWithMeta(path, meta)
+}
 
+// ParseFileAsType forces parser to read the same file as a specific report type.
+// Useful for combined "财报" files where sheet1 is balance_sheet and sheet2 is income_statement.
+func ParseFileAsType(path, reportType string) (ParseResult, error) {
+	meta, err := ExtractMetadata(path)
+	if err != nil {
+		return ParseResult{}, err
+	}
+	meta.ReportType = reportType
+	return parseFileWithMeta(path, meta)
+}
+
+func parseFileWithMeta(path string, meta FileMetadata) (ParseResult, error) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch meta.ReportType {
 	case "bank_statement":
@@ -63,18 +77,18 @@ func parseBankStatementXLSX(path string, meta FileMetadata) ([]Record, error) {
 			continue
 		}
 		records = append(records, Record{
-			"company":             meta.Company,
-			"account_no":          cell(row, 0),
-			"account_name":        cell(row, 1),
-			"currency":            defaultString(cell(row, 2), "人民币"),
-			"transaction_date":    date,
-			"transaction_time":    cell(row, 4),
-			"transaction_type":    cell(row, 6),
-			"debit_amount":        parseFloat(cell(row, 7)),
-			"credit_amount":       parseFloat(cell(row, 8)),
-			"balance":             parseFloat(cell(row, 9)),
-			"summary":             cell(row, 10),
-			"counterparty_name":   cell(row, 19),
+			"company":              meta.Company,
+			"account_no":           cell(row, 0),
+			"account_name":         cell(row, 1),
+			"currency":             defaultString(cell(row, 2), "人民币"),
+			"transaction_date":     date,
+			"transaction_time":     cell(row, 4),
+			"transaction_type":     cell(row, 6),
+			"debit_amount":         parseFloat(cell(row, 7)),
+			"credit_amount":        parseFloat(cell(row, 8)),
+			"balance":              parseFloat(cell(row, 9)),
+			"summary":              cell(row, 10),
+			"counterparty_name":    cell(row, 19),
 			"counterparty_account": cell(row, 20),
 		})
 	}
@@ -86,13 +100,14 @@ func parseLegacyXLSReport(path string, meta FileMetadata) ([]Record, error) {
 	// Go's extrame/xls often fails silently by returning empty strings.
 	// As requested ("use the most stable way"), we fallback to a small Python script
 	// using xlrd which natively handles these quirks on macOS/Linux.
-	
+
 	pythonScript := `
 import xlrd, json, sys
 try:
     wb = xlrd.open_workbook(sys.argv[1])
-    all_data = []
+    all_sheets = []
     for sheet in wb.sheets():
+        sheet_data = []
         for r in range(sheet.nrows):
             row_data = []
             for c in range(sheet.ncols):
@@ -104,8 +119,9 @@ try:
                     except:
                         pass
                 row_data.append(str(val).strip())
-            all_data.append(row_data)
-    print(json.dumps(all_data))
+            sheet_data.append(row_data)
+        all_sheets.append(sheet_data)
+    print(json.dumps(all_sheets))
 except Exception as e:
     sys.stderr.write(str(e))
     sys.exit(1)
@@ -119,15 +135,16 @@ except Exception as e:
 			break
 		}
 	}
-	
+
 	if cmd != nil {
 		output, err := cmd.Output()
 		if err == nil && len(output) > 0 {
-			var rows [][]string
+			var sheets [][][]string
 			outStr := string(output)
 			idx := strings.IndexByte(outStr, '[')
 			if idx != -1 {
-				if jsonErr := json.Unmarshal([]byte(outStr[idx:]), &rows); jsonErr == nil {
+				if jsonErr := json.Unmarshal([]byte(outStr[idx:]), &sheets); jsonErr == nil {
+					rows := pickPreferredSheetRows(sheets, meta)
 					return parseLegacyRowsByType(rows, meta)
 				}
 			}
@@ -137,13 +154,16 @@ except Exception as e:
 	// Double fallback to Go's methods just in case
 	wb, err := xls.Open(path, "utf-8")
 	if err != nil {
-		rows, xlsxErr := readOOXMLRows(path)
+		rows, xlsxErr := readOOXMLRows(path, preferredSheetIndex(meta))
 		if xlsxErr != nil {
 			return nil, fmt.Errorf("open xls: %w", err)
 		}
 		return parseLegacyRowsByType(rows, meta)
 	}
-	sheet := wb.GetSheet(0)
+	sheet := wb.GetSheet(preferredSheetIndex(meta))
+	if sheet == nil {
+		sheet = wb.GetSheet(0)
+	}
 	if sheet == nil {
 		return nil, fmt.Errorf("missing first sheet in %s", path)
 	}
@@ -165,6 +185,25 @@ except Exception as e:
 	return parseLegacyRowsByType(rows, meta)
 }
 
+func preferredSheetIndex(meta FileMetadata) int {
+	// 财报常见导出中，第2个sheet通常是利润表。
+	if meta.ReportType == "income_statement" {
+		return 1
+	}
+	return 0
+}
+
+func pickPreferredSheetRows(sheets [][][]string, meta FileMetadata) [][]string {
+	if len(sheets) == 0 {
+		return nil
+	}
+	idx := preferredSheetIndex(meta)
+	if idx >= 0 && idx < len(sheets) {
+		return sheets[idx]
+	}
+	return sheets[0]
+}
+
 func parseLegacyRowsByType(rows [][]string, meta FileMetadata) ([]Record, error) {
 	switch meta.ReportType {
 	case "income_statement":
@@ -180,14 +219,17 @@ func parseLegacyRowsByType(rows [][]string, meta FileMetadata) ([]Record, error)
 	}
 }
 
-func readOOXMLRows(path string) ([][]string, error) {
+func readOOXMLRows(path string, sheetIndex int) ([][]string, error) {
 	f, err := excelize.OpenFile(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 
-	sheet := f.GetSheetName(0)
+	sheet := f.GetSheetName(sheetIndex)
+	if sheet == "" {
+		sheet = f.GetSheetName(0)
+	}
 	return f.GetRows(sheet)
 }
 

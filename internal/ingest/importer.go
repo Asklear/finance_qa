@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -35,6 +36,13 @@ func (i *Importer) ParseFile(path string) (parser.ParseResult, error) {
 }
 
 func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string, incremental bool) (ImportSummary, error) {
+	// Compatibility mode for merged "财报" files:
+	// try importing both balance_sheet(sheet1) and income_statement(sheet2)
+	// while keeping legacy separate-file imports unchanged.
+	if strings.Contains(strings.ToLower(filepath.Base(filePath)), "财报") {
+		return i.importMergedFinancialReport(ctx, dbPath, filePath, incremental)
+	}
+
 	result, err := parser.ParseFile(filePath)
 	if err != nil {
 		return ImportSummary{}, err
@@ -49,6 +57,53 @@ func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string, incr
 		PeriodStart: result.Metadata.PeriodStart,
 		PeriodEnd:   result.Metadata.PeriodEnd,
 		RecordCount: len(result.Data),
+	}, nil
+}
+
+func (i *Importer) importMergedFinancialReport(ctx context.Context, dbPath, filePath string, incremental bool) (ImportSummary, error) {
+	totalRecords := 0
+	company := ""
+	periodStart := ""
+	periodEnd := ""
+	importedTypes := make([]string, 0, 2)
+
+	types := []string{"balance_sheet", "income_statement"}
+	for _, typ := range types {
+		result, err := parser.ParseFileAsType(filePath, typ)
+		if err != nil {
+			// keep compatibility: if one sheet format differs, continue with the other type
+			continue
+		}
+		if len(result.Data) == 0 {
+			continue
+		}
+		if err := i.ImportParsed(ctx, dbPath, result, incremental); err != nil {
+			return ImportSummary{}, err
+		}
+		totalRecords += len(result.Data)
+		importedTypes = append(importedTypes, typ)
+		if company == "" {
+			company = result.Metadata.Company
+		}
+		if periodStart == "" {
+			periodStart = result.Metadata.PeriodStart
+		}
+		if periodEnd == "" {
+			periodEnd = result.Metadata.PeriodEnd
+		}
+	}
+
+	if len(importedTypes) == 0 {
+		return ImportSummary{}, fmt.Errorf("merged financial report parse failed: no sheet imported from %s", filePath)
+	}
+
+	return ImportSummary{
+		FilePath:    filePath,
+		ReportType:  strings.Join(importedTypes, "+"),
+		Company:     company,
+		PeriodStart: periodStart,
+		PeriodEnd:   periodEnd,
+		RecordCount: totalRecords,
 	}, nil
 }
 

@@ -26,7 +26,7 @@ func DetectReportType(path string) string {
 		return "balance_detail"
 	case strings.Contains(filename, "资产负债表"):
 		return "balance_sheet"
-	case strings.Contains(filename, "利润表"), strings.Contains(filename, "损益表"):
+	case strings.Contains(filename, "利润表"), strings.Contains(filename, "损益表"), strings.Contains(filename, "财报"):
 		return "income_statement"
 	default:
 		return "unknown"
