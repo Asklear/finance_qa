@@ -408,7 +408,7 @@ func (e *Engine) queryHostLLMPayload(question, from, to string) Result {
 	sqls := []string{
 		"host_payload(balance_sheet): SELECT * FROM balance_sheet WHERE ... AND period BETWEEN ? AND ?",
 		"host_payload(income_statement): SELECT * FROM income_statement WHERE ... AND period BETWEEN ? AND ?",
-		"host_payload(balance_detail): SELECT * FROM balance_detail WHERE ...",
+		"host_payload(balance_detail): SELECT * FROM balance_detail WHERE ... AND period BETWEEN ? AND ?",
 		"host_payload(journal): SELECT * FROM journal WHERE ... AND voucher_date BETWEEN ? AND ?",
 		"host_payload(bank_statement): SELECT * FROM bank_statement WHERE ... AND transaction_date BETWEEN ? AND ?",
 	}
@@ -515,6 +515,13 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 		return Result{Success: false, Message: "该期间未找到应收/应付余额"}
 	}
 
+	sumCheck := CheckSumEqualsTotal(extractClosingBalances(details), total)
+	rollforward, hasRollforward := e.queryBalanceDetailRollforward(period, accountCodePrefix)
+	rollforwardCheck := ArithmeticCheckResult{Passed: true, Diff: 0, Message: "balance_detail rollforward not available"}
+	if hasRollforward {
+		rollforwardCheck = CheckOpeningDeltaClosing(rollforward.OpeningNet, rollforward.DeltaNet, rollforward.ClosingNet)
+	}
+
 	msg := fmt.Sprintf("%s %s合计 %.2f 元", period, accountName, total)
 	return Result{
 		Success: true,
@@ -522,14 +529,69 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 		Data: map[string]any{
 			"type": typ, "period": period, "total": total, "details": details,
 			"account": accountName, "closing": total,
+			"arithmetic_checks": map[string]any{
+				"sum_equals_total":   sumCheck,
+				"rollforward_check":  rollforwardCheck,
+				"balance_rollforward": rollforward,
+			},
 		},
 		ExecutedSQL: []string{
 			"queryAccountPayableReceivable: SELECT account_name, closing_balance FROM balance_sheet WHERE ... AND (account_name LIKE ? OR account_code LIKE ?)",
+			"queryAccountPayableReceivable(balance_detail): SELECT SUM(opening_debit), SUM(opening_credit), SUM(current_debit), SUM(current_credit), SUM(closing_debit), SUM(closing_credit) FROM balance_detail WHERE ... AND account_code LIKE ?",
 		},
 		CalculationLogs: []string{
 			fmt.Sprintf("[AR/AP汇总] period=%s account=%s total=%.2f detail_count=%d", period, accountName, total, len(details)),
+			fmt.Sprintf("[算术校验] sum_equals_total passed=%v diff=%.2f", sumCheck.Passed, sumCheck.Diff),
+			fmt.Sprintf("[滚动校验] rollforward passed=%v diff=%.2f", rollforwardCheck.Passed, rollforwardCheck.Diff),
 		},
 	}
+}
+
+type balanceRollforward struct {
+	OpeningNet float64 `json:"opening_net"`
+	DeltaNet   float64 `json:"delta_net"`
+	ClosingNet float64 `json:"closing_net"`
+}
+
+func (e *Engine) queryBalanceDetailRollforward(period, accountCodePrefix string) (balanceRollforward, bool) {
+	var openingDebit, openingCredit, currentDebit, currentCredit, closingDebit, closingCredit float64
+	err := e.db.QueryRow(`
+SELECT
+  COALESCE(SUM(opening_debit),0),
+  COALESCE(SUM(opening_credit),0),
+  COALESCE(SUM(current_debit),0),
+  COALESCE(SUM(current_credit),0),
+  COALESCE(SUM(closing_debit),0),
+  COALESCE(SUM(closing_credit),0)
+FROM balance_detail
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND period = ?
+  AND account_code LIKE ?
+`, e.Company, e.Company, period, accountCodePrefix+"%").Scan(&openingDebit, &openingCredit, &currentDebit, &currentCredit, &closingDebit, &closingCredit)
+	if err != nil {
+		return balanceRollforward{}, false
+	}
+	openingNet := openingDebit - openingCredit
+	deltaNet := currentDebit - currentCredit
+	closingNet := closingDebit - closingCredit
+	if openingNet == 0 && deltaNet == 0 && closingNet == 0 {
+		return balanceRollforward{}, false
+	}
+	return balanceRollforward{
+		OpeningNet: round2(openingNet),
+		DeltaNet:   round2(deltaNet),
+		ClosingNet: round2(closingNet),
+	}, true
+}
+
+func extractClosingBalances(details []map[string]any) []float64 {
+	out := make([]float64, 0, len(details))
+	for _, d := range details {
+		if v, ok := d["closing_balance"].(float64); ok {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to string) Result {
@@ -1357,8 +1419,9 @@ ORDER BY period, item_name
 SELECT company, year, period, account_code, account_name, opening_debit, opening_credit, current_debit, current_credit, closing_debit, closing_credit
 FROM balance_detail
 WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND period BETWEEN ? AND ?
 ORDER BY year, period, account_code
-`, e.Company, e.Company),
+`, e.Company, e.Company, from, to),
 		"journal": e.queryRowsAsMaps(`
 SELECT company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty
 FROM journal
