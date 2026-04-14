@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Sync finance bridge script + SKILL.md to server, then wire OpenClaw skills symlink.
+# Sync finance bridge script + SKILL.md to server, then wire OpenClaw symlinks.
 # Defaults match current production host; can be overridden via env vars.
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -14,6 +14,7 @@ LOCAL_BRIDGE="$ROOT_DIR/plugin/openclaw-finance/server/finance_bridge.py"
 REMOTE_REPO_DIR="${REMOTE_REPO_DIR:-/root/finance_qa}"
 REMOTE_OPENCLAW_EXT_DIR="${REMOTE_OPENCLAW_EXT_DIR:-/root/.openclaw/extensions/openclaw-finance/server}"
 REMOTE_OPENCLAW_SKILL_DIR="${REMOTE_OPENCLAW_SKILL_DIR:-/root/.openclaw/skills/finance}"
+REMOTE_REPO_BRIDGE_DIR="${REMOTE_REPO_BRIDGE_DIR:-$REMOTE_REPO_DIR/plugin/openclaw-finance/server}"
 
 if [[ ! -f "$LOCAL_SKILL" ]]; then
   echo "missing local SKILL.md: $LOCAL_SKILL" >&2
@@ -27,18 +28,21 @@ fi
 echo "[1/4] upload SKILL.md to ${SERVER}:${REMOTE_REPO_DIR}/SKILL.md"
 scp -i "$KEY_PATH" "$LOCAL_SKILL" "$SERVER:$REMOTE_REPO_DIR/SKILL.md"
 
-echo "[2/4] upload finance_bridge.py to ${SERVER}:${REMOTE_OPENCLAW_EXT_DIR}/finance_bridge.py"
-scp -i "$KEY_PATH" "$LOCAL_BRIDGE" "$SERVER:$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py"
+echo "[2/4] upload finance_bridge.py to ${SERVER}:${REMOTE_REPO_BRIDGE_DIR}/finance_bridge.py"
+ssh -i "$KEY_PATH" "$SERVER" "mkdir -p '$REMOTE_REPO_BRIDGE_DIR'"
+scp -i "$KEY_PATH" "$LOCAL_BRIDGE" "$SERVER:$REMOTE_REPO_BRIDGE_DIR/finance_bridge.py"
 
-echo "[3/4] create OpenClaw skills symlink to repo SKILL.md"
+echo "[3/4] create OpenClaw skills/bridge symlinks to repo files"
 ssh -i "$KEY_PATH" "$SERVER" "set -e; \
+  mkdir -p '$REMOTE_OPENCLAW_EXT_DIR'; \
   mkdir -p '$REMOTE_OPENCLAW_SKILL_DIR'; \
+  ln -sfn '$REMOTE_REPO_BRIDGE_DIR/finance_bridge.py' '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'; \
   ln -sfn '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md'; \
   chmod 444 '$REMOTE_REPO_DIR/SKILL.md'"
 
 echo "[4/4] verify skill path and bridge candidates on server"
 ssh -i "$KEY_PATH" "$SERVER" "set -e; \
-  ls -l '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md'; \
+  ls -l '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md' '$REMOTE_REPO_BRIDGE_DIR/finance_bridge.py' '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'; \
   grep -n 'DEFAULT_SKILL_CANDIDATES' -n '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'; \
   sed -n '1,30p' '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'"
 
