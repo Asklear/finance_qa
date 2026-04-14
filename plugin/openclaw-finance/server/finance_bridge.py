@@ -8,11 +8,13 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 FINANCEQA_BIN = Path(os.environ.get("FINANCEQA_BIN", "/root/finance_qa/financeqa"))
 FINANCEQA_DB = Path(os.environ.get("FINANCEQA_DB", "/root/finance_qa/finance.db"))
 DEFAULT_COMPANY = os.environ.get("FINANCEQA_DEFAULT_COMPANY", "南京优集数据科技有限公司")
+BRIDGE_PROTOCOL_VERSION = "v2"
 DEFAULT_SKILL_CANDIDATES = [
     Path("/root/.openclaw/skills/finance/SKILL.md"),
     Path("/root/.openclaw/skills/finance/skill.md"),
@@ -113,6 +115,22 @@ def load_skill_meta():
     }
 
 
+def now_utc_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def normalize_exposed_fields(data):
+    data = data or {}
+    exposed = {
+        "dual_perspective": data.get("dual_perspective"),
+        "hr_breakdown": data.get("hr_breakdown"),
+        "arithmetic_checks": data.get("arithmetic_checks"),
+        "intent_trace": data.get("intent_trace"),
+    }
+    data["exposed_fields"] = exposed
+    return data
+
+
 def ensure_trace_fields(payload):
     payload = payload or {}
     payload.setdefault("success", False)
@@ -122,7 +140,7 @@ def ensure_trace_fields(payload):
     payload.setdefault("executed_sql", [])
     payload.setdefault("calculation_logs", [])
 
-    data = payload.get("data") or {}
+    data = normalize_exposed_fields(payload.get("data") or {})
     trace = data.get("trace") or {}
     trace["executed_sql"] = payload.get("executed_sql") or []
     trace["calculation_logs"] = payload.get("calculation_logs") or []
@@ -179,9 +197,23 @@ def build_structured_response(payload, query):
     payload = ensure_trace_fields(payload)
     payload["boss_reply"] = build_boss_reply(payload, query)
     payload["bridge_meta"] = {
+        "protocol_version": BRIDGE_PROTOCOL_VERSION,
+        "generated_at": now_utc_iso(),
+        "query": query,
         "company": DEFAULT_COMPANY,
         "db": str(FINANCEQA_DB),
         "skill": load_skill_meta(),
+        "capabilities": {
+            "trace": True,
+            "answer_method": True,
+            "llm_fallback": True,
+            "exposed_fields": [
+                "dual_perspective",
+                "hr_breakdown",
+                "arithmetic_checks",
+                "intent_trace",
+            ],
+        },
     }
     return payload
 
@@ -265,6 +297,8 @@ def run_upload(file_path):
         raise RuntimeError((proc.stderr or proc.stdout or "").strip())
     payload = parse_json_or_none(proc.stdout) or {"raw": (proc.stdout or "").strip()}
     payload["bridge_meta"] = {
+        "protocol_version": BRIDGE_PROTOCOL_VERSION,
+        "generated_at": now_utc_iso(),
         "company": DEFAULT_COMPANY,
         "db": str(FINANCEQA_DB),
         "skill": load_skill_meta(),
