@@ -119,7 +119,8 @@ func (e *Engine) Query(question string) Result {
 			return result.withTraceData()
 		}
 	}
-	if shouldForceDualPerspective(q) && !shouldBypassDualPerspective(q, entity) && !hasRealEntity {
+	// 核心指标问题触发双口径；若问题已识别出真实实体，则优先走实体精细分析路径。
+	if shouldForceDualPerspective(q) && !hasRealEntity {
 		result = e.queryDualPerspectiveForCoreMetric(q, from, to)
 		if result.Success {
 			return result.withTraceData()
@@ -258,18 +259,18 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 		AnswerMethod: "sql",
 		Data: map[string]any{
 			"monthly": map[string]any{
-				"year":       year,
-				"month":      month,
-				"source":     bookSource,
-				"revenue":    book.Revenue,
-				"cost":       book.TotalCost,
-				"profit":     book.Profit,
+				"year":    year,
+				"month":   month,
+				"source":  bookSource,
+				"revenue": book.Revenue,
+				"cost":    book.TotalCost,
+				"profit":  book.Profit,
 				"cost_detail": map[string]any{
-					"operating_cost":   book.Cost,
-					"tax_surcharge":    book.TaxSurcharge,
-					"selling_expense":  book.SellingExpense,
-					"admin_expense":    book.AdminExpense,
-					"finance_expense":  book.FinanceExpense,
+					"operating_cost":  book.Cost,
+					"tax_surcharge":   book.TaxSurcharge,
+					"selling_expense": book.SellingExpense,
+					"admin_expense":   book.AdminExpense,
+					"finance_expense": book.FinanceExpense,
 				},
 			},
 			"cumulative": is, "cash_flow": cash,
@@ -330,16 +331,16 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		Message:      msg,
 		AnswerMethod: "sql",
 		Data: map[string]any{
-			"period":        to,
-			"metric":        metric,
-			"money_view":    dual.Cash,
-			"account_view":  dual.Accrual,
-			"money_value":   cashValue,
-			"account_value": accrualValue,
+			"period":            to,
+			"metric":            metric,
+			"money_view":        dual.Cash,
+			"account_view":      dual.Accrual,
+			"money_value":       cashValue,
+			"account_value":     accrualValue,
 			"requested_metrics": requestedMetrics,
-			"现金流入":          dual.Cash.Income,
-			"现金流出":          dual.Cash.Expense,
-			"净现金流":          dual.Cash.Net,
+			"现金流入":              dual.Cash.Income,
+			"现金流出":              dual.Cash.Expense,
+			"净现金流":              dual.Cash.Net,
 			"财务做账口径(看利润)": map[string]any{
 				"营业收入":    dual.Accrual.Revenue,
 				"营业成本及费用": dual.Accrual.TotalCost,
@@ -799,16 +800,17 @@ func (e *Engine) queryFallback(q, from, to, err string) Result {
 }
 
 func (e *Engine) ruleFallback(q, from, to string) Result {
+	cfg := getRuleConfig()
 	// 供应商数量
 	if strings.Contains(q, "供应商") && strings.Contains(q, "多少") {
 		return e.querySupplierCount()
 	}
 	// 人力成本
-	if containsAny(q, []string{"人力成本", "工资成本", "薪酬成本", "应付职工薪酬"}) {
+	if containsAny(q, cfg.IntentHRCostKeywords) {
 		return e.queryHRCost(from, to)
 	}
 	// 整体支出
-	if containsAny(q, []string{"整体支出", "总支出", "全部支出"}) {
+	if containsAny(q, cfg.FallbackMonthlyExpenseKeywords) {
 		return e.queryMonthlyExpenseFromBank(from, to)
 	}
 	entity := e.extractNamedEntity(q)

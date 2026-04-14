@@ -89,6 +89,22 @@ func TestClassifyCounterpartyUsesLedgerEvidenceNotNetFlowOnly(t *testing.T) {
 	}
 }
 
+func TestClassifyCounterpartyRecognizesSupplierFromPrepaymentServiceFeeAndInputTax(t *testing.T) {
+	evidence := []query.LedgerEvidence{
+		{Source: "journal", Counterparty: "汇智", AccountCode: "112301", AccountName: "预付账款", Summary: "转账南京汇智互娱教育科技有限公司", DebitAmount: 53750},
+		{Source: "journal", Counterparty: "汇智", AccountCode: "66022304", AccountName: "服务费", Summary: "收到南京汇智互娱教育科技有限公司发票", DebitAmount: 50707.55},
+		{Source: "journal", Counterparty: "汇智", AccountCode: "22210101", AccountName: "进项税额", Summary: "收到南京汇智互娱教育科技有限公司发票", DebitAmount: 3042.45},
+	}
+
+	got := query.ClassifyCounterparty("汇智", evidence)
+	if got.Role != query.CounterpartySupplier {
+		t.Fatalf("expected supplier classification from prepayment/service fee/input tax evidence, got %s; scores=%v signals=%v", got.Role, got.Scores, got.Signals)
+	}
+	if !containsAny(strings.Join(got.Signals, ","), []string{"supplier_strong", "supplier"}) {
+		t.Fatalf("expected supplier signal, got %v", got.Signals)
+	}
+}
+
 func containsAny(s string, keywords []string) bool {
 	for _, kw := range keywords {
 		if strings.Contains(s, kw) {

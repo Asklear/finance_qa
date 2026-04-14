@@ -141,6 +141,7 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 // ClassifyIntent 精准意图识别引擎 V6 (加权版)
 func ClassifyIntent(question string) Intent {
 	q := strings.ReplaceAll(question, " ", "")
+	cfg := getRuleConfig()
 
 	if containsAny(q, []string{"最大", "单笔", "流入对手方", "流出对手方"}) {
 		return IntentLargeTransactionQuery
@@ -151,32 +152,32 @@ func ClassifyIntent(question string) Intent {
 	}
 
 	// 这些问题虽然可能包含“应付”，但业务语义是人力成本，不应被 AR/AP 分流截走。
-	if containsAny(q, []string{"人力成本", "工资成本", "薪酬成本", "应付职工薪酬"}) {
+	if containsAny(q, cfg.IntentHRCostKeywords) {
 		return IntentFallback
 	}
 
-	if containsAny(q, []string{"应收", "应付", "账款", "往来款"}) {
+	if containsAny(q, cfg.IntentARAPKeywords) {
 		return IntentARAPQuery
 	}
 
-	if strings.Contains(q, "税") {
+	if containsAny(q, cfg.IntentTaxKeywords) {
 		return IntentTaxQuery
 	}
 
 	// 这类问法需要 fallback 结构化提示，而不是分析模块直接接管
-	if containsAny(q, []string{"健康度", "健康", "怎么样"}) {
+	if containsAny(q, cfg.IntentHealthKeywords) {
 		return IntentFallback
 	}
 
-	if containsAny(q, []string{"分析", "评分", "评价", "风险", "分析下"}) {
+	if containsAny(q, cfg.IntentAnalysisKeywords) {
 		return IntentAnalysis
 	}
 
-	if containsAny(q, []string{"供应商多少", "多少供应商", "供应商有多少", "人力成本", "工资成本", "薪酬成本", "应付职工薪酬", "整体支出", "总支出", "全部支出"}) {
+	if containsAny(q, cfg.IntentFallbackKeywords) {
 		return IntentFallback
 	}
 
-	if containsAny(q, []string{"宿主llm", "hostllm", "原始数据", "全量财报", "财报原始", "llm数据包"}) {
+	if containsAny(q, cfg.IntentHostPayloadKeywords) {
 		return IntentHostPayload
 	}
 
@@ -184,7 +185,7 @@ func ClassifyIntent(question string) Intent {
 		return IntentFallback
 	}
 
-	if containsAny(q, []string{"概括", "总结", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额"}) {
+	if containsAny(q, cfg.IntentMonthlySummaryKeywords) {
 		return IntentMonthlySummary
 	}
 

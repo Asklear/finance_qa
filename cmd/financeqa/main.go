@@ -177,17 +177,18 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 	defer func() { _ = engine.Close() }()
 
 	result := engine.Query(question)
-	if !result.Success {
-		fmt.Fprintln(stderr, result.Message)
-		return 1
-	}
-
 	b, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "marshal query result failed: %v\n", err)
 		return 1
 	}
 	fmt.Fprintln(stdout, string(b))
+	if !result.Success {
+		// 关键兼容：即便业务失败，也把完整JSON（含llm_payload/trace）写到stdout，
+		// 便于桥接层做降级；同时保留非0退出码，兼容CLI语义与CI脚本。
+		fmt.Fprintln(stderr, result.Message)
+		return 1
+	}
 	return 0
 }
 

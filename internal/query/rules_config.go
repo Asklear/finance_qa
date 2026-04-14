@@ -9,21 +9,39 @@ import (
 
 // RuleConfig 定义查询层可调规则（默认值 + 外部覆盖）。
 type RuleConfig struct {
-	GenericMetricStopwords      []string `json:"generic_metric_stopwords"`
-	RoleMixedMinRatio           float64  `json:"role_mixed_min_ratio"`
-	RoleMixedMinPositiveScore   float64  `json:"role_mixed_min_positive_score"`
-	RoleMixedMinPositiveRoles   int      `json:"role_mixed_min_positive_roles"`
-	RoleMinPrimaryScore         float64  `json:"role_min_primary_score"`
-	RoleMinConfidence           float64  `json:"role_min_confidence"`
+	GenericMetricStopwords         []string `json:"generic_metric_stopwords"`
+	IntentARAPKeywords             []string `json:"intent_arap_keywords"`
+	IntentHRCostKeywords           []string `json:"intent_hr_cost_keywords"`
+	IntentTaxKeywords              []string `json:"intent_tax_keywords"`
+	IntentHealthKeywords           []string `json:"intent_health_keywords"`
+	IntentFallbackKeywords         []string `json:"intent_fallback_keywords"`
+	IntentAnalysisKeywords         []string `json:"intent_analysis_keywords"`
+	IntentHostPayloadKeywords      []string `json:"intent_host_payload_keywords"`
+	IntentMonthlySummaryKeywords   []string `json:"intent_monthly_summary_keywords"`
+	FallbackMonthlyExpenseKeywords []string `json:"fallback_monthly_expense_keywords"`
+	RoleMixedMinRatio              float64  `json:"role_mixed_min_ratio"`
+	RoleMixedMinPositiveScore      float64  `json:"role_mixed_min_positive_score"`
+	RoleMixedMinPositiveRoles      int      `json:"role_mixed_min_positive_roles"`
+	RoleMinPrimaryScore            float64  `json:"role_min_primary_score"`
+	RoleMinConfidence              float64  `json:"role_min_confidence"`
 }
 
 type ruleConfigFile struct {
-	GenericMetricStopwords    []string  `json:"generic_metric_stopwords"`
-	RoleMixedMinRatio         *float64  `json:"role_mixed_min_ratio"`
-	RoleMixedMinPositiveScore *float64  `json:"role_mixed_min_positive_score"`
-	RoleMixedMinPositiveRoles *int      `json:"role_mixed_min_positive_roles"`
-	RoleMinPrimaryScore       *float64  `json:"role_min_primary_score"`
-	RoleMinConfidence         *float64  `json:"role_min_confidence"`
+	GenericMetricStopwords         []string `json:"generic_metric_stopwords"`
+	IntentARAPKeywords             []string `json:"intent_arap_keywords"`
+	IntentHRCostKeywords           []string `json:"intent_hr_cost_keywords"`
+	IntentTaxKeywords              []string `json:"intent_tax_keywords"`
+	IntentHealthKeywords           []string `json:"intent_health_keywords"`
+	IntentFallbackKeywords         []string `json:"intent_fallback_keywords"`
+	IntentAnalysisKeywords         []string `json:"intent_analysis_keywords"`
+	IntentHostPayloadKeywords      []string `json:"intent_host_payload_keywords"`
+	IntentMonthlySummaryKeywords   []string `json:"intent_monthly_summary_keywords"`
+	FallbackMonthlyExpenseKeywords []string `json:"fallback_monthly_expense_keywords"`
+	RoleMixedMinRatio              *float64 `json:"role_mixed_min_ratio"`
+	RoleMixedMinPositiveScore      *float64 `json:"role_mixed_min_positive_score"`
+	RoleMixedMinPositiveRoles      *int     `json:"role_mixed_min_positive_roles"`
+	RoleMinPrimaryScore            *float64 `json:"role_min_primary_score"`
+	RoleMinConfidence              *float64 `json:"role_min_confidence"`
 }
 
 func defaultRuleConfig() RuleConfig {
@@ -38,10 +56,40 @@ func defaultRuleConfig() RuleConfig {
 			"现金流", "流水", "回款", "到账", "收款", "付款",
 			"经营状况", "指标", "核心指标", "月度经营",
 		},
+		IntentARAPKeywords: []string{
+			"应收", "应付", "账款", "往来款",
+		},
+		IntentHRCostKeywords: []string{
+			"人力成本", "工资成本", "薪酬成本", "应付职工薪酬",
+		},
+		IntentTaxKeywords: []string{
+			"税", "销项", "进项", "增值税",
+		},
+		IntentHealthKeywords: []string{
+			"健康度", "健康", "怎么样",
+		},
+		IntentFallbackKeywords: []string{
+			"健康度", "健康", "怎么样",
+			"供应商多少", "多少供应商", "供应商有多少",
+			"人力成本", "工资成本", "薪酬成本", "应付职工薪酬",
+			"整体支出", "总支出", "全部支出",
+		},
+		IntentAnalysisKeywords: []string{
+			"分析", "评分", "评价", "风险", "分析下",
+		},
+		IntentHostPayloadKeywords: []string{
+			"宿主llm", "hostllm", "原始数据", "全量财报", "财报原始", "llm数据包",
+		},
+		IntentMonthlySummaryKeywords: []string{
+			"概括", "总结", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额",
+		},
+		FallbackMonthlyExpenseKeywords: []string{
+			"整体支出", "总支出", "全部支出", "支出汇总",
+		},
 		RoleMixedMinRatio:         0.45,
 		RoleMixedMinPositiveScore: 1.0,
 		RoleMixedMinPositiveRoles: 2,
-		RoleMinPrimaryScore:       0.0,
+		RoleMinPrimaryScore:       0.5,
 		RoleMinConfidence:         0.0,
 	}
 }
@@ -69,6 +117,33 @@ func mergeRuleConfigFromFile(cfg *RuleConfig) {
 	if len(raw.GenericMetricStopwords) > 0 {
 		cfg.GenericMetricStopwords = dedupeNonEmpty(raw.GenericMetricStopwords)
 	}
+	if len(raw.IntentARAPKeywords) > 0 {
+		cfg.IntentARAPKeywords = dedupeNonEmpty(raw.IntentARAPKeywords)
+	}
+	if len(raw.IntentHRCostKeywords) > 0 {
+		cfg.IntentHRCostKeywords = dedupeNonEmpty(raw.IntentHRCostKeywords)
+	}
+	if len(raw.IntentTaxKeywords) > 0 {
+		cfg.IntentTaxKeywords = dedupeNonEmpty(raw.IntentTaxKeywords)
+	}
+	if len(raw.IntentHealthKeywords) > 0 {
+		cfg.IntentHealthKeywords = dedupeNonEmpty(raw.IntentHealthKeywords)
+	}
+	if len(raw.IntentFallbackKeywords) > 0 {
+		cfg.IntentFallbackKeywords = dedupeNonEmpty(raw.IntentFallbackKeywords)
+	}
+	if len(raw.IntentAnalysisKeywords) > 0 {
+		cfg.IntentAnalysisKeywords = dedupeNonEmpty(raw.IntentAnalysisKeywords)
+	}
+	if len(raw.IntentHostPayloadKeywords) > 0 {
+		cfg.IntentHostPayloadKeywords = dedupeNonEmpty(raw.IntentHostPayloadKeywords)
+	}
+	if len(raw.IntentMonthlySummaryKeywords) > 0 {
+		cfg.IntentMonthlySummaryKeywords = dedupeNonEmpty(raw.IntentMonthlySummaryKeywords)
+	}
+	if len(raw.FallbackMonthlyExpenseKeywords) > 0 {
+		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(raw.FallbackMonthlyExpenseKeywords)
+	}
 	if raw.RoleMixedMinRatio != nil {
 		cfg.RoleMixedMinRatio = *raw.RoleMixedMinRatio
 	}
@@ -89,6 +164,33 @@ func mergeRuleConfigFromFile(cfg *RuleConfig) {
 func mergeRuleConfigFromEnv(cfg *RuleConfig) {
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_METRIC_STOPWORDS")); raw != "" {
 		cfg.GenericMetricStopwords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_ARAP_KEYWORDS")); raw != "" {
+		cfg.IntentARAPKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_HR_COST_KEYWORDS")); raw != "" {
+		cfg.IntentHRCostKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_TAX_KEYWORDS")); raw != "" {
+		cfg.IntentTaxKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_HEALTH_KEYWORDS")); raw != "" {
+		cfg.IntentHealthKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_FALLBACK_KEYWORDS")); raw != "" {
+		cfg.IntentFallbackKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_ANALYSIS_KEYWORDS")); raw != "" {
+		cfg.IntentAnalysisKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_HOST_PAYLOAD_KEYWORDS")); raw != "" {
+		cfg.IntentHostPayloadKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_MONTHLY_SUMMARY_KEYWORDS")); raw != "" {
+		cfg.IntentMonthlySummaryKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_FALLBACK_MONTHLY_EXPENSE_KEYWORDS")); raw != "" {
+		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(strings.Split(raw, ","))
 	}
 	if v, ok := parseEnvFloat("FINANCEQA_ROLE_MIXED_MIN_RATIO"); ok {
 		cfg.RoleMixedMinRatio = v
@@ -151,4 +253,3 @@ func dedupeNonEmpty(items []string) []string {
 	}
 	return out
 }
-

@@ -177,7 +177,7 @@ func isRevenueEvidence(text string, ev LedgerEvidence) bool {
 }
 
 func isCostEvidence(text string, ev LedgerEvidence) bool {
-	if hasAny(text, []string{"营业成本", "成本", "采购", "费用", "支出", "6601", "6401", "5001", "存货", "材料"}) {
+	if hasAny(text, []string{"营业成本", "成本", "采购", "费用", "支出", "服务费", "技术服务费", "6601", "6602", "6401", "5001", "存货", "材料"}) {
 		return true
 	}
 	return ev.DebitAmount > 0 && hasAny(text, supplierKeywords)

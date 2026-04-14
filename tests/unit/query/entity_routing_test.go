@@ -121,6 +121,8 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 		 VALUES ('南京优集数据科技有限公司', '2026-02', '一、营业收入', 800)`,
 		`INSERT INTO income_statement(company, period, item_name, current_amount)
 		 VALUES ('南京优集数据科技有限公司', '2026-02', '五、净利润', 500)`,
+		`INSERT INTO balance_sheet(company, period, account_name, account_code, opening_balance, closing_balance)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '应付职工薪酬', '2211', 0, 300)`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
 		 VALUES ('南京优集数据科技有限公司', '2026-02-15', '飞未云科', '2月回款', 0, 904)`,
 	}

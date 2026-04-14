@@ -36,9 +36,82 @@
     "核心指标",
     "月度经营"
   ],
+  "intent_arap_keywords": [
+    "应收",
+    "应付",
+    "账款",
+    "往来款"
+  ],
+  "intent_hr_cost_keywords": [
+    "人力成本",
+    "工资成本",
+    "薪酬成本",
+    "应付职工薪酬"
+  ],
+  "intent_tax_keywords": [
+    "税",
+    "销项",
+    "进项",
+    "增值税"
+  ],
+  "intent_health_keywords": [
+    "健康度",
+    "健康",
+    "怎么样"
+  ],
+  "intent_fallback_keywords": [
+    "健康度",
+    "健康",
+    "怎么样",
+    "供应商多少",
+    "多少供应商",
+    "供应商有多少",
+    "人力成本",
+    "工资成本",
+    "薪酬成本",
+    "应付职工薪酬",
+    "整体支出",
+    "总支出",
+    "全部支出"
+  ],
+  "intent_analysis_keywords": [
+    "分析",
+    "评分",
+    "评价",
+    "风险",
+    "分析下"
+  ],
+  "intent_host_payload_keywords": [
+    "宿主llm",
+    "hostllm",
+    "原始数据",
+    "全量财报",
+    "财报原始",
+    "llm数据包"
+  ],
+  "intent_monthly_summary_keywords": [
+    "概括",
+    "总结",
+    "利润",
+    "指标",
+    "经营状况",
+    "收入",
+    "支出",
+    "支出汇总",
+    "报销汇总",
+    "成本",
+    "总成本",
+    "费用总额"
+  ],
+  "fallback_monthly_expense_keywords": [
+    "整体支出",
+    "总支出",
+    "全部支出",
+    "支出汇总"
+  ],
   "role_mixed_min_ratio": 0.45,
   "role_mixed_min_positive_score": 1.0,
   "role_mixed_min_positive_roles": 2,
-  "role_min_primary_score": 0.0,
+  "role_min_primary_score": 0.5,
   "role_min_confidence": 0.0
 }

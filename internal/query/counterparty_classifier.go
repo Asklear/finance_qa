@@ -46,6 +46,7 @@ var (
 	}
 	supplierKeywords = []string{
 		"应付", "付款", "采购", "成本", "材料", "供应商", "外包", "2202",
+		"预付账款", "1123", "112301",
 	}
 	employeeKeywords = []string{
 		"工资", "薪酬", "社保", "公积金", "报销", "差旅", "福利", "餐补", "伙食", "应付职工薪酬", "2211",
@@ -78,6 +79,9 @@ func ClassifyCounterparty(counterparty string, evidence []LedgerEvidence) Counte
 		case hasAny(text, employeeKeywords):
 			scores[CounterpartyEmployee] += 3.0
 			signals = append(signals, "employee:"+pickFirstHit(text, employeeKeywords))
+		case hasSupplierStrongEvidence(ev, text):
+			scores[CounterpartySupplier] += 2.8
+			signals = append(signals, "supplier_strong:"+pickSupplierSignal(ev, text))
 		case hasAny(text, supplierKeywords):
 			scores[CounterpartySupplier] += 2.6
 			signals = append(signals, "supplier:"+pickFirstHit(text, supplierKeywords))
@@ -200,6 +204,44 @@ func pickFirstHit(text string, keywords []string) string {
 		}
 	}
 	return ""
+}
+
+func hasSupplierStrongEvidence(ev LedgerEvidence, text string) bool {
+	if hasAny(text, []string{"2202", "应付账款"}) {
+		return true
+	}
+	if hasAny(text, []string{"1123", "112301", "预付账款"}) {
+		return true
+	}
+	if (strings.HasPrefix(ev.AccountCode, "6602") || strings.HasPrefix(ev.AccountCode, "6401")) && (ev.DebitAmount > 0 || ev.Direction == "借") {
+		return true
+	}
+	if hasAny(text, []string{"服务费", "技术服务费", "外包服务"}) && (ev.DebitAmount > 0 || ev.Direction == "借") {
+		return true
+	}
+	if hasAny(text, []string{"22210101", "222102", "进项税"}) && (ev.DebitAmount > 0 || ev.Direction == "借") {
+		return true
+	}
+	return false
+}
+
+func pickSupplierSignal(ev LedgerEvidence, text string) string {
+	switch {
+	case hasAny(text, []string{"2202", "应付账款"}):
+		return "2202"
+	case hasAny(text, []string{"1123", "112301", "预付账款"}):
+		return "1123"
+	case strings.HasPrefix(ev.AccountCode, "6602"):
+		return "6602"
+	case strings.HasPrefix(ev.AccountCode, "6401"):
+		return "6401"
+	case hasAny(text, []string{"22210101", "222102", "进项税"}):
+		return "input_tax"
+	case hasAny(text, []string{"服务费", "技术服务费", "外包服务"}):
+		return "service_fee"
+	default:
+		return "supplier_evidence"
+	}
 }
 
 func dedupeSignals(signals []string) []string {
