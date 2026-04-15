@@ -266,3 +266,41 @@ go test ./tests/integration/...
 1. `银行卡上看`：实际进出账与净现金流。
 2. `账上看`：报表确认收入、成本、利润。
 3. `差异桥`：解释“为什么账上盈利但卡上没增钱”。
+
+桥接层（`plugin/openclaw-finance/server/finance_bridge.py`）会额外补充：
+
+1. `data.exposed_fields.dual_perspective`
+2. `data.exposed_fields.hr_breakdown`
+3. `data.exposed_fields.arithmetic_checks`
+4. `data.exposed_fields.intent_trace`
+5. `bridge_meta.protocol_version`（当前 `v2`）
+6. `bridge_meta.capabilities`
+
+说明：桥接层不再读取/注入 `SKILL.md`，skill 由宿主（OpenClaw/Claude Code）skills 机制加载。
+当前推荐使用“核心版 SKILL + 附录”：
+
+1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）
+2. 详细规则：`docs/SKILL_APPENDIX_FULL_2026-04-15.md`（按需查阅）
+
+## 七、Agent 对接能力矩阵
+
+为保证 OpenClaw / Claude Code 全面调用代码库功能，建议按下表接入：
+
+1. 桥接工具（开箱即用）：
+   - `finance-query` → `financeqa query`
+   - `finance-host-data` → `financeqa host-data`
+   - `finance-upload` → `financeqa import`（单文件）
+2. 直接 CLI/SDK（桥接未封装）：
+   - `financeqa sync`（目录批量导入）
+   - `financeqa dimensions ...`（维度导入导出与规则管理）
+   - `financeqa config show`
+   - `financeqa keywords intents`
+   - Go SDK：`query.NewEngine / Engine.Query / Engine.HostLLMPayload`
+
+## 八、回答红线（不能犯）
+
+1. 不能把“银行到账”直接当“当月收入确认”。
+2. 不能把供应商付款/工资/税费误归因成收入差异。
+3. 不能在证据不足时编造结算月份、合同归属或开票归属。
+4. 不能只回一个数字，必须保留过程字段（`executed_sql`、`calculation_logs`、`trace`）。
+5. 不能只看 CLI 退出码；业务失败时仍要先解析 stdout 的结构化 JSON（其中可能含 `llm_payload`）。

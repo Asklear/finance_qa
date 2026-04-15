@@ -1,0 +1,433 @@
+---
+name: "finance"
+description: "v2.0.0｜面向老板问答的财务查询能力说明（双视角 + 可追溯过程 + 上层Agent兜底）"
+---
+
+# finance_qa Agent 调用手册（全功能暴露）
+
+本文档目标：把本代码库所有已实现功能与接口完整暴露，便于各类 Agent 直接调用。
+
+## 1. 能力定位
+
+`finance_qa` 是老板财务助理引擎，能力分为四层：
+
+1. 数据层：初始化库、导入报表、目录同步。
+2. 规则层：自然语言意图识别、实体识别、账期识别。
+3. 计算层：双视角核算（银行卡实际进出账 + 财务报表确认）、税额、应收应付、项目收支等。
+4. 兜底层：输出 `llm_payload` 全量财报上下文给上层 Agent 或宿主模型做最终判别。
+
+## 2. 过程暴露要求
+
+所有查询响应都必须暴露以下字段，不可只返回结果值：
+
+1. `success`
+2. `message`
+3. `answer_method`
+4. `data`
+5. `executed_sql`
+6. `calculation_logs`
+7. `data.trace.executed_sql`
+8. `data.trace.calculation_logs`
+9. `data.intent_trace.router_version`
+10. `data.intent_trace.matched`
+11. `data.intent_trace.scores`
+12. `data.intent_trace.final_intent`
+13. `data.intent_trace.confidence`
+14. `data.exposed_fields.dual_perspective`
+15. `data.exposed_fields.hr_breakdown`
+16. `data.exposed_fields.arithmetic_checks`
+17. `data.exposed_fields.intent_trace`
+18. `bridge_meta.protocol_version`
+19. `bridge_meta.capabilities`
+
+说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
+
+## 3. 对外接口总览（全量）
+
+## 3.1 CLI 命令接口
+
+1. `help | -h | --help`
+2. `init-db`
+3. `config show`
+4. `keywords intents`
+5. `query`
+6. `import`
+7. `sync`
+8. `host-data`
+9. `dimensions`（含完整子命令，见 3.2）
+
+补充：当首个参数不是上述命令时，CLI 会按 `query` 处理。
+
+## 3.2 dimensions 子命令全量接口
+
+1. `dimensions list [--db <path>]`
+2. `dimensions add-dimension --db <path> --code <code> --name <name> [--type <type>] [--hierarchical]`
+3. `dimensions add-member --db <path> --dimension <code> --code <code> --name <name>`
+4. `dimensions mapping-stats [--db <path>] [--company <name>]`
+5. `dimensions seed-standard [--db <path>] --company <name>`
+6. `dimensions export-package --db <path> --output <file> [--format json]`
+7. `dimensions import-dimensions --db <path> --file <file> [--validate-only] [--skip-existing] [--update-existing] [--format json]`
+8. `dimensions import-members --db <path> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing] [--format json]`
+9. `dimensions import-rules --db <path> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing] [--format json]`
+10. `dimensions preview-import --db <path> --type <dimensions|members> --file <file> [--dimension <code>] [--format json]`
+
+## 3.3 Go SDK 接口（可供上层服务封装）
+
+1. `query.NewEngine(dbPath, company)`
+2. `(*Engine).Query(question)`
+3. `(*Engine).HostLLMPayload(from, to, question)`
+4. `(*Engine).Close()`
+
+## 4. 查询响应契约（Agent 必须按此解析）
+
+## 4.1 顶层结构
+
+```json
+{
+  "success": true,
+  "message": "...",
+  "answer_method": "sql|llm_payload",
+  "data": {},
+  "executed_sql": ["..."],
+  "calculation_logs": ["..."]
+}
+```
+
+## 4.2 `answer_method` 含义
+
+1. `sql`: 规则与SQL计算得到结果。
+2. `llm_payload`: 系统无法直接准确回答，转交上层 Agent 基于全量数据推理。
+
+补充：当前默认意图路由为 `Intent Router V2`，会返回 `intent_trace` 说明命中的规则、得分和最终意图，便于审计与排错。
+
+## 4.3 失败兜底结构（`success=false` 常见字段）
+
+1. `data.fallback_attempted`
+2. `data.hint`
+3. `data.available_accounts`
+4. `data.counterparty_sample`
+5. `data.llm_payload`
+
+## 5. 问题类型与处理模块
+
+系统会根据老板的问题，自动分配到以下处理模块：
+
+1. 原始数据包输出：把全量财报与过程数据打包给上层 Agent。
+2. 主体身份识别：判断某个名字更像客户、供应商、员工，还是混合往来。
+3. 应收应付查询：查应收账款、应付账款、项目应收应付。
+4. 大额流水查询：查最大流入对手方、最大流出对手方、单笔大额流水。
+5. 税额查询：查销项税、进项税、净税额。
+6. 月度经营总结：查当月收入、成本、利润、支出、经营情况。
+7. 经营分析：查账龄、健康度、差异原因分析。
+8. 兜底查询：处理供应商数量、人力成本、整体支出、项目收入成本、某主体金额等问题。
+9. 精确余额查询：查货币资金、银行存款、指定科目期末余额。
+
+补充规则：
+
+1. 总量型核心指标问题（收入/成本/利润/销售额）默认优先返回双视角结果。
+2. 如果问题里带有明确的真实主体，优先回答这个主体的金额或状态，不强行改成整月汇总。
+3. 当直接规则无法稳定回答时，自动降级输出 `llm_payload` 给上层 Agent 继续判断。
+
+## 6. 已支持问题能力清单（老板问法）
+
+以下问题当前都已支持，且会返回中间过程：
+
+1. 月度收入/成本/利润（双视角：实际进出账 + 报表确认）。
+2. 某客户/供应商/主体在某期间金额（穿透审计）。
+3. 这个月整体支出。
+4. 人力成本。
+5. 供应商数量 + 供应商名单与净流出。
+6. 某实体某月数据是否已出。
+7. 某项目某月收入。
+8. 某项目某月成本。
+9. 某月销项税额。
+10. 某月进项税额。
+11. 某月总成本（走月度总结或双视角成本）。
+12. 某月应收账款（余额表口径）。
+13. 某月应付账款（余额表口径）。
+14. 某项目应收/应付（项目净流入口径）。
+15. 某主体身份识别（客户/供应商/员工/混合/未知）。
+16. 某期间最大流入对手方/大额流水查询。
+17. 某科目期末余额精确查询（如“货币资金余额是多少”）。
+18. 账龄与健康度分析（应收/应付账龄桶与健康评分）。
+
+## 7. 双视角返回规则（核心指标）
+
+当问题涉及总量型 `收入/成本/利润/销售额`，默认返回两套口径：
+
+1. 老板可理解表达：`银行卡上看` 或 `卡上实际进出账`。
+2. 老板可理解表达：`账上看` 或 `财务报表确认`。
+
+并同步提供兼容字段：
+
+1. `现金流入`
+2. `现金流出`
+3. `净现金流`
+4. `账上看利润` / `财务报表确认利润`
+
+说明：
+
+1. 对老板的回复里不要直接说“钱口径/账口径”，统一用“银行卡上看/账上看”这类自然说法。
+2. 如果问题明确在问某个客户、供应商、员工或项目，且同时问了多个核心指标（如“收入/成本/利润”），仍强制返回双视角；主体明细作为补充信息返回。
+
+## 8. 上层 Agent 兜底接口
+
+代码内不直接调用上层模型，改为提供全量数据接口：
+
+1. `query` 自动 fallback 时返回 `data.llm_payload`。
+2. 可主动调用 `host-data` 直接获取 `llm_payload`。
+3. 上层 Agent/接口层职责分离：接口负责完整暴露中间过程、证据等级、SQL 与规则链；上层 Agent 只负责最终自然语言判断与归纳，老板最终回复默认不展开这些过程字段。
+
+`llm_payload` 内容：
+
+1. `question`
+2. `company`
+3. `period`
+4. `financial_tables.balance_sheet`
+5. `financial_tables.income_statement`
+6. `financial_tables.balance_detail`
+7. `financial_tables.journal`
+8. `financial_tables.bank_statement`
+9. `trace.intent`
+10. `trace.strategy`
+
+## 9. 推荐工具封装（对接层）
+
+建议在任意 Agent 平台按“桥接工具 + 直接 CLI”两层暴露：
+
+1. `finance-query`
+2. `finance-host-data`
+3. `finance-upload`（当前桥接层等价于单文件 `import`）
+
+补充：
+
+1. 当前 `finance_bridge.py` 只注册上述 3 个工具，不再在桥接层读取或注入 `SKILL.md` 内容。
+2. `sync`、`dimensions`、`config`、`keywords` 等高级功能，建议通过“直接 CLI 命令工具”暴露给 Agent（例如 shell/tool-call），不要假设桥接层已封装。
+3. 对任意 Agent 的桥接层，优先保留原始结构化响应与全部已实现字段，不要提前做摘要裁剪或白名单过滤。
+
+最小调用策略：
+
+1. 先调 `finance-query`。
+2. 若 `success=true`，直接回复并附中间过程字段。
+3. 若 `success=false` 或 `answer_method=llm_payload`，读取 `data.llm_payload` 交上层 Agent 推理。
+
+## 9.2 能力覆盖矩阵（避免漏调）
+
+1. 通过桥接工具可直接调用：
+   - `query`（`finance-query`）
+   - `host-data`（`finance-host-data`）
+   - `import`（`finance-upload`，单文件）
+2. 需要通过直接 CLI/SDK 调用：
+   - `sync`（目录批量导入）
+   - `dimensions *`（维度管理、导入导出、预览）
+   - `config show`
+   - `keywords intents`
+3. Go SDK 对应：
+   - `NewEngine`
+   - `Engine.Query`
+   - `Engine.HostLLMPayload`
+
+## 9.1 关键实现差异（必须注意）
+
+`financeqa query` 的 CLI 行为是：
+
+1. 成功：stdout 输出完整 JSON，exit code=0。
+2. 业务失败：stdout 仍输出完整 JSON，stderr 额外输出 `message`，exit code=1。
+3. 参数错误或系统错误：可能只有 stderr，没有完整业务 JSON。
+
+这意味着对接层不能只盯 `exit code`，而要优先解析 stdout 里的结构化结果。
+
+推荐做法：
+
+1. 优先解析 stdout JSON，再看 `success` 和 `answer_method`。
+2. 若对接层支持 Go SDK，可直接拿结构化结果。
+3. 若 stdout 没拿到结构化结果，再调用 `host-data` 兜底。
+4. 对外接口要“统一输出 JSON”，不要把 CLI 的非0退出直接透传给老板。
+
+## 10. Agent 返回规范（必须透出中间过程）
+
+给老板回复时建议“双层输出”：
+
+1. 业务层：结论 + 双视角解释（用老板语言，不说术语）。
+2. 技术层：`executed_sql` + `calculation_logs` + `trace`（可折叠，但必须保留在接口结果中；若有证据等级、规则链路等字段，也应一并保留）。
+
+推荐响应示例：
+
+```json
+{
+  "answer": "先说结果：2月公司银行卡上实际到账约180万、实际付出约120万，手里净增加约60万。账上看，2月确认收入约165万、确认成本约130万、账面利润约35万。两边不一样，主要是有些成本和回款不是在同一个月份确认。建议本周先盯大额回款对应的结算单，再把跨月成本拆开看。",
+  "method": "sql",
+  "trace": {
+    "executed_sql": ["..."],
+    "calculation_logs": ["..."]
+  },
+  "raw": {
+    "success": true,
+    "answer_method": "sql",
+    "data": {"...": "..."}
+  }
+}
+```
+
+## 10.1 老板回复风格（强制）
+
+禁止只返回一个数字，必须按以下结构输出：
+
+1. 一句话结论：先回答老板最关心的结果（金额 + 时间）。
+2. 业务解释：用“银行卡上看/卡上实际进出账”和“账上看/财务报表确认”解释差异。
+3. 管理动作：给 1-2 条可执行建议（催收、控费、回款跟进、税务检查等）。
+4. 过程可追溯：接口里保留 `executed_sql` / `calculation_logs`，但对老板默认折叠展示。
+
+额外强制要求：
+
+1. 默认写成“老板汇报风格”，不要写成审计报告或会计教材。
+2. 多用老板听得懂的话：
+   - `银行卡上看`
+   - `账上看`
+   - `实际到手`
+   - `实际花出去`
+   - `历史欠款回来了`
+3. 少直接丢术语：
+   - 少说 `权责发生制`、`现金口径`、`预提`、`递延`
+   - 如果必须说，后面马上翻译成人话
+4. 不要只解释“是什么”，还要顺手回答“老板接下来该盯什么”。
+5. 对不确定内容直接说：
+   - `目前库里看不出来`
+   - `这笔还需要补结算单/开票记录/合同台账确认`
+   - 不要猜，不要编月份，不要编业务性质
+6. 如果结果不好看，也要直接说清楚，但语气要稳，不要制造惊慌。
+7. 金额尽量让老板一眼看懂：
+   - 大数优先说“约多少万”，必要时再补精确元数
+   - 同一句里不要堆太多小数
+
+推荐话术模板：
+
+1. `结论：{时间}公司实际到手{A}，实际花出{B}，净增加{C}。`
+2. `账上看收入{D}、成本{E}、利润{F}，和银行卡上看的结果有差异，主要因为{原因}。`
+3. `建议：本周优先盯{客户/项目}回款，同时控制{费用项}，避免下月利润波动。`
+
+推荐翻译规则：
+
+1. 不说：`钱口径/账口径`
+   统一改成：`银行卡上看/账上看`
+2. 不说：`预提导致利润为负`
+   统一改成：`有些本该算在前一个月的成本，这个月才补进账上，所以账面看起来偏低`
+3. 不说：`销项税额导致差异`
+   统一改成：`这里的差额主要是税，不是业务少赚了`
+4. 不说：`应收回款冲减`
+   统一改成：`这是以前欠着的钱，这个月回来了`
+
+## 11. 常用调用示例
+
+```bash
+# 查询
+./financeqa query --db finance.db --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
+
+# 主动获取上层 Agent 数据包
+./financeqa host-data --db finance.db --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
+
+# 单文件导入
+./financeqa import --db finance.db /path/to/report.xls
+
+# 目录同步
+./financeqa sync --db finance.db /path/to/reports
+
+# 查看维度
+./financeqa dimensions list --db finance.db
+```
+
+## 11.1 测试与验收入口（建议发布前执行）
+
+```bash
+# 严格真实数据回归（17题）
+/opt/homebrew/bin/go run tests/scripts/prod_audit_regression.go
+
+# 20道老板高频问题真实数据测试（JSON题库驱动）
+./tests/scripts/run_top20_realdata_check.sh
+```
+
+20题测试报告输出路径：
+
+1. `docs/2026-04-14-20问真实数据测试报告.md`
+
+## 12. 财务统计基本原则（不可违反）
+
+本节列出实际犯过的错误与正确做法。遇到财务查询时，先过这四条。
+
+### 12.1 费用 ≠ 银行流水对手方
+
+**反例：** 用户问”各大客户销售额”，AI 从 `bank_statement.counterparty_name` 按流入金额排序，把”南京林悦智能科技有限公司”（实为供应商）列为第一大客户，把”吴零”（实为员工）列为第二大客户。
+
+**正确做法：** 客户/供应商身份以序时账（`journal`）收入/成本科目摘要和发票凭证为准。银行流水只反映资金进出，不定义业务关系。查客户销售额应查 `journal` 中 `6001%`（主营业务收入）科目的贷方分录，从凭证摘要中提取客户名称。
+
+### 12.2 只取费用科目，不叠加负债科目
+
+**反例：** 用户问”人力成本多少”，AI 同时取了 `660219（管理费用-福利费）借方 21,974` 和 `221104（应付职工薪酬-福利费）借方 21,974` 相加得到 44,954，声称福利费占人力成本 41%。实际这笔是同一分录的两面，福利费就是 21,974。
+
+**正确做法：** 查”花了多少钱”只看 6 开头费用/成本科目的借方发生额。2 开头的负债科目（2211 应付职工薪酬、2202 应付账款等）记录的是”欠了/计提了”，不是”多花了”。永远不要把 6xxx 和 2xxx 的同笔业务金额相加。
+
+### 12.3 借贷对称分录只算一面
+
+**反例：** 同一笔报销在序时账中有两行——“借：管理费用-福利费 14,147”和”贷：应付职工薪酬-福利费 14,147”。AI 把借方所有金额不管科目全加一遍，相当于把每笔业务算了两遍。
+
+**正确做法：** 按查询目的选定一个方向：
+- 查”花了多少”→ 费用科目（6xxx）借方
+- 查”收入多少”→ 收入科目（6001%）贷方
+- 查”付了多少”→ 银行流水 `debit_amount`（实际支付）
+- 查”欠了多少”→ 负债科目（2xxx）贷方余额
+
+### 12.4 实体身份先确认后使用
+
+**反例：** AI 把”林悦”直接称为客户，把”吴零”直接列为销售对手方，但林悦实为供应商、吴零实为员工。
+
+**正确做法：** `dimension_members` 中只有会计科目代码，没有客户/供应商/员工的身份档案。实体身份必须从序时账和交易记录中实时推断：
+1. 凭证摘要模式：`journal.summary` 中”为XX服务”→ 客户；”收到XX发票”/”转账XX”/”预提成本_XX”→ 供应商；”XX报销”/”发放工资”→ 员工
+2. 科目性质：对方出现在 2211（应付职工薪酬）→ 员工；出现在 2202（应付账款）/6401（营业成本）→ 供应商；出现在 1122（应收账款）/6001（收入）→ 客户
+3. 银行流水辅助：`bank_statement.counterparty_name` 可作为补充线索，但不能作为唯一判断依据——同一家公司可能既是供应商又是客户
+
+### 12.5 预收/跨期收入要单独核对
+
+**反例：** 对比“账上收入 vs 银行到账”时，AI 只按客户名匹配当月银行流水，得出“金程回款多了、京信没回”，但漏了 YIPIT 的 87.9 万——这笔钱 2 月通过美元汇款已经到账，当时记在“预收账款（2203）”，3 月开票才转入收入。因为 bank_statement 里 YIPIT 的对手方是“南京优集数据科技有限公司”（美元换汇），摘要写的是 `USDCNY:6.8686`，没有 YIPIT 的名字，所以被漏掉了。
+
+**正确做法：** 对比“账上收入 vs 银行到账”或分析“收入差异原因”时，除了按客户名匹配银行流水，还要额外查：
+1. **预收账款（2203）**：是否有前期到账本月开票转收入的记录。
+2. **应收账款（1122）**：是否有本月新确认应收但未回款的记录。
+3. **美元/外币**：可能走换汇通道，bank_statement 对手方可能不是客户名，要从 journal 的贷方收入明细逐条扫。
+
+### 12.6 差异归因与字段边界
+
+**反例：** 把供应商付款说成收入差异，把税额差异说成业务差异，或者在没有字段支持时，硬说某笔款是“某个月的结算款”。
+
+**正确做法：**
+1. 供应商付款、工资、还款、税费等引起的差异，要先按对应业务类型归因，不能直接归到收入差异。
+2. 销项税、进项税、应交税费等差异，优先解释为税务口径或申报/入账时点差异，不能直接解释成业务量变化。
+3. 没有月份、结算周期、合同、发票或凭证摘要等字段支撑时，只能说“待核实”或“疑似”，不能编造某笔款的月份归属或结算性质。
+4. 对不能证实的归因，必须同时说明缺失的字段是什么，以及下一步该查什么。
+
+## 13. 集成注意事项
+
+1. 不要把”收入”直接等同”银行到账”。
+2. 不要把”成本”直接等同”银行支出”。
+3. 涉及核心指标，强制双视角返回。
+4. 缺数据时必须返回 `llm_payload` 或明确缺口，不可编造。
+5. 供应商相关回答要返回具体名单（`data.suppliers`），不能只给总数。
+6. 问”今年/本月/上个月”时，账期按数据库最新凭证日期自动锚定，不按自然月盲算。
+7. 公司名称支持简称/别名智能匹配，对接层不要自行裁剪公司名再传入。
+8. 主体身份是按当前问题和证据实时判断的，同一家公司可能既是客户也是供应商。
+9. 高频问法关键词支持配置化调整，尤其是人力成本、税、经营状态、整体支出这几类常见问法。
+10. **回答老板前，过一遍第12节原则，确认没有犯反例中的错误。**
+
+## 14. 硬性红线（必须遵守）
+
+1. 不能把“银行卡到账”直接当“当月收入确认”。
+2. 不能把供应商付款、工资、税费、借款还款直接解释为收入差异。
+3. 不能把 `6xxx` 费用科目与 `2xxx` 负债科目同笔金额重复相加。
+4. 不能仅靠银行对手方名称认定客户/供应商身份，必须结合序时账证据。
+5. 不能在字段不足时编造“结算月份/合同归属/开票归属”，必须明确“待核实”。
+6. 不能只返回结果数字，必须保留 `executed_sql`、`calculation_logs`、`trace`。
+7. 不能因 CLI exit code 非 0 直接判失败并丢弃 stdout JSON，必须先解析 stdout。
+8. 不能在桥接层重复注入 `SKILL.md`，避免上下文膨胀；skill 由宿主 skill 机制统一加载。
+
+---
+
+若文档与程序返回结果冲突，以实际接口返回字段为准。
