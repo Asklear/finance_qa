@@ -2,10 +2,8 @@
 """OpenClaw Finance bridge server.
 Bridge OpenClaw finance tools to finance_qa Go CLI.
 """
-import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -15,25 +13,6 @@ FINANCEQA_BIN = Path(os.environ.get("FINANCEQA_BIN", "/root/finance_qa/financeqa
 FINANCEQA_DB = Path(os.environ.get("FINANCEQA_DB", "/root/finance_qa/finance.db"))
 DEFAULT_COMPANY = os.environ.get("FINANCEQA_DEFAULT_COMPANY", "南京优集数据科技有限公司")
 BRIDGE_PROTOCOL_VERSION = "v2"
-DEFAULT_SKILL_CANDIDATES = [
-    Path("/root/.openclaw/skills/finance/SKILL.md"),
-    Path("/root/.openclaw/skills/finance/skill.md"),
-    Path("/root/finance_qa/SKILL.md"),
-    Path("/root/finance_qa/skill.md"),
-]
-
-
-def resolve_skill_path():
-    env_path = os.environ.get("FINANCEQA_SKILL_PATH")
-    if env_path:
-        return Path(env_path)
-    for cand in DEFAULT_SKILL_CANDIDATES:
-        if cand.exists():
-            return cand
-    return DEFAULT_SKILL_CANDIDATES[0]
-
-
-SKILL_PATH = resolve_skill_path()
 
 TOOLS = [
     {
@@ -96,23 +75,6 @@ def ensure_runtime_ready():
         raise RuntimeError(f"financeqa binary not found: {FINANCEQA_BIN}")
     if not FINANCEQA_DB.exists():
         raise RuntimeError(f"finance database not found: {FINANCEQA_DB}")
-
-
-def load_skill_meta():
-    if not SKILL_PATH.exists():
-        return {"path": str(SKILL_PATH), "exists": False}
-    content = SKILL_PATH.read_text(encoding="utf-8", errors="ignore")
-    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    version_hint = "unknown"
-    m = re.search(r'description:\s*"([^"]+)"', content)
-    if m:
-        version_hint = m.group(1)
-    return {
-        "path": str(SKILL_PATH),
-        "exists": True,
-        "sha256": digest,
-        "version_hint": version_hint,
-    }
 
 
 def now_utc_iso():
@@ -202,7 +164,6 @@ def build_structured_response(payload, query):
         "query": query,
         "company": DEFAULT_COMPANY,
         "db": str(FINANCEQA_DB),
-        "skill": load_skill_meta(),
         "capabilities": {
             "trace": True,
             "answer_method": True,
@@ -301,7 +262,6 @@ def run_upload(file_path):
         "generated_at": now_utc_iso(),
         "company": DEFAULT_COMPANY,
         "db": str(FINANCEQA_DB),
-        "skill": load_skill_meta(),
     }
     return payload
 
