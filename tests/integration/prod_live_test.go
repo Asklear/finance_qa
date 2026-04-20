@@ -127,7 +127,15 @@ func TestProductionLiveAudit(t *testing.T) {
 	t.Run("Bank_LargeTransaction", func(t *testing.T) {
 		var expected float64
 		var counterparty string
-		err := db.QueryRow("SELECT MAX(credit_amount), counterparty_name FROM bank_statement WHERE transaction_date LIKE '2026-02%'").Scan(&expected, &counterparty)
+		err := db.QueryRow(`
+SELECT counterparty_name, credit_amount
+FROM bank_statement
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND transaction_date >= DATE(?)
+  AND transaction_date <= DATE(?)
+ORDER BY credit_amount DESC, counterparty_name
+LIMIT 1
+`, company, company, "2026-02-01", "2026-02-28").Scan(&counterparty, &expected)
 		if err != nil {
 			t.Fatalf("SQL ground truth failed: %v", err)
 		}

@@ -92,13 +92,53 @@ func (e *Engine) Close() error {
 }
 
 func (e *Engine) getLatestPeriodAnchor() time.Time {
-	var maxDate string
-	e.db.QueryRow(`SELECT MAX(voucher_date) FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`, e.Company, e.Company).Scan(&maxDate)
-	if maxDate == "" {
+	var maxDate any
+	if err := e.db.QueryRow(`SELECT MAX(voucher_date) FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`, e.Company, e.Company).Scan(&maxDate); err != nil {
 		return time.Now()
 	}
-	t, _ := time.Parse("2006-01-02", maxDate)
-	return t
+	if t, ok := parseAnchorDateValue(maxDate); ok {
+		return t
+	}
+	return time.Now()
+}
+
+func parseAnchorDateValue(v any) (time.Time, bool) {
+	switch raw := v.(type) {
+	case nil:
+		return time.Time{}, false
+	case time.Time:
+		return raw, !raw.IsZero()
+	case string:
+		return parseAnchorDateString(raw)
+	case []byte:
+		return parseAnchorDateString(string(raw))
+	default:
+		return time.Time{}, false
+	}
+}
+
+func parseAnchorDateString(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, raw); err == nil {
+			return t, true
+		}
+	}
+	if len(raw) >= len("2006-01-02") {
+		if t, err := time.Parse("2006-01-02", raw[:10]); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func (e *Engine) Query(question string) Result {
@@ -1020,6 +1060,7 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 	}
 	roleLabel := fmt.Sprintf("（识别为[%s]）", role)
 	periodLabel := displayPeriod(from, to)
+	receiptPeriodLabel := displayReceiptPeriodLabel(q, from, to)
 
 	logs := []string{
 		fmt.Sprintf("[对手方识别] entity=%s role=%s confidence=%.3f signals=%v", entity, role, classification.Confidence, classification.Signals),
@@ -1100,9 +1141,19 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 		if amount == 0 {
 			return Result{Success: false, Message: fmt.Sprintf("[%s] 在 %s 未找到回款/到账记录", entity, periodLabel)}
 		}
-		msg := fmt.Sprintf("[%s]%s %s 回款 %.2f 元", entity, roleLabel, periodLabel, amount)
+		msg := fmt.Sprintf("[%s]%s %s回款 %.2f 元", entity, roleLabel, receiptPeriodLabel, amount)
 		if snap.ComparisonBasis == "historical_receipt" || snap.ComparisonBasis == "historical_receipt_and_current_revenue" {
-			msg = fmt.Sprintf("[%s]%s %s 到账 %.2f 元。数据库能确认这是历史应收回款相关，但不能直接当成当期新收入。", entity, roleLabel, periodLabel, amount)
+			msg = fmt.Sprintf("[%s]%s %s到账 %.2f 元。数据库能确认这是历史应收回款相关，但不能直接当成当期新收入。", entity, roleLabel, receiptPeriodLabel, amount)
+		}
+		if subPeriod, ok := extractReceiptSubPeriod(q, from, to); ok {
+			subAmount := round2(e.counterpartyBankReceipts(entity, subPeriod, subPeriod))
+			msg = fmt.Sprintf("[%s]%s %s回款 %.2f 元；其中%s到账 %.2f 元", entity, roleLabel, receiptPeriodLabel, amount, displaySubPeriodLabel(subPeriod), subAmount)
+			if snap.ComparisonBasis == "historical_receipt" || snap.ComparisonBasis == "historical_receipt_and_current_revenue" {
+				msg = fmt.Sprintf("[%s]%s %s到账 %.2f 元；其中%s到账 %.2f 元。数据库能确认这类到账包含历史应收回款因素，不能直接当成当期新收入。", entity, roleLabel, receiptPeriodLabel, amount, displaySubPeriodLabel(subPeriod), subAmount)
+			}
+			resultData["sub_period"] = subPeriod
+			resultData["sub_period_receipts"] = subAmount
+			logs = append(logs, fmt.Sprintf("[回款拆分] cumulative=%s amount=%.2f sub_period=%s sub_amount=%.2f", periodLabel, amount, subPeriod, subAmount))
 		}
 		resultData["amount"] = amount
 		resultData["total"] = amount
@@ -1246,6 +1297,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 			}
 		}
 	}
+	best = trimEntityNoiseSuffixes(best)
 	if best != "" && !isGenericMetricEntity(best) {
 		return best
 	}
@@ -1266,7 +1318,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 		for _, g := range garbage {
 			entity = strings.ReplaceAll(entity, g, "")
 		}
-		entity = strings.TrimSpace(entity)
+		entity = trimEntityNoiseSuffixes(strings.TrimSpace(entity))
 	}
 
 	if len(entity) >= 2 && !isGenericMetricEntity(entity) {
@@ -1810,7 +1862,7 @@ func (e *Engine) matchCounterpartyByName(question string) string {
 	if nq == "" {
 		return ""
 	}
-	rows, err := e.db.Query(`SELECT DISTINCT counterparty_name FROM bank_statement WHERE IFNULL(TRIM(counterparty_name),'') <> '' ORDER BY LENGTH(counterparty_name) DESC`)
+	rows, err := e.db.Query(counterpartyNameCandidatesQuery(), e.Company, e.Company, e.Company, e.Company)
 	if err != nil {
 		return ""
 	}
@@ -1829,9 +1881,55 @@ func (e *Engine) matchCounterpartyByName(question string) string {
 	return ""
 }
 
+func counterpartyNameCandidatesQuery() string {
+	return `
+SELECT name
+FROM (
+  SELECT counterparty_name AS name
+  FROM bank_statement
+  WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+    AND COALESCE(TRIM(counterparty_name), '') <> ''
+  UNION
+  SELECT counterparty AS name
+  FROM journal
+  WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+    AND COALESCE(TRIM(counterparty), '') <> ''
+) candidates
+ORDER BY LENGTH(name) DESC, name
+`
+}
+
 func normalizeEntityText(s string) string {
 	replacer := strings.NewReplacer(" ", "", "\t", "", "\n", "", "（", "", "）", "", "(", "", ")", "", "-", "", "_", "", ",", "", "，", "", ".", "", "。", "")
 	return replacer.Replace(strings.TrimSpace(s))
+}
+
+func trimEntityNoiseSuffixes(entity string) string {
+	entity = strings.TrimSpace(entity)
+	if entity == "" {
+		return ""
+	}
+	suffixes := append([]string{
+		"报销了", "报销", "报账", "到账", "回款", "收款", "付款",
+		"费用", "支出", "收入", "成本", "利润", "明细", "金额",
+		"产生了", "产生", "多少", "报",
+	}, getRuleConfig().GenericMetricStopwords...)
+	for {
+		trimmed := entity
+		for _, suffix := range suffixes {
+			suffix = strings.TrimSpace(suffix)
+			if suffix == "" {
+				continue
+			}
+			if strings.HasSuffix(trimmed, suffix) {
+				trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, suffix))
+			}
+		}
+		if trimmed == entity {
+			return trimmed
+		}
+		entity = trimmed
+	}
 }
 
 func appendUniqueStrings(base []string, values ...string) []string {
@@ -2115,4 +2213,52 @@ func displayPeriod(from, to string) string {
 		return to
 	}
 	return from + "~" + to
+}
+
+func extractReceiptSubPeriod(q, from, to string) (string, bool) {
+	if !strings.Contains(q, "其中") {
+		return "", false
+	}
+	idx := strings.Index(q, "其中")
+	if idx < 0 || idx >= len(q)-len("其中") {
+		return "", false
+	}
+	subQuestion := strings.TrimSpace(q[idx+len("其中"):])
+	if subQuestion == "" {
+		return "", false
+	}
+	anchorYear, _ := parsePeriod(to)
+	anchor := time.Date(anchorYear, time.December, 1, 0, 0, 0, 0, time.UTC)
+	subFrom, subTo := ExtractPeriodWithNow(subQuestion, anchor)
+	if subFrom == "" || subTo == "" || subFrom != subTo {
+		return "", false
+	}
+	return subFrom, true
+}
+
+func displaySubPeriodLabel(period string) string {
+	year, month := parsePeriod(period)
+	if year == 0 || month == 0 {
+		return period
+	}
+	return fmt.Sprintf("%d月", month)
+}
+
+func displayReceiptPeriodLabel(q, from, to string) string {
+	if strings.Contains(q, "今年") && strings.HasSuffix(strings.TrimSpace(from), "-01") {
+		return "今年"
+	}
+	return displayPeriod(from, to) + " "
+}
+
+func (e *Engine) counterpartyBankReceipts(entity, from, to string) float64 {
+	var amount float64
+	e.db.QueryRow(`
+SELECT COALESCE(SUM(credit_amount), 0)
+FROM bank_statement
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND counterparty_name LIKE ?
+  AND transaction_date BETWEEN ? AND ?
+`, e.Company, e.Company, "%"+entity+"%", from+"-01", monthEndDay(to)).Scan(&amount)
+	return amount
 }

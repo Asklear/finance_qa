@@ -595,6 +595,47 @@ func TestEntityARAPQuestionUsesCounterpartyOpenItems(t *testing.T) {
 	}
 }
 
+func TestCounterpartyReceiptsQuestionIncludesCurrentMonthBreakdown(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01-15', '辽宁金程信息科技有限公司', '1月回款', 0, 5000)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-06', '辽宁金程信息科技有限公司', '3月回款', 0, 2100)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert receipt data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("金程今年回款多少？其中3月到账多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "今年") || !strings.Contains(res.Message, "其中3月") {
+		t.Fatalf("message should disclose cumulative and month breakdown, got: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "7100.00") {
+		t.Fatalf("message should include cumulative receipt amount, got: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "2100.00") {
+		t.Fatalf("message should include month receipt amount, got: %s", res.Message)
+	}
+}
+
 func buildEntityRoutingTestDB(t *testing.T) string {
 	t.Helper()
 

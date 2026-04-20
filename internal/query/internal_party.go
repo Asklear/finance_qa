@@ -20,22 +20,7 @@ type voucherLedgerRow struct {
 
 func (e *Engine) detectInternalBranchTransferCash(start, end string) (float64, string, []string) {
 	cfg := getRuleConfig()
-	query := `
-SELECT
-  IFNULL(TRIM(voucher_date), ''),
-  IFNULL(TRIM(voucher_no), ''),
-  IFNULL(TRIM(account_code), ''),
-  IFNULL(TRIM(account_name), ''),
-  IFNULL(TRIM(direction), ''),
-  IFNULL(TRIM(summary), ''),
-  IFNULL(TRIM(counterparty), ''),
-  COALESCE(debit_amount, 0),
-  COALESCE(credit_amount, 0)
-FROM journal
-WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-  AND voucher_date BETWEEN ? AND ?
-ORDER BY ` + ledgerVoucherOrderByClause() + `
-`
+	query := internalBranchTransferLedgerQuery()
 	rows, err := e.db.Query(query, e.Company, e.Company, start, end)
 	if err != nil {
 		return 0, query, []string{fmt.Sprintf("[分公司内部转账] query error=%v", err)}
@@ -95,6 +80,36 @@ ORDER BY ` + ledgerVoucherOrderByClause() + `
 		logs = append(logs, "[分公司内部转账] no matched internal transfer vouchers")
 	}
 	return round2(total), query, logs
+}
+
+func internalBranchTransferLedgerQuery() string {
+	selectColumns := []string{
+		ledgerDateSelectExpr("voucher_date"),
+		ledgerTextSelectExpr("voucher_no"),
+		ledgerTextSelectExpr("account_code"),
+		ledgerTextSelectExpr("account_name"),
+		ledgerTextSelectExpr("direction"),
+		ledgerTextSelectExpr("summary"),
+		ledgerTextSelectExpr("counterparty"),
+		"COALESCE(debit_amount, 0)",
+		"COALESCE(credit_amount, 0)",
+	}
+	return `
+SELECT
+  ` + strings.Join(selectColumns, ",\n  ") + `
+FROM journal
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND voucher_date BETWEEN ? AND ?
+ORDER BY ` + ledgerVoucherOrderByClause() + `
+`
+}
+
+func ledgerTextSelectExpr(column string) string {
+	return "COALESCE(TRIM(" + column + "), '')"
+}
+
+func ledgerDateSelectExpr(column string) string {
+	return "COALESCE(CAST(" + column + " AS TEXT), '')"
 }
 
 func ledgerVoucherOrderByClause() string {
