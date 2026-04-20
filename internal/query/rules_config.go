@@ -44,6 +44,7 @@ type RuleConfig struct {
 	IntentKeywordLexicon                      map[string][]string `json:"-"`
 	MetricKeywordLexicon                      map[string][]string `json:"-"`
 	HRBreakdownKeywordLexicon                 []string            `json:"-"`
+	SupplierPaymentExcludeNameLexicon         []string            `json:"-"`
 	CounterpartyClassificationQuestionLexicon []string            `json:"-"`
 	ProfitSingleViewBlockKeywordLexicon       []string            `json:"-"`
 	CounterpartyRoleLexicon                   map[string][]string `json:"-"`
@@ -84,6 +85,7 @@ type routerRuleConfigFile struct {
 	Intents                                    map[string]routerIntentRuleConfigFile `json:"intents"`
 	MetricKeywords                             map[string][]string                   `json:"metric_keywords"`
 	HRBreakdownKeywords                        []string                              `json:"hr_breakdown_keywords"`
+	SupplierPaymentExcludeNameKeywords         []string                              `json:"supplier_payment_exclude_name_keywords"`
 	CounterpartyClassificationQuestionKeywords []string                              `json:"counterparty_classification_question_keywords"`
 	ProfitSingleViewBlockKeywords              []string                              `json:"profit_single_view_block_keywords"`
 	FallbackMonthlyExpenseKeywords             []string                              `json:"fallback_monthly_expense_keywords"`
@@ -214,6 +216,7 @@ func defaultRuleConfig() RuleConfig {
 			metricKeyProfit:  {"利润"},
 		},
 		HRBreakdownKeywordLexicon:                 []string{"工资", "社保", "公积金", "分别", "拆分", "拆开", "明细", "构成"},
+		SupplierPaymentExcludeNameLexicon:         []string{"暂收款", "暂付款", "汇划收入", "中间业务收入", "手续费", "利息收入", "利息"},
 		CounterpartyClassificationQuestionLexicon: []string{"成本还是收入", "是成本还是收入", "供应商付款还是预收款", "客户还是供应商"},
 		ProfitSingleViewBlockKeywordLexicon:       []string{"现金流", "回款", "到账", "银行卡", "差异", "为什么"},
 		CounterpartyRoleLexicon: map[string][]string{
@@ -355,6 +358,9 @@ func applyNestedRuleConfig(cfg *RuleConfig, raw ruleConfigFile) {
 	if len(raw.Router.HRBreakdownKeywords) > 0 {
 		cfg.HRBreakdownKeywordLexicon = dedupeNonEmpty(raw.Router.HRBreakdownKeywords)
 	}
+	if len(raw.Router.SupplierPaymentExcludeNameKeywords) > 0 {
+		cfg.SupplierPaymentExcludeNameLexicon = dedupeNonEmpty(raw.Router.SupplierPaymentExcludeNameKeywords)
+	}
 	if len(raw.Router.CounterpartyClassificationQuestionKeywords) > 0 {
 		cfg.CounterpartyClassificationQuestionLexicon = dedupeNonEmpty(raw.Router.CounterpartyClassificationQuestionKeywords)
 	}
@@ -424,6 +430,9 @@ func mergeRuleConfigFromEnv(cfg *RuleConfig) {
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_FALLBACK_MONTHLY_EXPENSE_KEYWORDS")); raw != "" {
 		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(strings.Split(raw, ","))
 	}
+	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_SUPPLIER_PAYMENT_EXCLUDE_NAME_KEYWORDS")); raw != "" {
+		cfg.SupplierPaymentExcludeNameLexicon = dedupeNonEmpty(strings.Split(raw, ","))
+	}
 	if v, ok := parseEnvStringSliceMap("FINANCEQA_HIGH_PRIORITY_PHRASES"); ok {
 		cfg.HighPriorityPhrases = normalizeStringSliceMap(v)
 	}
@@ -473,6 +482,7 @@ func (cfg *RuleConfig) finalize() {
 
 	cfg.MetricKeywordLexicon = normalizeStringSliceMap(cfg.MetricKeywordLexicon)
 	cfg.HRBreakdownKeywordLexicon = dedupeNonEmpty(cfg.HRBreakdownKeywordLexicon)
+	cfg.SupplierPaymentExcludeNameLexicon = dedupeNonEmpty(cfg.SupplierPaymentExcludeNameLexicon)
 	cfg.CounterpartyClassificationQuestionLexicon = dedupeNonEmpty(cfg.CounterpartyClassificationQuestionLexicon)
 	cfg.ProfitSingleViewBlockKeywordLexicon = dedupeNonEmpty(cfg.ProfitSingleViewBlockKeywordLexicon)
 	cfg.CounterpartyRoleLexicon = normalizeStringSliceMap(cfg.CounterpartyRoleLexicon)

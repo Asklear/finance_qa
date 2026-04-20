@@ -37,11 +37,14 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if m, ok := income.Data["metric"].(string); !ok || m != "收入" {
 		t.Fatalf("income metric should be 收入, got %v", income.Data["metric"])
 	}
-	if _, ok := income.Data["dual_perspective"].(map[string]any); !ok {
-		t.Fatalf("income should include dual_perspective, got %T", income.Data["dual_perspective"])
+	if strings.Contains(income.Message, "银行卡上看") || strings.Contains(income.Message, "账上看") {
+		t.Fatalf("income answer should stay single-accrual in message, got %s", income.Message)
 	}
-	if v, ok := income.Data["现金流入"]; !ok || v.(float64) != 1500 {
-		t.Errorf("expected 现金流入=1500, got %v", v)
+	if _, ok := income.Data["money_view"]; ok {
+		t.Fatalf("income should not expose money_view, got %T", income.Data["money_view"])
+	}
+	if v := numberFromMap(t, income.Data, "account_value"); v != 2000 {
+		t.Errorf("expected account_value=2000, got %v", income.Data["account_value"])
 	}
 
 	expense := eng.Query("2026年2月支出是多少")
@@ -76,6 +79,9 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if !strings.Contains(multiMetric.Message, "收入") || !strings.Contains(multiMetric.Message, "成本") || !strings.Contains(multiMetric.Message, "利润") {
 		t.Fatalf("multi metric message should contain 收入/成本/利润, got: %s", multiMetric.Message)
 	}
+	if strings.Contains(multiMetric.Message, "银行卡上看") || strings.Contains(multiMetric.Message, "账上看") {
+		t.Fatalf("multi metric answer should stay single-accrual in message, got %s", multiMetric.Message)
+	}
 	switch rm := multiMetric.Data["requested_metrics"].(type) {
 	case []any:
 		if len(rm) != 3 {
@@ -87,6 +93,13 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 		}
 	default:
 		t.Fatalf("requested_metrics should expose 3 metrics, got %v", multiMetric.Data["requested_metrics"])
+	}
+	metrics, ok := multiMetric.Data["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("multi metric should expose metrics map, got %T", multiMetric.Data["metrics"])
+	}
+	if numberFromMap(t, metrics, "收入") != 2000 || numberFromMap(t, metrics, "成本") != 1300 || numberFromMap(t, metrics, "利润") != 700 {
+		t.Fatalf("unexpected metrics map: %+v", metrics)
 	}
 
 	tax := eng.Query("2026年2月增值税是多少")
@@ -137,8 +150,11 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if !supplierCount.Success {
 		t.Fatalf("supplier count fallback failed: %s", supplierCount.Message)
 	}
-	if v := numberFromMap(t, supplierCount.Data, "count"); v <= 0 {
-		t.Fatalf("supplier count = %.2f, want > 0", v)
+	if v := numberFromMap(t, supplierCount.Data, "count"); v != 1 {
+		t.Fatalf("supplier count = %.2f, want 1", v)
+	}
+	if total := numberFromMap(t, supplierCount.Data, "total"); total != 300 {
+		t.Fatalf("supplier total = %.2f, want 300", total)
 	}
 
 	hrCost := eng.Query("2026年2月人力成本多少")

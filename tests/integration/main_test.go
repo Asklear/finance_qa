@@ -99,7 +99,7 @@ func TestRunQueryCommandReturnsAnswer(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%s", exitCode, stderr)
 	}
-	if !strings.Contains(stdout, "\"现金流入\": 1500") {
+	if !strings.Contains(stdout, "\"account_value\": 2000") {
 		t.Errorf("stdout should include income answer, got %s", stdout)
 	}
 }
@@ -323,6 +323,11 @@ func seedQueryDB(dbPath string) error {
 	_, err = db.Exec(`
 INSERT INTO balance_sheet (company, period, account_name, opening_balance, closing_balance) VALUES
   ('模拟财务科技有限公司','2026-02','货币资金',100,150);
+INSERT INTO income_statement (company, period, item_name, current_amount, cumulative_amount) VALUES
+  ('模拟财务科技有限公司','2026-02','营业收入',2000,2000),
+  ('模拟财务科技有限公司','2026-02','营业成本',1000,1000),
+  ('模拟财务科技有限公司','2026-02','管理费用',300,300),
+  ('模拟财务科技有限公司','2026-02','净利润',700,700);
 INSERT INTO bank_statement (company, transaction_date, credit_amount, debit_amount, counterparty_name, summary) VALUES
   ('模拟财务科技有限公司','2026-02-10',1000,0,'客户A','回款'),
   ('模拟财务科技有限公司','2026-02-12',500,50,'客户C','手续费');

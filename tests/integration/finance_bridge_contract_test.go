@@ -17,6 +17,7 @@ func TestFinanceBridgeListToolsAndV2Response(t *testing.T) {
 	tmp := t.TempDir()
 	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
 	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL_2026-04-15.md")
 	dbPath := filepath.Join(tmp, "bridge-contract.sqlite")
 
 	stubScript := `#!/usr/bin/env bash
@@ -53,6 +54,12 @@ exit 2
 	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
 		t.Fatalf("write skill: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
 	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
 		t.Fatalf("write db: %v", err)
 	}
@@ -86,6 +93,19 @@ exit 2
 	if sv := bridgeMeta["skill_contract_version"]; sv != skillContractVersion {
 		t.Fatalf("skill_contract_version should be %s, got %v", skillContractVersion, sv)
 	}
+	if rel := bridgeMeta["skill_appendix_relative_path"]; rel != "docs/SKILL_APPENDIX_FULL_2026-04-15.md" {
+		t.Fatalf("skill_appendix_relative_path should be docs/SKILL_APPENDIX_FULL_2026-04-15.md, got %v", rel)
+	}
+	resolvedAppendixPath, err := filepath.EvalSymlinks(appendixPath)
+	if err != nil {
+		t.Fatalf("eval appendix symlink: %v", err)
+	}
+	if abs := bridgeMeta["skill_appendix_path"]; abs != resolvedAppendixPath {
+		t.Fatalf("skill_appendix_path should be %s, got %v", resolvedAppendixPath, abs)
+	}
+	if exists := bridgeMeta["skill_appendix_exists"]; exists != true {
+		t.Fatalf("skill_appendix_exists should be true, got %v", exists)
+	}
 	data := mustMapMap(t, payload, "data")
 	if _, ok := data["trace"].(map[string]any); !ok {
 		t.Fatalf("trace should exist in data, got %T", data["trace"])
@@ -105,6 +125,7 @@ func TestFinanceBridgeFallbackToHostData(t *testing.T) {
 	tmp := t.TempDir()
 	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
 	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL_2026-04-15.md")
 	dbPath := filepath.Join(tmp, "bridge-rollforward.sqlite")
 
 	stubScript := `#!/usr/bin/env bash
@@ -128,6 +149,12 @@ echo '{"success":true}'
 	}
 	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
 		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
 	}
 	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
 		t.Fatalf("write db: %v", err)
@@ -158,6 +185,9 @@ echo '{"success":true}'
 	}
 	if sv := bridgeMeta["skill_contract_version"]; sv != skillContractVersion {
 		t.Fatalf("fallback skill_contract_version should be %s, got %v", skillContractVersion, sv)
+	}
+	if exists := bridgeMeta["skill_appendix_exists"]; exists != true {
+		t.Fatalf("skill_appendix_exists should be true, got %v", exists)
 	}
 }
 
@@ -246,6 +276,10 @@ description: "Use when OpenClaw or Claude needs to call finance_qa."
 
 1. ` + "`skill_contract_version`: `2026-04-20.1`" + `
 2. ` + "`bridge_protocol_version`: `v2`" + `
+
+## 附录
+
+1. ` + "`docs/SKILL_APPENDIX_FULL_2026-04-15.md`" + `
 `
 }
 

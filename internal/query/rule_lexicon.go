@@ -14,6 +14,10 @@ func (cfg RuleConfig) HRBreakdownKeywords() []string {
 	return copyStringSlice(cfg.HRBreakdownKeywordLexicon)
 }
 
+func (cfg RuleConfig) SupplierPaymentExcludeNames() []string {
+	return copyStringSlice(cfg.SupplierPaymentExcludeNameLexicon)
+}
+
 func (cfg RuleConfig) CounterpartyClassificationQuestionKeywords() []string {
 	return copyStringSlice(cfg.CounterpartyClassificationQuestionLexicon)
 }

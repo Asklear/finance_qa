@@ -100,6 +100,62 @@ func TestProfitQuestionUsesSingleAccrualAnswer(t *testing.T) {
 	}
 }
 
+func TestRevenueQuestionUsesSingleAccrualAnswer(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月收入是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "银行卡上看") || strings.Contains(res.Message, "账上看") {
+		t.Fatalf("revenue answer should use single accrual wording, got: %s", res.Message)
+	}
+	if _, ok := res.Data["money_view"]; ok {
+		t.Fatalf("revenue answer should not expose money_view: %+v", res.Data)
+	}
+	if _, ok := res.Data["account_view"]; ok {
+		t.Fatalf("revenue answer should not expose account_view: %+v", res.Data)
+	}
+	if got, ok := res.Data["account_value"].(float64); !ok || got != 800 {
+		t.Fatalf("account_value = %v, want 800", res.Data["account_value"])
+	}
+}
+
+func TestMultiMetricQuestionUsesSingleAccrualAnswer(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月收入、成本、利润分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "银行卡上看") || strings.Contains(res.Message, "账上看") {
+		t.Fatalf("multi metric answer should use single accrual wording, got: %s", res.Message)
+	}
+	if _, ok := res.Data["money_view"]; ok {
+		t.Fatalf("multi metric answer should not expose money_view: %+v", res.Data)
+	}
+	if _, ok := res.Data["account_view"]; ok {
+		t.Fatalf("multi metric answer should not expose account_view: %+v", res.Data)
+	}
+	metrics, ok := res.Data["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing metrics payload: %+v", res.Data)
+	}
+	if metrics["收入"] != float64(800) || metrics["成本"] != float64(300) || metrics["利润"] != float64(500) {
+		t.Fatalf("unexpected metrics payload: %+v", metrics)
+	}
+}
+
 func TestAmbiguousPreShouKuanRoutesToARAPWithoutFallback(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
@@ -129,6 +185,87 @@ func TestAmbiguousPreShouKuanRoutesToARAPWithoutFallback(t *testing.T) {
 		if _, ok := tr[k]; !ok {
 			t.Fatalf("intent_trace missing key=%s", k)
 		}
+	}
+}
+
+func TestSupplierPaymentQuestionUsesPeriodScopedExternalSuppliers(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-05', '供应商A有限公司', '技术服务费', 1000, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-06', '北京市中闻（南京）律师事务所', '法律服务费', 500, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-07', '南京优集数据科技有限公司深圳分公司', '内部转账', 700, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-08', '梁梦瑶', '报销', 200, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-09', '暂收款', '实时缴税', 300, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-10', '网上电子汇划收入', '手续费', 10, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-05', 'V-SUP-1', '640101', '主营业务成本', '借', 1000, '供应商A成本确认', '供应商A有限公司', 1000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-05', 'V-SUP-1', '220201', '应付账款', '贷', 1000, '供应商A成本确认', '供应商A有限公司', 0, 1000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert supplier payment seed data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月有多少家供应商发生付款？分别叫什么、各付了多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got, ok := res.Data["period"].(string); !ok || got != "2026-03" {
+		t.Fatalf("period = %v, want 2026-03", res.Data["period"])
+	}
+	switch got := res.Data["count"].(type) {
+	case float64:
+		if got != 2 {
+			t.Fatalf("count = %v, want 2", res.Data["count"])
+		}
+	case int:
+		if got != 2 {
+			t.Fatalf("count = %v, want 2", res.Data["count"])
+		}
+	default:
+		t.Fatalf("count has unexpected type %T", res.Data["count"])
+	}
+	if got, ok := res.Data["total"].(float64); !ok || got != 1500 {
+		t.Fatalf("total = %v, want 1500", res.Data["total"])
+	}
+	suppliers, ok := res.Data["suppliers"].([]map[string]any)
+	if !ok {
+		t.Fatalf("suppliers payload missing: %+v", res.Data)
+	}
+	if len(suppliers) != 2 {
+		t.Fatalf("supplier rows = %d, want 2", len(suppliers))
+	}
+	gotNames := map[string]float64{}
+	for _, item := range suppliers {
+		name, _ := item["name"].(string)
+		amount, _ := item["out_amount"].(float64)
+		gotNames[name] = amount
+	}
+	if gotNames["供应商A有限公司"] != 1000 || gotNames["北京市中闻（南京）律师事务所"] != 500 {
+		t.Fatalf("unexpected supplier payment rows: %+v", gotNames)
+	}
+	if strings.Contains(res.Message, "36 个") || strings.Contains(res.Message, "净流出") {
+		t.Fatalf("supplier payment answer should not use legacy supplier-count wording: %s", res.Message)
 	}
 }
 

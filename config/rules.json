@@ -201,6 +201,15 @@
       "明细",
       "构成"
     ],
+    "supplier_payment_exclude_name_keywords": [
+      "暂收款",
+      "暂付款",
+      "汇划收入",
+      "中间业务收入",
+      "手续费",
+      "利息收入",
+      "利息"
+    ],
     "counterparty_classification_question_keywords": [
       "成本还是收入",
       "是成本还是收入",

@@ -174,15 +174,21 @@ func (e *Engine) Query(question string) Result {
 			return finalize(result)
 		}
 	}
-	if shouldUseSingleAccrualProfit(q) {
-		result = e.queryAccrualProfitOnly(from, to)
+
+	entity := e.extractNamedEntity(q)
+	hasRealEntity := e.isRealBusinessEntity(q, entity)
+	if !hasRealEntity && shouldUseSingleAccrualCoreMetrics(q) {
+		result = e.queryAccrualCoreMetrics(q, from, to)
 		if result.Success {
 			return finalize(result)
 		}
 	}
-
-	entity := e.extractNamedEntity(q)
-	hasRealEntity := e.isRealBusinessEntity(q, entity)
+	if shouldUseSupplierPaymentStats(q) {
+		result = e.querySupplierPayments(from, to)
+		if result.Success {
+			return finalize(result)
+		}
+	}
 	if hasRealEntity && isCounterpartyClassificationQuestion(q) {
 		result = e.queryCounterpartyAmountFallback(q, entity, from, to)
 		if result.Success {
@@ -195,13 +201,9 @@ func (e *Engine) Query(question string) Result {
 			return finalize(result)
 		}
 	}
-	// 核心指标问题触发双口径：
-	// 1) 无实体时，保持默认强制双口径；
-	// 2) 有实体但同时问了多个核心指标（如“收入/成本/利润”）时，也强制双口径，
-	//    避免只返回单主体单指标导致老板看不到“银行卡上看 vs 账上看”。
-	requestedMetrics := detectRequestedMetrics(q)
-	forceDualWithEntity := hasRealEntity && len(requestedMetrics) > 1
-	if shouldForceDualPerspective(q) && (!hasRealEntity || forceDualWithEntity) {
+	// 只有在问题明确提到现金/到账/差异解释时，整体核心指标才展开双视角。
+	// 实体类问题优先走主体审计路径，不再默认改写为“银行卡上看 vs 账上看”。
+	if !hasRealEntity && shouldForceDualPerspective(q) && !shouldUseSingleAccrualCoreMetrics(q) {
 		result = e.queryDualPerspectiveForCoreMetric(q, from, to)
 		if result.Success {
 			return finalize(result)
@@ -377,7 +379,7 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 	}
 }
 
-func (e *Engine) queryAccrualProfitOnly(from, to string) Result {
+func (e *Engine) queryAccrualCoreMetrics(question, from, to string) Result {
 	year, month := parsePeriod(to)
 	e.calc.ResetTrace()
 
@@ -388,30 +390,50 @@ func (e *Engine) queryAccrualProfitOnly(from, to string) Result {
 	cash, _ := e.calc.ComputeCashFlow(e.Company, from, to)
 	logs := append([]string{}, e.calc.CalculationLogs...)
 	sqls := append([]string{}, e.calc.ExecutedSQLs...)
+	requestedMetrics := detectRequestedMetrics(question)
+	if len(requestedMetrics) == 0 {
+		requestedMetrics = []string{detectCoreMetric(question)}
+	}
+	metric := metricDisplayName(detectCoreMetric(question))
+	if len(requestedMetrics) == 1 {
+		metric = requestedMetrics[0]
+	}
+	metrics := map[string]any{
+		"收入": round2(book.Revenue),
+		"成本": round2(book.TotalCost),
+		"利润": round2(book.Profit),
+	}
+	accountValue := round2(metricValueFromBook(metric, book))
 
 	var bridgeMap map[string]any
-	if bridge, bridgeErr := analysis.AnalyzeProfitCashBridgeWithDB(context.Background(), e.db, e.Company, to); bridgeErr == nil {
-		bridgeMap = bridgeToMap(&bridge)
-		logs = append(logs, fmt.Sprintf("[利润单口径] period=%s profit=%.2f estimated_operating_cash=%.2f", to, book.Profit, bridge.EstimatedOperatingCash))
-		sqls = appendUniqueStrings(sqls,
-			"profit_cash_bridge(balance_detail): SELECT closing_debit, closing_credit FROM balance_detail WHERE ... AND period IN (?, previous_period) AND account_code IN ('1602','1122','1123','1221','2202','2203','2211','2221','2241','22210101','22210106')",
-			"profit_cash_bridge(income_statement): SELECT current_amount FROM income_statement WHERE ... AND period = ? AND item_name LIKE '%净利润%'",
-		)
+	if containsString(requestedMetrics, "利润") {
+		if bridge, bridgeErr := analysis.AnalyzeProfitCashBridgeWithDB(context.Background(), e.db, e.Company, to); bridgeErr == nil {
+			bridgeMap = bridgeToMap(&bridge)
+			logs = append(logs, fmt.Sprintf("[核心指标-单口径] period=%s profit=%.2f estimated_operating_cash=%.2f", to, book.Profit, bridge.EstimatedOperatingCash))
+			sqls = appendUniqueStrings(sqls,
+				"profit_cash_bridge(balance_detail): SELECT closing_debit, closing_credit FROM balance_detail WHERE ... AND period IN (?, previous_period) AND account_code IN ('1602','1122','1123','1221','2202','2203','2211','2221','2241','22210101','22210106')",
+				"profit_cash_bridge(income_statement): SELECT current_amount FROM income_statement WHERE ... AND period = ? AND item_name LIKE '%净利润%'",
+			)
+		}
 	}
 
 	sqls = appendUniqueStrings(sqls,
 		"monthlyBookSummary(income_statement): SELECT item_name, current_amount FROM income_statement WHERE ... AND period = ?",
 		"monthlyBookSummary(fallback_journal): ComputeMonthlyFromJournal + ComputeIncomeStatement when income_statement missing required rows",
 	)
-	logs = append(logs, fmt.Sprintf("[利润口径] period=%s source=%s", to, bookSource))
+	logs = append(logs, fmt.Sprintf("[核心指标-单口径] period=%s source=%s requested=%v metric=%s account_value=%.2f", to, bookSource, requestedMetrics, metric, accountValue))
 
 	return Result{
 		Success:      true,
 		AnswerMethod: "sql",
-		Message:      fmt.Sprintf("%s 账面利润 %.2f 元（收入 %.2f 元，成本及费用 %.2f 元）。", to, book.Profit, book.Revenue, book.TotalCost),
+		Message:      buildAccrualCoreMetricsMessage(to, requestedMetrics, book),
 		Data: map[string]any{
-			"period":        to,
-			"account_value": book.Profit,
+			"period":            to,
+			"metric":            metric,
+			"requested_metrics": requestedMetrics,
+			"account_value":     accountValue,
+			"total":             accountValue,
+			"metrics":           metrics,
 			"monthly": map[string]any{
 				"year":    year,
 				"month":   month,
@@ -438,6 +460,10 @@ func (e *Engine) queryAccrualProfitOnly(from, to string) Result {
 		ExecutedSQL:     sqls,
 		CalculationLogs: logs,
 	}
+}
+
+func (e *Engine) queryAccrualProfitOnly(from, to string) Result {
+	return e.queryAccrualCoreMetrics("利润", from, to)
 }
 
 func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Result {
@@ -1401,9 +1427,8 @@ func (e *Engine) queryFallback(q, from, to, err string) Result {
 
 func (e *Engine) ruleFallback(q, from, to string) Result {
 	cfg := getRuleConfig()
-	// 供应商数量
 	if strings.Contains(q, "供应商") && strings.Contains(q, "多少") {
-		return e.querySupplierCount()
+		return e.querySupplierPayments(from, to)
 	}
 	// 人力成本
 	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) {
@@ -1443,69 +1468,141 @@ func (e *Engine) queryMonthlyExpenseFromBank(from, to string) Result {
 	}
 }
 
-func (e *Engine) querySupplierCount() Result {
+func (e *Engine) querySupplierPayments(from, to string) Result {
+	startDate := from + "-01"
+	endDate := monthEndDay(to)
+	periodLabel := displayPeriod(from, to)
 	sqlTxt := `
-SELECT COUNT(*) FROM (
-  SELECT counterparty_name
-  FROM bank_statement
-  WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-    AND IFNULL(TRIM(counterparty_name),'') <> ''
-  GROUP BY counterparty_name
-  HAVING COALESCE(SUM(debit_amount),0) > COALESCE(SUM(credit_amount),0)
-) t
-`
-	var count int
-	e.db.QueryRow(sqlTxt, e.Company, e.Company).Scan(&count)
-
-	rows, _ := e.db.Query(`
 SELECT counterparty_name,
        ROUND(COALESCE(SUM(debit_amount),0),2) AS out_amt,
        ROUND(COALESCE(SUM(credit_amount),0),2) AS in_amt,
-       ROUND(COALESCE(SUM(debit_amount),0)-COALESCE(SUM(credit_amount),0),2) AS net_out
+       COUNT(*) AS txn_count
 FROM bank_statement
 WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-  AND IFNULL(TRIM(counterparty_name),'') <> ''
+  AND transaction_date BETWEEN ? AND ?
+  AND COALESCE(TRIM(counterparty_name),'') <> ''
+  AND COALESCE(debit_amount,0) > 0
 GROUP BY counterparty_name
-HAVING COALESCE(SUM(debit_amount),0) > COALESCE(SUM(credit_amount),0)
-ORDER BY net_out DESC
-`, e.Company, e.Company)
-	suppliers := make([]map[string]any, 0, count)
-	if rows != nil {
-		defer rows.Close()
-		for rows.Next() {
-			var name string
-			var outAmt, inAmt, netOut float64
-			_ = rows.Scan(&name, &outAmt, &inAmt, &netOut)
-			suppliers = append(suppliers, map[string]any{
-				"name": name, "out_amount": outAmt, "in_amount": inAmt, "net_out": netOut,
-			})
-		}
+ORDER BY out_amt DESC, counterparty_name
+`
+	rows, err := e.db.Query(sqlTxt, e.Company, e.Company, startDate, endDate)
+	if err != nil {
+		return Result{Success: false, Message: err.Error()}
 	}
-	topNames := make([]string, 0, 5)
-	for i, s := range suppliers {
-		if i >= 5 {
-			break
-		}
-		if n, ok := s["name"].(string); ok && n != "" {
-			topNames = append(topNames, n)
-		}
+	defer rows.Close()
+
+	suppliers := make([]map[string]any, 0)
+	excluded := make([]map[string]any, 0)
+	total := 0.0
+	logs := []string{
+		fmt.Sprintf("[供应商付款] period=%s start=%s end=%s", periodLabel, startDate, endDate),
 	}
-	msg := fmt.Sprintf("供应商数量约为 %d 个", count)
-	if len(topNames) > 0 {
-		msg = fmt.Sprintf("%s，典型供应商包括：%s", msg, strings.Join(topNames, "、"))
+	for rows.Next() {
+		var name string
+		var outAmt, inAmt float64
+		var txnCount int
+		if scanErr := rows.Scan(&name, &outAmt, &inAmt, &txnCount); scanErr != nil {
+			continue
+		}
+
+		evidence := e.collectCounterpartyEvidence(name, from, to)
+		classification := ClassifyCounterparty(name, evidence)
+		include, reason := e.shouldIncludeSupplierPaymentCounterparty(name, classification)
+		row := map[string]any{
+			"name":       name,
+			"out_amount": round2(outAmt),
+			"in_amount":  round2(inAmt),
+			"txn_count":  txnCount,
+			"role":       string(classification.Role),
+			"confidence": classification.Confidence,
+			"signals":    classification.Signals,
+		}
+		if include {
+			suppliers = append(suppliers, row)
+			total += outAmt
+			logs = append(logs, fmt.Sprintf("[供应商付款-纳入] %s out=%.2f role=%s reason=%s", name, round2(outAmt), classification.Role, reason))
+			continue
+		}
+		row["exclude_reason"] = reason
+		excluded = append(excluded, row)
+		logs = append(logs, fmt.Sprintf("[供应商付款-剔除] %s out=%.2f role=%s reason=%s", name, round2(outAmt), classification.Role, reason))
+	}
+
+	total = round2(total)
+	msg := fmt.Sprintf("%s 发生付款的外部供应商共 %d 家，合计 %.2f 元。", periodLabel, len(suppliers), total)
+	if len(suppliers) == 0 {
+		msg = fmt.Sprintf("%s 暂未识别到外部供应商付款。", periodLabel)
 	}
 
 	return Result{
 		Success: true,
 		Message: msg,
-		Data:    map[string]any{"count": count, "suppliers": suppliers},
+		Data: map[string]any{
+			"period":                  periodLabel,
+			"count":                   len(suppliers),
+			"total":                   total,
+			"suppliers":               suppliers,
+			"excluded_counterparties": excluded,
+		},
 		ExecutedSQL: []string{
-			fmt.Sprintf("querySupplierCount: %s [args: %s]", sqlTxt, e.Company),
+			fmt.Sprintf("querySupplierPayments(bank_statement): %s [args: %s, %s, %s]", sqlTxt, e.Company, startDate, endDate),
+			"supplier_payment_classification: collectCounterpartyEvidence + ClassifyCounterparty + internal-party filter per counterparty",
 		},
-		CalculationLogs: []string{
-			fmt.Sprintf("[供应商识别规则] 对手方净流出>净流入，共 %d 个", count),
-		},
+		CalculationLogs: logs,
 	}
+}
+
+func (e *Engine) shouldIncludeSupplierPaymentCounterparty(name string, classification CounterpartyClassification) (bool, string) {
+	cfg := getRuleConfig()
+	switch {
+	case looksLikeSupplierPaymentExcludedName(name, cfg):
+		return false, "non_counterparty_flow"
+	case internalPartyMatchesCompany(e.Company, name) || looksLikeInternalOrgUnit(name, cfg):
+		return false, "internal_party"
+	case classification.Role == CounterpartyEmployee:
+		return false, "employee_related"
+	case classification.Role == CounterpartyCustomer:
+		return false, "customer_only"
+	case classification.Role == CounterpartySupplier:
+		return true, "classified_supplier"
+	case classification.Role == CounterpartyMixed:
+		return true, "classified_mixed"
+	case looksLikeExternalOrganizationCounterparty(name):
+		return true, "organization_name_fallback"
+	default:
+		return false, "unknown_non_organization"
+	}
+}
+
+func looksLikeSupplierPaymentExcludedName(name string, cfg RuleConfig) bool {
+	normalized := normalizeEntityText(name)
+	if normalized == "" {
+		return false
+	}
+	for _, kw := range cfg.SupplierPaymentExcludeNames() {
+		nk := normalizeEntityText(kw)
+		if nk != "" && strings.Contains(normalized, nk) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeExternalOrganizationCounterparty(name string) bool {
+	normalized := normalizeEntityText(name)
+	if normalized == "" {
+		return false
+	}
+	hints := []string{
+		"公司", "有限责任公司", "有限公司", "事务所", "管理中心", "中心",
+		"研究院", "合伙企业", "基金会", "协会", "学院", "大学",
+	}
+	for _, hint := range hints {
+		if strings.Contains(normalized, normalizeEntityText(hint)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) queryHRCost(from, to string) Result {
@@ -1971,13 +2068,19 @@ func shouldForceDualPerspective(q string) bool {
 	return containsAny(q, metricQuestionKeywords(cfg))
 }
 
-func shouldUseSingleAccrualProfit(q string) bool {
+func shouldUseSingleAccrualCoreMetrics(q string) bool {
 	cfg := getRuleConfig()
 	if shouldUseReconciliation(q) || containsAny(q, cfg.ProfitSingleViewBlockKeywords()) {
 		return false
 	}
-	metrics := detectRequestedMetrics(q)
-	return len(metrics) == 1 && metrics[0] == "利润"
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) {
+		return false
+	}
+	return containsAny(q, metricQuestionKeywords(cfg))
+}
+
+func shouldUseSupplierPaymentStats(q string) bool {
+	return strings.Contains(q, "供应商") && strings.Contains(q, "多少")
 }
 
 func isCounterpartyClassificationQuestion(q string) bool {
@@ -2058,6 +2161,50 @@ func pickMetricValue(metric string, dual *accounting.DualPerspective) (float64, 
 	default:
 		return dual.Cash.Income, dual.Accrual.Revenue
 	}
+}
+
+func metricValueFromBook(metric string, book monthlyBookView) float64 {
+	switch metricDisplayName(metric) {
+	case "利润":
+		return book.Profit
+	case "成本":
+		return book.TotalCost
+	default:
+		return book.Revenue
+	}
+}
+
+func buildAccrualCoreMetricsMessage(period string, requestedMetrics []string, book monthlyBookView) string {
+	if len(requestedMetrics) <= 1 {
+		switch metricDisplayName(firstMetricOrDefault(requestedMetrics, "收入")) {
+		case "利润":
+			return fmt.Sprintf("%s 账面利润 %.2f 元（收入 %.2f 元，成本及费用 %.2f 元）。", period, book.Profit, book.Revenue, book.TotalCost)
+		case "成本":
+			return fmt.Sprintf("%s 账上成本及费用 %.2f 元。", period, book.TotalCost)
+		default:
+			return fmt.Sprintf("%s 账上收入 %.2f 元。", period, book.Revenue)
+		}
+	}
+	return fmt.Sprintf("%s 账上收入 %.2f 元，成本及费用 %.2f 元，账面利润 %.2f 元。", period, book.Revenue, book.TotalCost, book.Profit)
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if strings.TrimSpace(item) == strings.TrimSpace(want) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstMetricOrDefault(items []string, fallback string) string {
+	if len(items) == 0 {
+		return fallback
+	}
+	if strings.TrimSpace(items[0]) == "" {
+		return fallback
+	}
+	return items[0]
 }
 
 func (e *Engine) buildHostLLMPayload(from, to, question string) map[string]any {

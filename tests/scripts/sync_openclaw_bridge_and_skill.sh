@@ -54,7 +54,9 @@ ssh -i "$KEY_PATH" "$SERVER" "set -e; \
 echo "[5/5] verify skill path and bridge candidates on server"
 ssh -i "$KEY_PATH" "$SERVER" "set -e; \
   ls -l '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL_2026-04-15.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL_2026-04-15.md' '$REMOTE_REPO_BRIDGE_DIR/finance_bridge.py' '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'; \
-  grep -n 'DEFAULT_SKILL_CANDIDATES' -n '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'; \
+  grep -n 'SKILL_APPENDIX_FULL_2026-04-15.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md'; \
+  python3 '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py' <<< '{\"action\":\"list\"}' >/tmp/finance_bridge_list.json; \
+  cat /tmp/finance_bridge_list.json; \
   sed -n '1,30p' '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py'"
 
 echo "done."

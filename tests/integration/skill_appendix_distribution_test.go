@@ -63,4 +63,7 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 	if !strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL_2026-04-15.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL_2026-04-15.md';") {
 		t.Fatalf("sync script should symlink appendix into OpenClaw skill docs path")
 	}
+	if strings.Contains(scriptText, "DEFAULT_SKILL_CANDIDATES") {
+		t.Fatalf("sync script should not rely on removed DEFAULT_SKILL_CANDIDATES marker")
+	}
 }

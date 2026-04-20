@@ -38,7 +38,7 @@ load_dotenv_if_exists(".env")
 load_dotenv_if_exists("/root/finance_qa/.env")
 
 
-def load_contract_versions(skill_path):
+def load_skill_contract(skill_path):
     raw = skill_path.read_text(encoding="utf-8")
 
     def capture(name):
@@ -48,7 +48,20 @@ def load_contract_versions(skill_path):
             raise RuntimeError(f"missing {name} in skill contract file: {skill_path}")
         return match.group(1).strip()
 
-    return capture("skill_contract_version"), capture("bridge_protocol_version")
+    appendix_pattern = re.compile(r"`(docs/[^`\n]*SKILL_APPENDIX[^`\n]*\.md)`")
+    appendix_match = appendix_pattern.search(raw)
+    if not appendix_match:
+        raise RuntimeError(f"missing appendix relative path in skill contract file: {skill_path}")
+
+    appendix_relative_path = appendix_match.group(1).strip()
+    appendix_path = (skill_path.parent / appendix_relative_path).resolve()
+
+    return {
+        "skill_contract_version": capture("skill_contract_version"),
+        "bridge_protocol_version": capture("bridge_protocol_version"),
+        "skill_appendix_relative_path": appendix_relative_path,
+        "skill_appendix_path": appendix_path,
+    }
 
 
 def default_db_target():
@@ -71,7 +84,11 @@ def default_db_target():
 
 FINANCEQA_DB = default_db_target()
 DEFAULT_COMPANY = os.environ.get("FINANCEQA_DEFAULT_COMPANY", "南京优集数据科技有限公司")
-SKILL_CONTRACT_VERSION, BRIDGE_PROTOCOL_VERSION = load_contract_versions(FINANCEQA_SKILL_PATH)
+SKILL_CONTRACT = load_skill_contract(FINANCEQA_SKILL_PATH)
+SKILL_CONTRACT_VERSION = SKILL_CONTRACT["skill_contract_version"]
+BRIDGE_PROTOCOL_VERSION = SKILL_CONTRACT["bridge_protocol_version"]
+SKILL_APPENDIX_RELATIVE_PATH = SKILL_CONTRACT["skill_appendix_relative_path"]
+SKILL_APPENDIX_PATH = SKILL_CONTRACT["skill_appendix_path"]
 
 TOOLS = [
     {
@@ -132,6 +149,10 @@ def parse_json_or_none(text):
 def ensure_runtime_ready():
     if not FINANCEQA_BIN.exists():
         raise RuntimeError(f"financeqa binary not found: {FINANCEQA_BIN}")
+    if not FINANCEQA_SKILL_PATH.exists():
+        raise RuntimeError(f"skill contract file not found: {FINANCEQA_SKILL_PATH}")
+    if not SKILL_APPENDIX_PATH.exists():
+        raise RuntimeError(f"skill appendix not found: {SKILL_APPENDIX_PATH}")
     db_text = str(FINANCEQA_DB)
     if not db_text.strip():
         raise RuntimeError("finance database is not configured; set FINANCEQA_DB or PostgreSQL env vars")
@@ -190,20 +211,27 @@ def build_boss_reply(payload, query):
 
     metric = data.get("metric")
     period = data.get("period") or "当前期间"
-    if metric and ("money_value" in data or "account_value" in data):
+    if metric and "money_value" in data and "account_value" in data:
         return {
             "结论": f"{period}{metric}：卡上实际进出账约 {float(data.get('money_value', 0)):.2f} 元，报表确认约 {float(data.get('account_value', 0)):.2f} 元。",
             "原因": "两边差异通常来自确认时点、预提和冲回。",
             "建议": "优先盯回款与大额支出节奏，避免下月利润波动。",
         }
+    if metric and "account_value" in data:
+        return {
+            "结论": f"{period}{metric}约 {float(data.get('account_value', 0)):.2f} 元。",
+            "原因": "核心经营指标默认按财务确认口径回答；只有明确追问到账、付款、现金流或差异原因时，才展开现金视角。",
+            "建议": "如果要继续核对银行卡实际收付，请直接追问回款、到账、付款、现金流或差异原因。",
+        }
 
     if "suppliers" in data:
         suppliers = data.get("suppliers") or []
         top = suppliers[0]["name"] if suppliers else "暂无"
+        top_amount = float(suppliers[0].get("out_amount", 0)) if suppliers else 0
         return {
-            "结论": f"当前识别供应商约 {data.get('count', 0)} 个，净流出最大的对手方是 {top}。",
-            "原因": "按银行流水净流出大于净流入识别供应商。",
-            "建议": "优先核对前五大供应商付款计划与发票匹配。",
+            "结论": f"{period}外部供应商付款共 {data.get('count', 0)} 家，合计 {float(data.get('total', 0)):.2f} 元。",
+            "原因": f"已按期间内银行实际付款统计，并剔除员工、内部往来、税费和手续费等非供应商项；付款额最高的是 {top} {top_amount:.2f} 元。",
+            "建议": "优先核对前五大供应商付款、发票和应付冲销是否一致。",
         }
 
     if "total" in data and "period" in data:
@@ -230,6 +258,10 @@ def build_structured_response(payload, query):
         "query": query,
         "company": DEFAULT_COMPANY,
         "db": str(FINANCEQA_DB),
+        "skill_path": str(FINANCEQA_SKILL_PATH),
+        "skill_appendix_relative_path": SKILL_APPENDIX_RELATIVE_PATH,
+        "skill_appendix_path": str(SKILL_APPENDIX_PATH),
+        "skill_appendix_exists": SKILL_APPENDIX_PATH.exists(),
         "capabilities": {
             "trace": True,
             "answer_method": True,
@@ -329,6 +361,10 @@ def run_upload(file_path):
         "generated_at": now_utc_iso(),
         "company": DEFAULT_COMPANY,
         "db": str(FINANCEQA_DB),
+        "skill_path": str(FINANCEQA_SKILL_PATH),
+        "skill_appendix_relative_path": SKILL_APPENDIX_RELATIVE_PATH,
+        "skill_appendix_path": str(SKILL_APPENDIX_PATH),
+        "skill_appendix_exists": SKILL_APPENDIX_PATH.exists(),
     }
     return payload
 
