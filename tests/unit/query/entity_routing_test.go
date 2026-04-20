@@ -76,7 +76,7 @@ func TestEntityYearCumulativeUsesYearRangeInsteadOfSingleMonth(t *testing.T) {
 	}
 }
 
-func TestProfitQuestionUsesSingleAccrualAnswer(t *testing.T) {
+func TestProfitQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -88,8 +88,11 @@ func TestProfitQuestionUsesSingleAccrualAnswer(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if strings.Contains(res.Message, "银行卡上看") || strings.Contains(res.Message, "账上看") {
-		t.Fatalf("profit answer should use single accrual wording, got: %s", res.Message)
+	if !strings.Contains(res.Message, "现金口径") || !strings.Contains(res.Message, "经营口径") {
+		t.Fatalf("profit answer should expose cash and operating views, got: %s", res.Message)
+	}
+	if strings.Index(res.Message, "现金口径") > strings.Index(res.Message, "经营口径") {
+		t.Fatalf("profit answer should present cash view before operating view, got: %s", res.Message)
 	}
 	monthly, ok := res.Data["monthly"].(map[string]any)
 	if !ok {
@@ -98,9 +101,15 @@ func TestProfitQuestionUsesSingleAccrualAnswer(t *testing.T) {
 	if monthly["profit"] != float64(500) {
 		t.Fatalf("profit = %v, want 500", monthly["profit"])
 	}
+	if got, ok := res.Data["money_value"].(float64); !ok || got != -106596 {
+		t.Fatalf("money_value = %v, want -106596", res.Data["money_value"])
+	}
+	if got, ok := res.Data["account_value"].(float64); !ok || got != 500 {
+		t.Fatalf("account_value = %v, want 500", res.Data["account_value"])
+	}
 }
 
-func TestRevenueQuestionUsesSingleAccrualAnswer(t *testing.T) {
+func TestRevenueQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -112,21 +121,21 @@ func TestRevenueQuestionUsesSingleAccrualAnswer(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if strings.Contains(res.Message, "银行卡上看") || strings.Contains(res.Message, "账上看") {
-		t.Fatalf("revenue answer should use single accrual wording, got: %s", res.Message)
+	if !strings.Contains(res.Message, "现金口径") || !strings.Contains(res.Message, "经营口径") {
+		t.Fatalf("revenue answer should expose cash and operating views, got: %s", res.Message)
 	}
-	if _, ok := res.Data["money_view"]; ok {
-		t.Fatalf("revenue answer should not expose money_view: %+v", res.Data)
+	if strings.Index(res.Message, "现金口径") > strings.Index(res.Message, "经营口径") {
+		t.Fatalf("revenue answer should present cash view before operating view, got: %s", res.Message)
 	}
-	if _, ok := res.Data["account_view"]; ok {
-		t.Fatalf("revenue answer should not expose account_view: %+v", res.Data)
+	if got, ok := res.Data["money_value"].(float64); !ok || got != 904 {
+		t.Fatalf("money_value = %v, want 904", res.Data["money_value"])
 	}
 	if got, ok := res.Data["account_value"].(float64); !ok || got != 800 {
 		t.Fatalf("account_value = %v, want 800", res.Data["account_value"])
 	}
 }
 
-func TestMultiMetricQuestionUsesSingleAccrualAnswer(t *testing.T) {
+func TestMultiMetricQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -138,14 +147,17 @@ func TestMultiMetricQuestionUsesSingleAccrualAnswer(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if strings.Contains(res.Message, "银行卡上看") || strings.Contains(res.Message, "账上看") {
-		t.Fatalf("multi metric answer should use single accrual wording, got: %s", res.Message)
+	if !strings.Contains(res.Message, "现金口径") || !strings.Contains(res.Message, "经营口径") {
+		t.Fatalf("multi metric answer should expose cash and operating views, got: %s", res.Message)
 	}
-	if _, ok := res.Data["money_view"]; ok {
-		t.Fatalf("multi metric answer should not expose money_view: %+v", res.Data)
+	if strings.Index(res.Message, "现金口径") > strings.Index(res.Message, "经营口径") {
+		t.Fatalf("multi metric answer should present cash view before operating view, got: %s", res.Message)
 	}
-	if _, ok := res.Data["account_view"]; ok {
-		t.Fatalf("multi metric answer should not expose account_view: %+v", res.Data)
+	if _, ok := res.Data["money_view"]; !ok {
+		t.Fatalf("multi metric answer should expose money_view: %+v", res.Data)
+	}
+	if _, ok := res.Data["account_view"]; !ok {
+		t.Fatalf("multi metric answer should expose account_view: %+v", res.Data)
 	}
 	metrics, ok := res.Data["metrics"].(map[string]any)
 	if !ok {
@@ -429,7 +441,7 @@ func TestEngineUsesConfigurableProfitSingleViewBlockKeywords(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "银行卡") || !strings.Contains(res.Message, "账") {
+	if !strings.Contains(res.Message, "现金口径") || !strings.Contains(res.Message, "经营口径") {
 		t.Fatalf("custom profit single-view block keyword should force dual perspective, got: %s", res.Message)
 	}
 }

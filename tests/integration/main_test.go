@@ -32,6 +32,27 @@ func runCLI(args ...string) (int, string, string) {
 	return exitCode, stdout.String(), stderr.String()
 }
 
+func runCLIWithEnv(env map[string]string, args ...string) (int, string, string) {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa/main.go"}, args...)...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitError, ok := err.(*exec.ExitError); ok {
+			exitCode = exitError.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	return exitCode, stdout.String(), stderr.String()
+}
+
 func resolveGoBinary() string {
 	if p, err := exec.LookPath("go"); err == nil {
 		return p
@@ -101,6 +122,68 @@ func TestRunQueryCommandReturnsAnswer(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "\"account_value\": 2000") {
 		t.Errorf("stdout should include income answer, got %s", stdout)
+	}
+}
+
+func TestRunQueryCommandReturnsCashFirstDualAnswerForCoreMetrics(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "query-dual.sqlite")
+	if err := seedQueryDB(dbPath); err != nil {
+		t.Fatalf("seed query db: %v", err)
+	}
+
+	exitCode, stdout, stderr := runCLI("query", "--db", dbPath, "--company", "模拟财务", "2026年2月收入、成本、利润分别是多少")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", exitCode, stderr)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("unmarshal query output: %v", err)
+	}
+
+	message, _ := payload["message"].(string)
+	if !strings.Contains(message, "现金口径") || !strings.Contains(message, "经营口径") {
+		t.Fatalf("message should expose cash and operating views, got %s", message)
+	}
+	if strings.Index(message, "现金口径") > strings.Index(message, "经营口径") {
+		t.Fatalf("message should present cash view before operating view, got %s", message)
+	}
+
+	data, ok := payload["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data map, got %T", payload["data"])
+	}
+	if _, ok := data["money_view"]; !ok {
+		t.Fatalf("expected money_view in payload, got %v", data)
+	}
+	if _, ok := data["account_view"]; !ok {
+		t.Fatalf("expected account_view in payload, got %v", data)
+	}
+}
+
+func TestRunQueryCommandUsesEnvDefaultCompanyWhenFlagOmitted(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "query-default-company.sqlite")
+	if err := seedMultiCompanyQueryDB(dbPath); err != nil {
+		t.Fatalf("seed query db: %v", err)
+	}
+
+	exitCode, stdout, stderr := runCLIWithEnv(map[string]string{
+		"FINANCEQA_DEFAULT_COMPANY": "测试乙",
+	}, "query", "--db", dbPath, "2026年2月收入是多少")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, stderr=%s", exitCode, stderr)
+	}
+	if !strings.Contains(stdout, "\"account_value\": 4000") {
+		t.Fatalf("stdout should use env default company result, got %s", stdout)
+	}
+	if strings.Contains(stdout, "\"account_value\": 1000") {
+		t.Fatalf("stdout should not fall back to hardcoded sample company, got %s", stdout)
 	}
 }
 
@@ -331,6 +414,34 @@ INSERT INTO income_statement (company, period, item_name, current_amount, cumula
 INSERT INTO bank_statement (company, transaction_date, credit_amount, debit_amount, counterparty_name, summary) VALUES
   ('模拟财务科技有限公司','2026-02-10',1000,0,'客户A','回款'),
   ('模拟财务科技有限公司','2026-02-12',500,50,'客户C','手续费');
+`)
+	return err
+}
+
+func seedMultiCompanyQueryDB(dbPath string) error {
+	if err := sqlBootstrap(dbPath); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+INSERT INTO balance_sheet (company, period, account_name, opening_balance, closing_balance) VALUES
+  ('模拟财务科技有限公司','2026-02','货币资金',100,150),
+  ('测试乙科技有限公司','2026-02','货币资金',200,260);
+INSERT INTO income_statement (company, period, item_name, current_amount, cumulative_amount) VALUES
+  ('模拟财务科技有限公司','2026-02','营业收入',1000,1000),
+  ('模拟财务科技有限公司','2026-02','营业成本',200,200),
+  ('模拟财务科技有限公司','2026-02','净利润',800,800),
+  ('测试乙科技有限公司','2026-02','营业收入',4000,4000),
+  ('测试乙科技有限公司','2026-02','营业成本',1000,1000),
+  ('测试乙科技有限公司','2026-02','净利润',3000,3000);
+INSERT INTO bank_statement (company, transaction_date, credit_amount, debit_amount, counterparty_name, summary) VALUES
+  ('模拟财务科技有限公司','2026-02-10',1000,0,'客户A','回款'),
+  ('测试乙科技有限公司','2026-02-10',4000,0,'客户B','回款');
 `)
 	return err
 }

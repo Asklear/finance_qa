@@ -93,9 +93,9 @@ func buildBossDualPerspectiveMessage(period string, cash accounting.CashPerspect
 	otherAdjustments := round2(profitGap - revenueTiming - costTiming)
 
 	lines := []string{
-		fmt.Sprintf("先说结论：%s 账上看利润 %.2f 元，银行卡上净增减 %.2f 元，两边相差 %.2f 元。", period, accrual.Profit, cash.Net, profitGap),
-		fmt.Sprintf("银行卡上看：实际到账 %.2f 元，实际支出 %.2f 元，净增加 %.2f 元。", cash.Income, cash.Expense, cash.Net),
-		fmt.Sprintf("账上看：确认收入 %.2f 元，确认成本及费用 %.2f 元，账面利润 %.2f 元。", accrual.Revenue, accrual.TotalCost, accrual.Profit),
+		fmt.Sprintf("先说现金口径：%s 实际到账 %.2f 元，实际支出 %.2f 元，净增加 %.2f 元。", period, cash.Income, cash.Expense, cash.Net),
+		fmt.Sprintf("再补经营口径：确认收入 %.2f 元，确认成本及费用 %.2f 元，利润 %.2f 元。", accrual.Revenue, accrual.TotalCost, accrual.Profit),
+		fmt.Sprintf("两个口径之间，利润和净现金流相差 %.2f 元。", profitGap),
 		"差异最大的3个原因：",
 		fmt.Sprintf("1. 收入确认和回款时间差 %.2f 元（账上收入减去实际到账）。", revenueTiming),
 		fmt.Sprintf("2. 付款和成本确认时间差 %.2f 元（实际支出减去账上成本及费用）。", costTiming),

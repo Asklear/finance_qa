@@ -276,11 +276,11 @@ go test ./tests/integration/...
 6. `trace.executed_sql`
 7. `trace.calculation_logs`
 
-核心指标（收入/成本/利润/销售额）默认按财务确认口径输出：
+核心指标（收入/成本/利润/销售额）默认按“先现金、再经营”输出：
 
-1. 默认返回 `account_value` / `metrics`，不强制展开现金视角。
-2. 当问题明确提到 `银行卡`、`到账`、`回款`、`付款`、`现金流` 或 `差异原因` 时，再补 `cash_flow` 与差异桥。
-3. `差异桥` 只在利润/现金差异解释场景触发。
+1. 默认同时返回 `money_view` / `account_view` / `metrics`，回答顺序先现金收付，再补经营确认。
+2. 当问题继续追问 `差异原因`、`为什么不一样`、`回款和利润差异` 时，再展开 `cash_flow`、`difference_bridge` 与 `profit_cash_bridge`。
+3. 如果问题明确在问某个客户、供应商、员工或项目，优先返回主体审计结果，不强行改成整月汇总双口径。
 
 桥接层（`plugin/openclaw-finance/server/finance_bridge.py`）会额外补充：
 
@@ -291,8 +291,11 @@ go test ./tests/integration/...
 5. `bridge_meta.skill_contract_version`
 6. `bridge_meta.protocol_version`（当前 `v2`）
 7. `bridge_meta.capabilities`
+8. `bridge_meta.skill_appendix_relative_path`
+9. `bridge_meta.skill_appendix_path`
+10. `bridge_meta.skill_appendix_exists`
 
-说明：桥接层不再读取/注入 `SKILL.md` 的正文规则，skill 仍由宿主（OpenClaw/Claude Code）skills 机制加载；但桥接层会读取 `SKILL.md` 顶部的契约版本标记，用来保证返回元数据与文档版本一致。
+说明：桥接层不再读取/注入 `SKILL.md` 或 appendix 的正文规则，skill 仍由宿主（OpenClaw/Claude Code）skills 机制加载；但桥接层会读取 `SKILL.md` 顶部的契约版本标记，校验 appendix 相对路径是否存在，并把这些元数据写回响应。
 当前推荐使用“核心版 SKILL + 附录”：
 
 1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）

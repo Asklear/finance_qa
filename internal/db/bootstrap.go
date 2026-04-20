@@ -65,10 +65,7 @@ func Bootstrap(ctx context.Context, dbPath string) error {
 		return fmt.Errorf("ping postgres db: %w", err)
 	}
 
-	schema := os.Getenv("FINANCEQA_PG_SCHEMA")
-	if schema == "" {
-		schema = "tenant_uhub"
-	}
+	schema := effectiveSchema(ctx, db, dbPath)
 
 	ddls := []string{
 		fmt.Sprintf(`CREATE OR REPLACE VIEW %s.balance_sheet AS SELECT * FROM %s.fin_balance_sheet`, schema, schema),
@@ -105,9 +102,42 @@ func ensureSearchPath(dsn string) string {
 	if strings.Contains(s, "search_path=") {
 		return dsn
 	}
-	schema := os.Getenv("FINANCEQA_PG_SCHEMA")
+	schema := strings.TrimSpace(os.Getenv("FINANCEQA_PG_SCHEMA"))
 	if schema == "" {
-		schema = "tenant_uhub"
+		return dsn
 	}
 	return dsn + " search_path=" + schema + ",public"
+}
+
+func effectiveSchema(ctx context.Context, db *sql.DB, dsn string) string {
+	if schema := strings.TrimSpace(os.Getenv("FINANCEQA_PG_SCHEMA")); schema != "" {
+		return schema
+	}
+	if schema := schemaFromDSN(dsn); schema != "" {
+		return schema
+	}
+	var schema string
+	if err := db.QueryRowContext(ctx, `SELECT CURRENT_SCHEMA()`).Scan(&schema); err == nil {
+		schema = strings.TrimSpace(schema)
+		if schema != "" {
+			return schema
+		}
+	}
+	return "public"
+}
+
+func schemaFromDSN(dsn string) string {
+	for _, part := range strings.Fields(strings.TrimSpace(dsn)) {
+		lower := strings.ToLower(part)
+		if !strings.HasPrefix(lower, "search_path=") {
+			continue
+		}
+		value := strings.TrimSpace(part[len("search_path="):])
+		if value == "" {
+			return ""
+		}
+		first := strings.Split(value, ",")[0]
+		return strings.Trim(first, `"`)
+	}
+	return ""
 }

@@ -60,6 +60,27 @@ func ResolveCompany(req string, companies []string) string {
 	return best
 }
 
+func ResolveCompanyMention(question string, companies []string) string {
+	q := strings.TrimSpace(question)
+	if q == "" || len(companies) == 0 {
+		return ""
+	}
+
+	best := ""
+	bestScore := 0
+	for _, c := range companies {
+		score := companyMatchScore(q, c)
+		if score > bestScore || (score == bestScore && len(c) > len(best)) {
+			best = c
+			bestScore = score
+		}
+	}
+	if bestScore <= 0 {
+		return ""
+	}
+	return best
+}
+
 // ExtractPeriodWithNow 从自然语言提取账期
 func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 	year := anchor.Year()
@@ -71,7 +92,7 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 		month int
 	}
 
-	// 1) 显式范围: 2026年1月到2026年2月
+	// 1) 显式范围: 某年1月到某年2月
 	rangeRe := regexp.MustCompile(`(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?\s*(?:到|至|-|~)\s*(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月`)
 	if m := rangeRe.FindStringSubmatch(q); len(m) == 5 {
 		y1, _ := strconv.Atoi(m[1])
@@ -83,7 +104,7 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 		}
 	}
 
-	// 1.1) 显式年份累计: 2026年累计/全年/年内
+	// 1.1) 显式年份累计: 某年累计/全年/年内
 	yearCumulativeRe := regexp.MustCompile(`(20\d{2})年\s*(?:累计|全年|年内|累计销售额|累计收入|累计营收|累计回款)`)
 	if m := yearCumulativeRe.FindStringSubmatch(q); len(m) == 2 {
 		y := mustAtoi(m[1])

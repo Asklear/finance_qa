@@ -143,7 +143,7 @@ func parseAnchorDateString(raw string) (time.Time, bool) {
 
 func (e *Engine) Query(question string) Result {
 	q := NormalizeQuestion(question)
-	resolved := ResolveCompany(q, e.available)
+	resolved := ResolveCompanyMention(q, e.available)
 	if resolved != "" && resolved != e.Company {
 		e.Company = resolved
 	}
@@ -177,8 +177,8 @@ func (e *Engine) Query(question string) Result {
 
 	entity := e.extractNamedEntity(q)
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
-	if !hasRealEntity && shouldUseSingleAccrualCoreMetrics(q) {
-		result = e.queryAccrualCoreMetrics(q, from, to)
+	if !hasRealEntity && shouldForceDualPerspective(q) {
+		result = e.queryDualPerspectiveForCoreMetric(q, from, to)
 		if result.Success {
 			return finalize(result)
 		}
@@ -197,14 +197,6 @@ func (e *Engine) Query(question string) Result {
 	}
 	if shouldUseReconciliation(q) {
 		result = e.queryReconciliation(q, from, to)
-		if result.Success {
-			return finalize(result)
-		}
-	}
-	// 只有在问题明确提到现金/到账/差异解释时，整体核心指标才展开双视角。
-	// 实体类问题优先走主体审计路径，不再默认改写为“银行卡上看 vs 账上看”。
-	if !hasRealEntity && shouldForceDualPerspective(q) && !shouldUseSingleAccrualCoreMetrics(q) {
-		result = e.queryDualPerspectiveForCoreMetric(q, from, to)
 		if result.Success {
 			return finalize(result)
 		}
@@ -337,7 +329,7 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 	if revenue == 0 && expense == 0 && book.Profit == 0 {
 		logs = append(logs, fmt.Sprintf("[智能回溯] %s 当月无经营记账，正在为您还原年度累计经营体量...", to))
 		if month > 1 {
-			mainMsg = fmt.Sprintf("%s 暂无经营数据。2026年1月以来（YTD）累计：收入 %.2f, 支出 %.2f, 累计利润 %.2f", to, is.Revenue, is.Cost, is.NetProfit)
+			mainMsg = fmt.Sprintf("%s 暂无经营数据。%d年1月以来（YTD）累计：收入 %.2f, 支出 %.2f, 累计利润 %.2f", to, year, is.Revenue, is.Cost, is.NetProfit)
 			logs = append(logs, fmt.Sprintf("[审计结论] 虽当月静默，但年度累计体量已达 %.2f 万元", is.Revenue/10000.0))
 		} else {
 			mainMsg = fmt.Sprintf("%s 暂无经营数据，且为年度首月，无历史数据可回溯", to)
@@ -477,30 +469,37 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 	dualAccrual := unified.Accrual
 
 	requestedMetrics := detectRequestedMetrics(question)
-	metric := detectCoreMetric(question)
+	primaryMetric := firstMetricOrDefault(requestedMetrics, detectCoreMetric(question))
+	metric := "核心指标"
 	if len(requestedMetrics) == 1 {
-		metric = requestedMetrics[0]
+		metric = primaryMetric
+	}
+	cashView := accounting.CashPerspective{
+		Description: "现金口径",
+		Income:      dualCash.Income,
+		Expense:     dualCash.Expense,
+		Net:         dualCash.Net,
+	}
+	accrualView := accounting.AccrualPerspective{
+		Description: "经营口径",
+		Revenue:     dualAccrual.Revenue,
+		TotalCost:   dualAccrual.TotalCost,
+		Profit:      dualAccrual.Profit,
 	}
 	cashValue, accrualValue := pickMetricValue(metric, &accounting.DualPerspective{
-		Cash: accounting.CashPerspective{
-			Description: dualCash.Description,
-			Income:      dualCash.Income,
-			Expense:     dualCash.Expense,
-			Net:         dualCash.Net,
-		},
-		Accrual: accounting.AccrualPerspective{
-			Description: "账上看",
-			Revenue:     dualAccrual.Revenue,
-			TotalCost:   dualAccrual.TotalCost,
-			Profit:      dualAccrual.Profit,
-		},
+		Cash:    cashView,
+		Accrual: accrualView,
 	})
 	msg := buildBossDualPerspectiveMessage(to, dualCash, dualAccrual, unified.Bridge)
 	if len(requestedMetrics) == 1 {
-		msg = fmt.Sprintf("%s\n补充你当前关注的指标：%s - 银行卡上看 %.2f 元，账上看 %.2f 元。", msg, metric, cashValue, accrualValue)
+		cashValue, accrualValue = pickMetricValue(primaryMetric, &accounting.DualPerspective{
+			Cash:    cashView,
+			Accrual: accrualView,
+		})
+		msg = fmt.Sprintf("%s\n补充你当前关注的指标：%s - 现金口径 %.2f 元，经营口径 %.2f 元。", msg, primaryMetric, cashValue, accrualValue)
 	}
 
-	logs = append(logs, fmt.Sprintf("[双口径强制] metric=%s requested=%v cash=%.2f accrual=%.2f", metric, requestedMetrics, cashValue, accrualValue))
+	logs = append(logs, fmt.Sprintf("[核心指标-默认双口径] metric=%s requested=%v cash=%.2f accrual=%.2f", metric, requestedMetrics, cashValue, accrualValue))
 	sqls = appendUniqueStrings(sqls,
 		"dual_perspective(cash): ComputeCashFlow over bank_statement in selected period",
 		"dual_perspective(accrual): monthlyBookSummary => income_statement.current_amount (fallback journal if missing)",
@@ -512,16 +511,35 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		Data: map[string]any{
 			"period":             to,
 			"metric":             metric,
-			"money_view":         dualCash,
-			"account_view":       dualAccrual,
+			"money_view":         cashView,
+			"account_view":       accrualView,
 			"money_value":        cashValue,
 			"account_value":      accrualValue,
+			"total":              accrualValue,
 			"requested_metrics":  requestedMetrics,
 			"一致性守卫":              unified.Guard,
 			"profit_cash_bridge": bridgeToMap(unified.Bridge),
-			"现金流入":               dualCash.Income,
-			"现金流出":               dualCash.Expense,
-			"净现金流":               dualCash.Net,
+			"metrics": map[string]any{
+				"收入": round2(dualAccrual.Revenue),
+				"成本": round2(dualAccrual.TotalCost),
+				"利润": round2(dualAccrual.Profit),
+			},
+			"monthly": map[string]any{
+				"year":    year,
+				"month":   month,
+				"source":  unified.AccrualFrom,
+				"revenue": dualAccrual.Revenue,
+				"cost":    dualAccrual.TotalCost,
+				"profit":  dualAccrual.Profit,
+			},
+			"现金流入": dualCash.Income,
+			"现金流出": dualCash.Expense,
+			"净现金流": dualCash.Net,
+			"cash_flow": map[string]any{
+				"现金流入": dualCash.Income,
+				"现金流出": dualCash.Expense,
+				"净现金流": dualCash.Net,
+			},
 			"财务做账口径(看利润)": map[string]any{
 				"营业收入":    dualAccrual.Revenue,
 				"营业成本及费用": dualAccrual.TotalCost,
@@ -538,13 +556,13 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 			},
 			"dual_perspective": map[string]any{
 				"cash": map[string]any{
-					"说明":   "银行卡上看",
+					"说明":   "现金口径",
 					"现金流入": dualCash.Income,
 					"现金流出": dualCash.Expense,
 					"净现金流": dualCash.Net,
 				},
 				"accrual": map[string]any{
-					"说明":      "账上看",
+					"说明":      "经营口径",
 					"营业收入":    dualAccrual.Revenue,
 					"营业成本及费用": dualAccrual.TotalCost,
 					"账面利润":    dualAccrual.Profit,
@@ -1333,14 +1351,8 @@ func (e *Engine) extractNamedEntity(question string) string {
 	if m := namedEntityPattern.FindStringSubmatch(q); len(m) == 2 {
 		entity = strings.TrimSpace(m[1])
 		// 最终清洗：剔除年份、代词及核算科目干扰
-		garbage := []string{"2024", "2025", "2026", "年", "一共", "总计", "的", "多少", "是", "在", "发生", "产生了", "合计", "账款", "收入", "支出", "费用", "成本", "利润", "营收", "销售额", "总成本", "人力成本", "工资", "社保", "公积金", "薪酬", "销项税", "进项税", "应收", "应付", "应收账款", "应付账款"}
-		for m := 1; m <= 12; m++ {
-			garbage = append(garbage, fmt.Sprintf("%d月", m))
-		}
-		for d := 1; d <= 31; d++ {
-			garbage = append(garbage, fmt.Sprintf("%d日", d))
-		}
-
+		entity = stripTemporalNoise(entity)
+		garbage := []string{"年", "一共", "总计", "的", "多少", "是", "在", "发生", "产生了", "合计", "账款", "收入", "支出", "费用", "成本", "利润", "营收", "销售额", "总成本", "人力成本", "工资", "社保", "公积金", "薪酬", "销项税", "进项税", "应收", "应付", "应收账款", "应付账款"}
 		for _, g := range garbage {
 			entity = strings.ReplaceAll(entity, g, "")
 		}
@@ -1416,7 +1428,7 @@ func (e *Engine) queryFallback(q, from, to, err string) Result {
 		AnswerMethod: "llm_payload",
 		Data: map[string]any{
 			"fallback_attempted":  true,
-			"hint":                "请给出更具体的问题，例如“2026年2月应收账款多少”或“飞未云科2月回款多少”",
+			"hint":                "请给出更具体的问题，例如“某年某月应收账款多少”或“某客户某月回款多少”",
 			"available_accounts":  accounts,
 			"counterparty_sample": samples,
 			"llm_payload":         payload,
@@ -2001,6 +2013,12 @@ func normalizeEntityText(s string) string {
 	return replacer.Replace(strings.TrimSpace(s))
 }
 
+var temporalNoisePattern = regexp.MustCompile(`20\d{2}年?|[0-3]?\d月|[0-3]?\d日`)
+
+func stripTemporalNoise(entity string) string {
+	return strings.TrimSpace(temporalNoisePattern.ReplaceAllString(entity, ""))
+}
+
 func trimEntityNoiseSuffixes(entity string) string {
 	entity = strings.TrimSpace(entity)
 	if entity == "" {
@@ -2335,9 +2353,16 @@ func availableCompanies(db *sql.DB) ([]string, error) {
 }
 
 func monthEndDay(period string) string {
+	period = strings.TrimSpace(period)
+	if period == "" {
+		return time.Now().Format("2006-01-02")
+	}
+	if t, err := time.Parse("2006-01-02", period); err == nil {
+		return t.Format("2006-01-02")
+	}
 	t, err := time.Parse("2006-01", period)
 	if err != nil {
-		return "2026-02-28"
+		return time.Now().Format("2006-01-02")
 	}
 	return t.AddDate(0, 1, -1).Format("2006-01-02")
 }

@@ -6,6 +6,10 @@ import (
 	"strings"
 )
 
+func DefaultCompanyName() string {
+	return strings.TrimSpace(os.Getenv("FINANCEQA_DEFAULT_COMPANY"))
+}
+
 func CurrentWorkingDirectory() string {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -61,10 +65,11 @@ func DefaultDBPath(root string) string {
 			port = "5432"
 		}
 		schema := strings.TrimSpace(os.Getenv("FINANCEQA_PG_SCHEMA"))
-		if schema == "" {
-			schema = "tenant_uhub"
+		dsn := "host=" + host + " port=" + port + " user=" + user + " password=" + pass + " dbname=" + dbname
+		if schema != "" {
+			dsn += " search_path=" + schema + ",public"
 		}
-		return "host=" + host + " port=" + port + " user=" + user + " password=" + pass + " dbname=" + dbname + " search_path=" + schema + ",public"
+		return dsn
 	}
 	return ""
 }

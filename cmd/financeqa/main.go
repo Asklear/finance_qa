@@ -161,7 +161,7 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
-	company := fs.String("company", "模拟财务", "company name to query")
+	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -198,7 +198,7 @@ func runHostData(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("host-data", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
-	company := fs.String("company", "模拟财务", "company name to query")
+	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
 	from := fs.String("from", "", "period start in YYYY-MM")
 	to := fs.String("to", "", "period end in YYYY-MM")
 	if err := fs.Parse(args); err != nil {

@@ -37,14 +37,20 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if m, ok := income.Data["metric"].(string); !ok || m != "收入" {
 		t.Fatalf("income metric should be 收入, got %v", income.Data["metric"])
 	}
-	if strings.Contains(income.Message, "银行卡上看") || strings.Contains(income.Message, "账上看") {
-		t.Fatalf("income answer should stay single-accrual in message, got %s", income.Message)
+	if !strings.Contains(income.Message, "现金口径") || !strings.Contains(income.Message, "经营口径") {
+		t.Fatalf("income answer should expose cash and operating views, got %s", income.Message)
 	}
-	if _, ok := income.Data["money_view"]; ok {
-		t.Fatalf("income should not expose money_view, got %T", income.Data["money_view"])
+	if strings.Index(income.Message, "现金口径") > strings.Index(income.Message, "经营口径") {
+		t.Fatalf("income answer should present cash view before operating view, got %s", income.Message)
+	}
+	if _, ok := income.Data["money_view"]; !ok {
+		t.Fatalf("income should expose money_view, got %T", income.Data["money_view"])
 	}
 	if v := numberFromMap(t, income.Data, "account_value"); v != 2000 {
 		t.Errorf("expected account_value=2000, got %v", income.Data["account_value"])
+	}
+	if v := numberFromMap(t, income.Data, "money_value"); v != 1500 {
+		t.Errorf("expected money_value=1500, got %v", income.Data["money_value"])
 	}
 
 	expense := eng.Query("2026年2月支出是多少")
@@ -65,10 +71,13 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if v := numberFromMap(t, profit.Data, "净现金流"); v != 1150 {
 		t.Fatalf("net cash = %.2f, want 1150", v)
 	}
-	if strings.Contains(profit.Message, "银行卡上看") || strings.Contains(profit.Message, "账上看") {
-		t.Fatalf("profit answer should stay single-accrual in message, got %s", profit.Message)
+	if !strings.Contains(profit.Message, "现金口径") || !strings.Contains(profit.Message, "经营口径") {
+		t.Fatalf("profit answer should expose cash and operating views, got %s", profit.Message)
 	}
-	if !containsText(profit.ExecutedSQL, "monthlyBookSummary(income_statement)") {
+	if strings.Index(profit.Message, "现金口径") > strings.Index(profit.Message, "经营口径") {
+		t.Fatalf("profit answer should present cash view before operating view, got %s", profit.Message)
+	}
+	if !containsText(profit.ExecutedSQL, "dual_perspective(accrual)") {
 		t.Fatalf("profit should expose monthly book trace, got %v", profit.ExecutedSQL)
 	}
 
@@ -79,8 +88,11 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if !strings.Contains(multiMetric.Message, "收入") || !strings.Contains(multiMetric.Message, "成本") || !strings.Contains(multiMetric.Message, "利润") {
 		t.Fatalf("multi metric message should contain 收入/成本/利润, got: %s", multiMetric.Message)
 	}
-	if strings.Contains(multiMetric.Message, "银行卡上看") || strings.Contains(multiMetric.Message, "账上看") {
-		t.Fatalf("multi metric answer should stay single-accrual in message, got %s", multiMetric.Message)
+	if !strings.Contains(multiMetric.Message, "现金口径") || !strings.Contains(multiMetric.Message, "经营口径") {
+		t.Fatalf("multi metric answer should expose cash and operating views, got %s", multiMetric.Message)
+	}
+	if strings.Index(multiMetric.Message, "现金口径") > strings.Index(multiMetric.Message, "经营口径") {
+		t.Fatalf("multi metric answer should present cash view before operating view, got %s", multiMetric.Message)
 	}
 	switch rm := multiMetric.Data["requested_metrics"].(type) {
 	case []any:

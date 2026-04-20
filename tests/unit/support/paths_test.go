@@ -48,3 +48,19 @@ func TestDefaultDBPathBuildsPostgresDSNFromEnv(t *testing.T) {
 		t.Fatalf("DefaultDBPath() = %q, want %q", got, want)
 	}
 }
+
+func TestDefaultDBPathOmitsSearchPathWhenSchemaUnset(t *testing.T) {
+	t.Setenv("FINANCEQA_DB", "")
+	t.Setenv("FINANCEQA_PG_DSN", "")
+	t.Setenv("PGHOST", "pg.example.com")
+	t.Setenv("PGPORT", "5432")
+	t.Setenv("PGUSER", "finance")
+	t.Setenv("PGPASSWORD", "secret")
+	t.Setenv("PGDATABASE", "bossagent")
+	t.Setenv("FINANCEQA_PG_SCHEMA", "")
+
+	want := "host=pg.example.com port=5432 user=finance password=secret dbname=bossagent"
+	if got := support.DefaultDBPath(""); got != want {
+		t.Fatalf("DefaultDBPath() = %q, want %q", got, want)
+	}
+}

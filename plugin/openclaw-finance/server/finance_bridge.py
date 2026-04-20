@@ -73,17 +73,20 @@ def default_db_target():
     pg_user = os.environ.get("PGUSER", "")
     pg_pass = os.environ.get("PGPASSWORD", "")
     pg_db = os.environ.get("PGDATABASE", "")
-    pg_schema = os.environ.get("FINANCEQA_PG_SCHEMA", "tenant_uhub")
+    pg_schema = (os.environ.get("FINANCEQA_PG_SCHEMA") or "").strip()
     if pg_host and pg_user and pg_db:
-        return (
+        dsn = (
             f"host={pg_host} port={pg_port} user={pg_user} password={pg_pass} "
-            f"dbname={pg_db} search_path={pg_schema},public"
+            f"dbname={pg_db}"
         )
+        if pg_schema:
+            dsn += f" search_path={pg_schema},public"
+        return dsn
     return ""
 
 
 FINANCEQA_DB = default_db_target()
-DEFAULT_COMPANY = os.environ.get("FINANCEQA_DEFAULT_COMPANY", "南京优集数据科技有限公司")
+DEFAULT_COMPANY = (os.environ.get("FINANCEQA_DEFAULT_COMPANY") or "").strip()
 SKILL_CONTRACT = load_skill_contract(FINANCEQA_SKILL_PATH)
 SKILL_CONTRACT_VERSION = SKILL_CONTRACT["skill_contract_version"]
 BRIDGE_PROTOCOL_VERSION = SKILL_CONTRACT["bridge_protocol_version"]
@@ -202,6 +205,12 @@ def build_boss_reply(payload, query):
     data = payload.get("data") or {}
     msg = payload.get("message") or ""
 
+    requested_metrics = data.get("requested_metrics") or []
+    if isinstance(requested_metrics, tuple):
+        requested_metrics = list(requested_metrics)
+    if not isinstance(requested_metrics, list):
+        requested_metrics = []
+
     if payload.get("answer_method") == "llm_payload" or not payload.get("success"):
         return {
             "结论": "这个问题当前不能直接精算，已切到财报原始数据模式继续判断。",
@@ -211,17 +220,31 @@ def build_boss_reply(payload, query):
 
     metric = data.get("metric")
     period = data.get("period") or "当前期间"
+    if len(requested_metrics) > 1 and "money_view" in data and "account_view" in data:
+        cash_view = data.get("money_view") or {}
+        account_view = data.get("account_view") or {}
+        cash_in = float(cash_view.get("现金流入", data.get("现金流入", 0)))
+        cash_out = float(cash_view.get("现金流出", data.get("现金流出", 0)))
+        cash_net = float(cash_view.get("净现金流", data.get("净现金流", 0)))
+        revenue = float(account_view.get("营业收入", 0))
+        cost = float(account_view.get("营业成本及费用", 0))
+        profit = float(account_view.get("账面利润", 0))
+        return {
+            "结论": f"{period}先看现金口径：实际到账 {cash_in:.2f} 元、实际支出 {cash_out:.2f} 元、净增加 {cash_net:.2f} 元；再看经营口径：收入 {revenue:.2f} 元、成本及费用 {cost:.2f} 元、利润 {profit:.2f} 元。",
+            "原因": "默认先展示现金收付，再补经营确认结果，避免把到账/付款和经营利润混成一个口径。",
+            "建议": "如果要继续追差异，请直接问利润和现金流为什么不一致。",
+        }
     if metric and "money_value" in data and "account_value" in data:
         return {
-            "结论": f"{period}{metric}：卡上实际进出账约 {float(data.get('money_value', 0)):.2f} 元，报表确认约 {float(data.get('account_value', 0)):.2f} 元。",
+            "结论": f"{period}{metric}：现金口径 {float(data.get('money_value', 0)):.2f} 元，经营口径 {float(data.get('account_value', 0)):.2f} 元。",
             "原因": "两边差异通常来自确认时点、预提和冲回。",
             "建议": "优先盯回款与大额支出节奏，避免下月利润波动。",
         }
     if metric and "account_value" in data:
         return {
             "结论": f"{period}{metric}约 {float(data.get('account_value', 0)):.2f} 元。",
-            "原因": "核心经营指标默认按财务确认口径回答；只有明确追问到账、付款、现金流或差异原因时，才展开现金视角。",
-            "建议": "如果要继续核对银行卡实际收付，请直接追问回款、到账、付款、现金流或差异原因。",
+            "原因": "当前结果只落在经营口径；若该问题走双视角，会先展示现金口径，再补经营口径。",
+            "建议": "如果要继续核对现金收付，请直接追问到账、付款或现金流。",
         }
 
     if "suppliers" in data:
@@ -278,13 +301,15 @@ def build_structured_response(payload, query):
 
 
 def run_finance_query(question):
-    proc = run_cmd([
+    cmd = [
         str(FINANCEQA_BIN),
         "query",
         "--db", str(FINANCEQA_DB),
-        "--company", DEFAULT_COMPANY,
-        question,
-    ])
+    ]
+    if DEFAULT_COMPANY:
+        cmd.extend(["--company", DEFAULT_COMPANY])
+    cmd.append(question)
+    proc = run_cmd(cmd)
 
     if proc.returncode == 0:
         payload = parse_json_or_none(proc.stdout) or {"raw": (proc.stdout or "").strip()}
@@ -292,13 +317,15 @@ def run_finance_query(question):
 
     err_msg = (proc.stderr or proc.stdout or "").strip() or "query failed"
 
-    host_proc = run_cmd([
+    host_cmd = [
         str(FINANCEQA_BIN),
         "host-data",
         "--db", str(FINANCEQA_DB),
-        "--company", DEFAULT_COMPANY,
-        question,
-    ])
+    ]
+    if DEFAULT_COMPANY:
+        host_cmd.extend(["--company", DEFAULT_COMPANY])
+    host_cmd.append(question)
+    host_proc = run_cmd(host_cmd)
     host_payload = parse_json_or_none(host_proc.stdout) or {}
     host_data = host_payload.get("data") if isinstance(host_payload, dict) else {}
 
@@ -308,7 +335,7 @@ def run_finance_query(question):
         "answer_method": "llm_payload",
         "data": {
             "fallback_attempted": True,
-            "hint": "请补充时间+对象+指标，例如：2026年2月飞未云科回款多少",
+            "hint": "请补充时间+对象+指标，例如：某年某月某客户回款多少",
             "llm_payload": (host_data or {}).get("llm_payload", host_payload),
         },
         "executed_sql": (host_payload.get("executed_sql") if isinstance(host_payload, dict) else []) or [],
@@ -329,8 +356,9 @@ def run_host_data(arguments):
         str(FINANCEQA_BIN),
         "host-data",
         "--db", str(FINANCEQA_DB),
-        "--company", DEFAULT_COMPANY,
     ]
+    if DEFAULT_COMPANY:
+        cmd.extend(["--company", DEFAULT_COMPANY])
     if from_period:
         cmd.extend(["--from", from_period])
     if to_period:

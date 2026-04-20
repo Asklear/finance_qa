@@ -51,7 +51,7 @@ func ExtractMetadata(path string) (FileMetadata, error) {
 			periodStart = formatYYYYMM(m[1][:6])
 			periodEnd = formatYYYYMM(m[2][:6])
 		}
-		// Extract company from bank statement: 交易查询，南京优集数据科技有限公司，...
+		// Extract company from bank statement: 交易查询，某公司全称，...
 		parts := strings.Split(filename, "，")
 		if len(parts) >= 2 {
 			company = strings.TrimSpace(parts[1])
