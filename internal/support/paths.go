@@ -3,6 +3,7 @@ package support
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func CurrentWorkingDirectory() string {
@@ -42,10 +43,30 @@ func FindProjectRoot() string {
 }
 
 func DefaultDBPath(root string) string {
-	if root == "" {
-		root = FindProjectRoot()
+	_ = root
+
+	if explicit := strings.TrimSpace(os.Getenv("FINANCEQA_DB")); explicit != "" {
+		return explicit
 	}
-	return filepath.Join(root, "finance.db")
+	if dsn := strings.TrimSpace(os.Getenv("FINANCEQA_PG_DSN")); dsn != "" {
+		return dsn
+	}
+	host := strings.TrimSpace(os.Getenv("PGHOST"))
+	port := strings.TrimSpace(os.Getenv("PGPORT"))
+	user := strings.TrimSpace(os.Getenv("PGUSER"))
+	pass := strings.TrimSpace(os.Getenv("PGPASSWORD"))
+	dbname := strings.TrimSpace(os.Getenv("PGDATABASE"))
+	if host != "" && user != "" && dbname != "" {
+		if port == "" {
+			port = "5432"
+		}
+		schema := strings.TrimSpace(os.Getenv("FINANCEQA_PG_SCHEMA"))
+		if schema == "" {
+			schema = "tenant_uhub"
+		}
+		return "host=" + host + " port=" + port + " user=" + user + " password=" + pass + " dbname=" + dbname + " search_path=" + schema + ",public"
+	}
+	return ""
 }
 
 func DefaultUserConfigPath(root string) string {

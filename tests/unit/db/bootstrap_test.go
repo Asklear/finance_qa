@@ -14,7 +14,7 @@ import (
 func TestBootstrapInitializesTypeScriptCompatibleSchema(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "bootstrap.sqlite")
 	if err := db.Bootstrap(context.Background(), dbPath); err != nil {
 		t.Fatalf("bootstrap failed: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestBootstrapInitializesTypeScriptCompatibleSchema(t *testing.T) {
 func TestBootstrapCreatesKnownIndex(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "bootstrap-index.sqlite")
 	if err := db.Bootstrap(context.Background(), dbPath); err != nil {
 		t.Fatalf("bootstrap failed: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestBootstrapCreatesKnownIndex(t *testing.T) {
 func TestBootstrapSeedsIdempotencyPolicies(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "bootstrap-policy.sqlite")
 	if err := db.Bootstrap(context.Background(), dbPath); err != nil {
 		t.Fatalf("bootstrap failed: %v", err)
 	}

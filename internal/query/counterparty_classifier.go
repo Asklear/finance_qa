@@ -21,6 +21,8 @@ const (
 // 主线程可以把 journal / bank_statement 的行映射到这个结构，再做分类和税额归因。
 type LedgerEvidence struct {
 	Source          string  `json:"source,omitempty"`
+	VoucherDate     string  `json:"voucher_date,omitempty"`
+	VoucherNo       string  `json:"voucher_no,omitempty"`
 	Counterparty    string  `json:"counterparty,omitempty"`
 	AccountCode     string  `json:"account_code,omitempty"`
 	AccountName     string  `json:"account_name,omitempty"`
@@ -40,25 +42,13 @@ type CounterpartyClassification struct {
 	Signals      []string                     `json:"signals,omitempty"`
 }
 
-var (
-	customerKeywords = []string{
-		"应收", "回款", "收款", "结算款", "销售", "收入", "主营业务收入", "营业收入", "预收", "合同资产", "客户", "1122", "1121",
-	}
-	supplierKeywords = []string{
-		"应付", "付款", "采购", "成本", "材料", "供应商", "外包", "2202",
-		"预付账款", "1123", "112301",
-	}
-	employeeKeywords = []string{
-		"工资", "薪酬", "社保", "公积金", "报销", "差旅", "福利", "餐补", "伙食", "应付职工薪酬", "2211",
-	}
-	outputTaxKeywords = []string{"销项税", "222101", "销项"}
-	inputTaxKeywords  = []string{"进项税", "222102", "进项"}
-)
-
 // ClassifyCounterparty 基于分录证据识别交易对手角色。
 // 规则会综合流水方向、科目、摘要、税种关键词，不会只看净流向。
 func ClassifyCounterparty(counterparty string, evidence []LedgerEvidence) CounterpartyClassification {
 	cfg := getRuleConfig()
+	customerKeywords := cfg.CounterpartyRoleKeywords(CounterpartyCustomer)
+	supplierKeywords := cfg.CounterpartyRoleKeywords(CounterpartySupplier)
+	employeeKeywords := cfg.CounterpartyRoleKeywords(CounterpartyEmployee)
 	scores := map[CounterpartyRole]float64{
 		CounterpartyCustomer: 0,
 		CounterpartySupplier: 0,
@@ -79,9 +69,9 @@ func ClassifyCounterparty(counterparty string, evidence []LedgerEvidence) Counte
 		case hasAny(text, employeeKeywords):
 			scores[CounterpartyEmployee] += 3.0
 			signals = append(signals, "employee:"+pickFirstHit(text, employeeKeywords))
-		case hasSupplierStrongEvidence(ev, text):
+		case hasSupplierStrongEvidence(ev, text, cfg):
 			scores[CounterpartySupplier] += 2.8
-			signals = append(signals, "supplier_strong:"+pickSupplierSignal(ev, text))
+			signals = append(signals, "supplier_strong:"+pickSupplierSignal(ev, text, cfg))
 		case hasAny(text, supplierKeywords):
 			scores[CounterpartySupplier] += 2.6
 			signals = append(signals, "supplier:"+pickFirstHit(text, supplierKeywords))
@@ -206,7 +196,7 @@ func pickFirstHit(text string, keywords []string) string {
 	return ""
 }
 
-func hasSupplierStrongEvidence(ev LedgerEvidence, text string) bool {
+func hasSupplierStrongEvidence(ev LedgerEvidence, text string, cfg RuleConfig) bool {
 	if hasAny(text, []string{"2202", "应付账款"}) {
 		return true
 	}
@@ -219,13 +209,13 @@ func hasSupplierStrongEvidence(ev LedgerEvidence, text string) bool {
 	if hasAny(text, []string{"服务费", "技术服务费", "外包服务"}) && (ev.DebitAmount > 0 || ev.Direction == "借") {
 		return true
 	}
-	if hasAny(text, []string{"22210101", "222102", "进项税"}) && (ev.DebitAmount > 0 || ev.Direction == "借") {
+	if hasAny(text, append([]string{"22210101", "222102"}, cfg.TaxKeywords(TaxSideInput)...)) && (ev.DebitAmount > 0 || ev.Direction == "借") {
 		return true
 	}
 	return false
 }
 
-func pickSupplierSignal(ev LedgerEvidence, text string) string {
+func pickSupplierSignal(ev LedgerEvidence, text string, cfg RuleConfig) string {
 	switch {
 	case hasAny(text, []string{"2202", "应付账款"}):
 		return "2202"
@@ -235,7 +225,7 @@ func pickSupplierSignal(ev LedgerEvidence, text string) string {
 		return "6602"
 	case strings.HasPrefix(ev.AccountCode, "6401"):
 		return "6401"
-	case hasAny(text, []string{"22210101", "222102", "进项税"}):
+	case hasAny(text, append([]string{"22210101", "222102"}, cfg.TaxKeywords(TaxSideInput)...)):
 		return "input_tax"
 	case hasAny(text, []string{"服务费", "技术服务费", "外包服务"}):
 		return "service_fee"

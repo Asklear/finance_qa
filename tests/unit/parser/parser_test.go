@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 
 func TestExtractMetadataForBankStatementSample(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "交易查询，模拟财务科技有限公司，125922640010001，人民币，20260101-20260228，共93笔_20260401121229.xlsx")
+	requireFixture(t, path)
 	meta, err := parser.ExtractMetadata(path)
 	if err != nil {
 		t.Fatalf("ExtractMetadata failed: %v", err)
@@ -27,6 +29,7 @@ func TestExtractMetadataForBankStatementSample(t *testing.T) {
 
 func TestParseBankStatementSample(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "交易查询，模拟财务科技有限公司，125922640010001，人民币，20260101-20260228，共93笔_20260401121229.xlsx")
+	requireFixture(t, path)
 	result, err := parser.ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
@@ -49,6 +52,7 @@ func TestParseBankStatementSample(t *testing.T) {
 
 func TestParseIncomeStatementSample(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "模拟财务2026.2利润表.xls")
+	requireFixture(t, path)
 	result, err := parser.ParseFile(path)
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
@@ -86,6 +90,7 @@ func TestParseBalanceSheetAndBalanceDetailSamples(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join("..", "..", "testdata", tc.file)
+			requireFixture(t, path)
 			result, err := parser.ParseFile(path)
 			if err != nil {
 				t.Fatalf("ParseFile failed: %v", err)
@@ -97,5 +102,12 @@ func TestParseBalanceSheetAndBalanceDetailSamples(t *testing.T) {
 				t.Fatal("expected parsed rows")
 			}
 		})
+	}
+}
+
+func requireFixture(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("fixture not present: %v", err)
 	}
 }

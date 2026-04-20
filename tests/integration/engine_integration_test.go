@@ -56,11 +56,17 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 	if !profit.Success {
 		t.Fatalf("profit query failed: %s", profit.Message)
 	}
-	if v := numberFromMap(t, profit.Data, "净现金流"); v != 1150 {
-		t.Fatalf("profit = %.2f, want 1150", v)
+	if v := numberFromMap(t, profit.Data, "account_value"); v != 700 {
+		t.Fatalf("account_value = %.2f, want 700", v)
 	}
-	if !containsText(profit.ExecutedSQL, "dual_perspective(accrual)") {
-		t.Fatalf("profit should expose accrual SQL trace, got %v", profit.ExecutedSQL)
+	if v := numberFromMap(t, profit.Data, "净现金流"); v != 1150 {
+		t.Fatalf("net cash = %.2f, want 1150", v)
+	}
+	if strings.Contains(profit.Message, "银行卡上看") || strings.Contains(profit.Message, "账上看") {
+		t.Fatalf("profit answer should stay single-accrual in message, got %s", profit.Message)
+	}
+	if !containsText(profit.ExecutedSQL, "monthlyBookSummary(income_statement)") {
+		t.Fatalf("profit should expose monthly book trace, got %v", profit.ExecutedSQL)
 	}
 
 	multiMetric := eng.Query("2026年2月收入/成本/利润分别是多少")

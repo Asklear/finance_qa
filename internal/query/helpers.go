@@ -154,41 +154,41 @@ func ClassifyIntent(question string) Intent {
 	q := strings.ReplaceAll(question, " ", "")
 	cfg := getRuleConfig()
 
-	if containsAny(q, []string{"最大", "单笔", "流入对手方", "流出对手方"}) {
+	if containsAny(q, cfg.IntentKeywords(IntentLargeTransactionQuery)) {
 		return IntentLargeTransactionQuery
 	}
 
-	if containsAny(q, []string{"是谁", "身份", "干嘛的", "哪里的", "谁是"}) {
+	if containsAny(q, cfg.IntentKeywords(IntentIdentityQuery)) {
 		return IntentIdentityQuery
 	}
 
 	// 这些问题虽然可能包含“应付”，但业务语义是人力成本，不应被 AR/AP 分流截走。
-	if containsAny(q, cfg.IntentHRCostKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) {
 		return IntentFallback
 	}
 
-	if containsAny(q, cfg.IntentARAPKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentARAPQuery))) {
 		return IntentARAPQuery
 	}
 
-	if containsAny(q, cfg.IntentTaxKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentTaxQuery))) {
 		return IntentTaxQuery
 	}
 
 	// 这类问法需要 fallback 结构化提示，而不是分析模块直接接管
-	if containsAny(q, cfg.IntentHealthKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHealth)) {
 		return IntentFallback
 	}
 
-	if containsAny(q, cfg.IntentAnalysisKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentAnalysis))) {
 		return IntentAnalysis
 	}
 
-	if containsAny(q, cfg.IntentFallbackKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentFallback))) {
 		return IntentFallback
 	}
 
-	if containsAny(q, cfg.IntentHostPayloadKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentHostPayload))) {
 		return IntentHostPayload
 	}
 
@@ -196,11 +196,11 @@ func ClassifyIntent(question string) Intent {
 		return IntentFallback
 	}
 
-	if containsAny(q, cfg.IntentMonthlySummaryKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentMonthlySummary))) {
 		return IntentMonthlySummary
 	}
 
-	if containsAny(q, []string{"期末", "余额", "是多少", "查询余额", "还有多少"}) {
+	if containsAny(q, cfg.IntentKeywords(IntentPrecise)) {
 		return IntentPrecise
 	}
 

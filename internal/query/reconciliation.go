@@ -1,12 +1,14 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 
 	"financeqa/internal/accounting"
+	"financeqa/internal/analysis"
 )
 
 type evidenceLevel string
@@ -97,6 +99,11 @@ func (e *Engine) queryReconciliation(question, from, to string) Result {
 		fmt.Sprintf("[差异解释] %s 账上收入 %.2f, 账上成本及费用 %.2f, 账上利润 %.2f", to, book.Revenue, book.TotalCost, book.Profit),
 		fmt.Sprintf("[差异解释] %s 银行卡上收款 %.2f, 付款 %.2f, 净流入 %.2f", to, cash.Income, cash.Expense, cash.Net),
 	)
+	var bridgeMap map[string]any
+	if bridge, bridgeErr := analysis.AnalyzeProfitCashBridgeWithDB(context.Background(), e.db, e.Company, to); bridgeErr == nil {
+		bridgeMap = bridgeToMap(&bridge)
+		logs = append(logs, fmt.Sprintf("[利润调现金桥] period=%s estimated_operating_cash=%.2f bank_net_cash=%.2f non_operating_delta=%.2f", to, bridge.EstimatedOperatingCash, bridge.BankNetCash, bridge.NonOperatingCashDelta))
+	}
 	for _, snap := range highlights {
 		logs = append(logs, fmt.Sprintf("[对手方归因] %s role=%s basis=%s in=%.2f out=%.2f revenue=%.2f cost=%.2f expense=%.2f vat_out=%.2f vat_in=%.2f reason=%s",
 			snap.Name, snap.Role, snap.ComparisonBasis, snap.BankIn, snap.BankOut, snap.RevenueNet, snap.BookCost, snap.BookExpense, snap.OutputVAT, snap.InputVAT, snap.DifferenceReason))
@@ -155,8 +162,9 @@ func (e *Engine) queryReconciliation(question, from, to string) Result {
 			},
 		},
 		"difference_summary": map[string]any{
-			"book_profit":     book.Profit,
-			"cash_net_inflow": cash.Net,
+			"book_profit":        book.Profit,
+			"cash_net_inflow":    cash.Net,
+			"profit_cash_bridge": bridgeMap,
 			"notices": []string{
 				"银行卡收付和账上利润不是同一口径，差异需要拆成回款、税额、供应商付款和成本确认来看。",
 				"若数据库没有结算月份字段，只能确认是历史应收回款，不能硬说对应哪一个结算月份。",
@@ -312,6 +320,7 @@ LIMIT ?
 func (e *Engine) collectCounterpartyEvidence(name, from, to string) []LedgerEvidence {
 	like := "%" + name + "%"
 	evidence := make([]LedgerEvidence, 0, 32)
+	seen := map[string]struct{}{}
 	startDate := from + "-01"
 	endDate := monthEndDay(to)
 
@@ -330,33 +339,128 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 			if scanErr := bankRows.Scan(&counterparty, &summary, &debitAmt, &creditAmt); scanErr != nil {
 				continue
 			}
-			evidence = append(evidence, LedgerEvidence{
+			ev := LedgerEvidence{
 				Source:       "bank_statement",
 				Counterparty: counterparty,
 				Summary:      summary,
 				DebitAmount:  debitAmt,
 				CreditAmount: creditAmt,
-			})
+			}
+			if _, ok := seen[evidenceKey(ev)]; ok {
+				continue
+			}
+			evidence = append(evidence, ev)
+			seen[evidenceKey(ev)] = struct{}{}
 		}
 	}
 
-	journalRows, err := e.db.Query(`
+	if !e.journalHasVoucherGrouping() {
+		journalRows, err := e.db.Query(`
 SELECT IFNULL(counterparty, ''), account_code, account_name, summary, direction, COALESCE(debit_amount, 0), COALESCE(credit_amount, 0)
 FROM journal
 WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
   AND voucher_date BETWEEN ? AND ?
   AND (summary LIKE ? OR IFNULL(counterparty, '') LIKE ?)
 `, e.Company, e.Company, startDate, endDate, like, like)
-	if err == nil {
-		defer journalRows.Close()
-		for journalRows.Next() {
+		if err == nil {
+			defer journalRows.Close()
+			for journalRows.Next() {
+				var counterparty, accountCode, accountName, summary, direction string
+				var debitAmt, creditAmt float64
+				if scanErr := journalRows.Scan(&counterparty, &accountCode, &accountName, &summary, &direction, &debitAmt, &creditAmt); scanErr != nil {
+					continue
+				}
+				ev := LedgerEvidence{
+					Source:       "journal",
+					Counterparty: counterparty,
+					AccountCode:  accountCode,
+					AccountName:  accountName,
+					Summary:      summary,
+					Direction:    direction,
+					DebitAmount:  debitAmt,
+					CreditAmount: creditAmt,
+				}
+				if _, ok := seen[evidenceKey(ev)]; ok {
+					continue
+				}
+				evidence = append(evidence, ev)
+				seen[evidenceKey(ev)] = struct{}{}
+			}
+		}
+		return evidence
+	}
+
+	type voucherContext struct {
+		Period      string
+		VoucherDate string
+		VoucherNo   string
+	}
+
+	journalRows, err := e.db.Query(`
+SELECT IFNULL(counterparty, ''), account_code, account_name, summary, direction,
+       COALESCE(debit_amount, 0), COALESCE(credit_amount, 0), IFNULL(period, ''), voucher_date, IFNULL(voucher_no, '')
+FROM journal
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND voucher_date BETWEEN ? AND ?
+  AND (summary LIKE ? OR IFNULL(counterparty, '') LIKE ?)
+`, e.Company, e.Company, startDate, endDate, like, like)
+	if err != nil {
+		return evidence
+	}
+	defer journalRows.Close()
+
+	contexts := make(map[string]voucherContext)
+	for journalRows.Next() {
+		var counterparty, accountCode, accountName, summary, direction, period, voucherDate, voucherNo string
+		var debitAmt, creditAmt float64
+		if scanErr := journalRows.Scan(&counterparty, &accountCode, &accountName, &summary, &direction, &debitAmt, &creditAmt, &period, &voucherDate, &voucherNo); scanErr != nil {
+			continue
+		}
+		ev := LedgerEvidence{
+			Source:       "journal",
+			VoucherDate:  voucherDate,
+			VoucherNo:    voucherNo,
+			Counterparty: counterparty,
+			AccountCode:  accountCode,
+			AccountName:  accountName,
+			Summary:      summary,
+			Direction:    direction,
+			DebitAmount:  debitAmt,
+			CreditAmount: creditAmt,
+		}
+		if _, ok := seen[evidenceKey(ev)]; !ok {
+			evidence = append(evidence, ev)
+			seen[evidenceKey(ev)] = struct{}{}
+		}
+		if voucherDate == "" || voucherNo == "" {
+			continue
+		}
+		ctxKey := strings.Join([]string{period, voucherDate, voucherNo}, "\x1f")
+		contexts[ctxKey] = voucherContext{Period: period, VoucherDate: voucherDate, VoucherNo: voucherNo}
+	}
+
+	for _, ctx := range contexts {
+		siblingRows, siblingErr := e.db.Query(`
+SELECT IFNULL(counterparty, ''), account_code, account_name, summary, direction, COALESCE(debit_amount, 0), COALESCE(credit_amount, 0)
+FROM journal
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND IFNULL(period, '') = ?
+  AND voucher_date = ?
+  AND IFNULL(voucher_no, '') = ?
+`, e.Company, e.Company, ctx.Period, ctx.VoucherDate, ctx.VoucherNo)
+		if siblingErr != nil {
+			continue
+		}
+		for siblingRows.Next() {
 			var counterparty, accountCode, accountName, summary, direction string
 			var debitAmt, creditAmt float64
-			if scanErr := journalRows.Scan(&counterparty, &accountCode, &accountName, &summary, &direction, &debitAmt, &creditAmt); scanErr != nil {
+			if scanErr := siblingRows.Scan(&counterparty, &accountCode, &accountName, &summary, &direction, &debitAmt, &creditAmt); scanErr != nil {
 				continue
 			}
-			evidence = append(evidence, LedgerEvidence{
+			ev := LedgerEvidence{
 				Source:       "journal",
+				VoucherDate:  ctx.VoucherDate,
+				VoucherNo:    ctx.VoucherNo,
 				Counterparty: counterparty,
 				AccountCode:  accountCode,
 				AccountName:  accountName,
@@ -364,11 +468,32 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 				Direction:    direction,
 				DebitAmount:  debitAmt,
 				CreditAmount: creditAmt,
-			})
+			}
+			if _, ok := seen[evidenceKey(ev)]; ok {
+				continue
+			}
+			evidence = append(evidence, ev)
+			seen[evidenceKey(ev)] = struct{}{}
 		}
+		_ = siblingRows.Close()
 	}
 
 	return evidence
+}
+
+func evidenceKey(ev LedgerEvidence) string {
+	return strings.Join([]string{
+		ev.Source,
+		strings.TrimSpace(ev.VoucherDate),
+		strings.TrimSpace(ev.VoucherNo),
+		strings.TrimSpace(ev.Counterparty),
+		strings.TrimSpace(ev.AccountCode),
+		strings.TrimSpace(ev.AccountName),
+		strings.TrimSpace(ev.Summary),
+		strings.TrimSpace(ev.Direction),
+		fmt.Sprintf("%.6f", ev.DebitAmount),
+		fmt.Sprintf("%.6f", ev.CreditAmount),
+	}, "\x1f")
 }
 
 func (e *Engine) buildCounterpartySnapshot(name, from, to string) counterpartySnapshot {
@@ -505,7 +630,7 @@ func (e *Engine) composeBossReconciliationMessage(period string, book monthlyBoo
 		}
 	}
 	if len(highlights) > 0 {
-		lines = append(lines, "如果你要继续追问“这笔到底对应哪一月结算”，下一步得补结算单、开票记录或合同台账，单靠当前 `finance.db` 不能硬判。")
+		lines = append(lines, "如果你要继续追问“这笔到底对应哪一月结算”，下一步得补结算单、开票记录或合同台账，单靠当前数据库里的财务表不能硬判。")
 	}
 	return strings.Join(lines, "\n")
 }

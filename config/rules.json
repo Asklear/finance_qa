@@ -1,162 +1,306 @@
 {
-  "generic_metric_stopwords": [
-    "收入",
-    "营收",
-    "销售额",
-    "成本",
-    "总成本",
-    "人力成本",
-    "工资成本",
-    "薪酬成本",
-    "工资",
-    "社保",
-    "公积金",
-    "利润",
-    "毛利",
-    "净利",
-    "支出",
-    "费用",
-    "整体支出",
-    "总支出",
-    "全部支出",
-    "销项税",
-    "销项税额",
-    "进项税",
-    "进项税额",
-    "税额",
-    "应收",
-    "应付",
-    "应收账款",
-    "应付账款",
-    "现金流",
-    "流水",
-    "回款",
-    "到账",
-    "收款",
-    "付款",
-    "经营状况",
-    "指标",
-    "核心指标",
-    "月度经营"
-  ],
-  "intent_arap_keywords": [
-    "应收",
-    "应付",
-    "账款",
-    "往来款"
-  ],
-  "intent_hr_cost_keywords": [
-    "人力成本",
-    "工资成本",
-    "薪酬成本",
-    "应付职工薪酬"
-  ],
-  "intent_tax_keywords": [
-    "税",
-    "销项",
-    "进项",
-    "增值税"
-  ],
-  "intent_health_keywords": [
-    "健康度",
-    "健康",
-    "怎么样"
-  ],
-  "intent_fallback_keywords": [
-    "健康度",
-    "健康",
-    "怎么样",
-    "供应商多少",
-    "多少供应商",
-    "供应商有多少",
-    "人力成本",
-    "工资成本",
-    "薪酬成本",
-    "应付职工薪酬",
-    "整体支出",
-    "总支出",
-    "全部支出"
-  ],
-  "intent_analysis_keywords": [
-    "分析",
-    "评分",
-    "评价",
-    "风险",
-    "分析下"
-  ],
-  "intent_host_payload_keywords": [
-    "宿主llm",
-    "hostllm",
-    "原始数据",
-    "全量财报",
-    "财报原始",
-    "llm数据包"
-  ],
-  "intent_monthly_summary_keywords": [
-    "概括",
-    "总结",
-    "利润",
-    "指标",
-    "经营状况",
-    "收入",
-    "支出",
-    "支出汇总",
-    "报销汇总",
-    "成本",
-    "总成本",
-    "费用总额"
-  ],
-  "fallback_monthly_expense_keywords": [
-    "整体支出",
-    "总支出",
-    "全部支出",
-    "支出汇总"
-  ],
-  "high_priority_phrases": {
-    "arap": [
-      "预收款",
-      "预付款",
-      "应收账款",
-      "应付账款"
+  "schema_version": 2,
+  "router": {
+    "stopwords": {
+      "generic_metric": [
+        "收入",
+        "营收",
+        "销售额",
+        "成本",
+        "总成本",
+        "人力成本",
+        "工资成本",
+        "薪酬成本",
+        "工资",
+        "社保",
+        "公积金",
+        "利润",
+        "毛利",
+        "净利",
+        "支出",
+        "费用",
+        "整体支出",
+        "总支出",
+        "全部支出",
+        "销项税",
+        "销项税额",
+        "进项税",
+        "进项税额",
+        "税额",
+        "应收",
+        "应付",
+        "应收账款",
+        "应付账款",
+        "现金流",
+        "流水",
+        "回款",
+        "到账",
+        "收款",
+        "付款",
+        "经营状况",
+        "指标",
+        "核心指标",
+        "月度经营"
+      ]
+    },
+    "intents": {
+      "arap": {
+        "keywords": [
+          "应收",
+          "应付",
+          "账款",
+          "往来款"
+        ],
+        "priority": 100,
+        "min_confidence": 0.6,
+        "conflicts": [
+          "fallback",
+          "general"
+        ],
+        "high_priority_phrases": [
+          "预收款",
+          "预付款",
+          "应收账款",
+          "应付账款"
+        ]
+      },
+      "hr_cost": {
+        "keywords": [
+          "人力成本",
+          "工资成本",
+          "薪酬成本",
+          "应付职工薪酬"
+        ]
+      },
+      "tax": {
+        "keywords": [
+          "税",
+          "销项",
+          "进项",
+          "增值税"
+        ],
+        "priority": 90,
+        "min_confidence": 0.55,
+        "conflicts": [
+          "fallback",
+          "general"
+        ]
+      },
+      "analysis": {
+        "keywords": [
+          "分析",
+          "评分",
+          "评价",
+          "风险",
+          "分析下"
+        ],
+        "priority": 50,
+        "min_confidence": 0.5
+      },
+      "host_payload": {
+        "keywords": [
+          "宿主llm",
+          "hostllm",
+          "原始数据",
+          "全量财报",
+          "财报原始",
+          "llm数据包"
+        ],
+        "priority": 120
+      },
+      "monthly_summary": {
+        "keywords": [
+          "概括",
+          "总结",
+          "利润",
+          "指标",
+          "经营状况",
+          "收入",
+          "支出",
+          "支出汇总",
+          "报销汇总",
+          "成本",
+          "总成本",
+          "费用总额"
+        ],
+        "priority": 70,
+        "min_confidence": 0.5,
+        "conflicts": [
+          "general"
+        ]
+      },
+      "fallback": {
+        "keywords": [
+          "健康度",
+          "健康",
+          "怎么样",
+          "供应商多少",
+          "多少供应商",
+          "供应商有多少",
+          "人力成本",
+          "工资成本",
+          "薪酬成本",
+          "应付职工薪酬",
+          "整体支出",
+          "总支出",
+          "全部支出"
+        ],
+        "priority": 40,
+        "min_confidence": 0.45
+      },
+      "large_transaction": {
+        "keywords": [
+          "最大",
+          "单笔",
+          "流入对手方",
+          "流出对手方"
+        ],
+        "priority": 110
+      },
+      "identity": {
+        "keywords": [
+          "是谁",
+          "身份",
+          "干嘛的",
+          "哪里的",
+          "谁是"
+        ],
+        "priority": 105
+      },
+      "precise": {
+        "keywords": [
+          "期末",
+          "余额",
+          "是多少",
+          "查询余额",
+          "还有多少"
+        ],
+        "priority": 20
+      }
+    },
+    "metric_keywords": {
+      "revenue": [
+        "收入",
+        "营收",
+        "销售额"
+      ],
+      "cost": [
+        "成本"
+      ],
+      "profit": [
+        "利润"
+      ]
+    },
+    "hr_breakdown_keywords": [
+      "工资",
+      "社保",
+      "公积金",
+      "分别",
+      "拆分",
+      "拆开",
+      "明细",
+      "构成"
     ],
-    "fallback": [
-      "供应商有多少",
-      "人力成本多少"
+    "counterparty_classification_question_keywords": [
+      "成本还是收入",
+      "是成本还是收入",
+      "供应商付款还是预收款",
+      "客户还是供应商"
+    ],
+    "profit_single_view_block_keywords": [
+      "现金流",
+      "回款",
+      "到账",
+      "银行卡",
+      "差异",
+      "为什么"
+    ],
+    "fallback_monthly_expense_keywords": [
+      "整体支出",
+      "总支出",
+      "全部支出",
+      "支出汇总"
     ]
   },
-  "intent_priority": {
-    "host_payload": 120,
-    "arap": 100,
-    "tax": 90,
-    "monthly_summary": 70,
-    "analysis": 50,
-    "fallback": 40,
-    "precise": 20,
-    "general": 10
+  "counterparty": {
+    "roles": {
+      "customer": [
+        "应收",
+        "回款",
+        "收款",
+        "结算款",
+        "销售",
+        "收入",
+        "主营业务收入",
+        "营业收入",
+        "预收",
+        "合同资产",
+        "客户",
+        "1122",
+        "1121"
+      ],
+      "supplier": [
+        "应付",
+        "付款",
+        "采购",
+        "成本",
+        "材料",
+        "供应商",
+        "外包",
+        "2202",
+        "预付账款",
+        "1123",
+        "112301"
+      ],
+      "employee": [
+        "工资",
+        "薪酬",
+        "社保",
+        "公积金",
+        "报销",
+        "差旅",
+        "福利",
+        "餐补",
+        "伙食",
+        "应付职工薪酬",
+        "2211"
+      ]
+    },
+    "tax": {
+      "output": [
+        "销项税",
+        "222101",
+        "销项"
+      ],
+      "input": [
+        "进项税",
+        "222102",
+        "进项"
+      ]
+    },
+    "thresholds": {
+      "mixed_min_ratio": 0.45,
+      "mixed_min_positive_score": 1.0,
+      "mixed_min_positive_roles": 2,
+      "min_primary_score": 0.5,
+      "min_confidence": 0.0
+    }
   },
-  "intent_conflicts": {
-    "arap": [
-      "fallback",
-      "general"
+  "internal_party": {
+    "org_suffixes": [
+      "分公司",
+      "子公司",
+      "事业部",
+      "办事处",
+      "分部",
+      "总部",
+      "总公司"
     ],
-    "tax": [
-      "fallback",
-      "general"
-    ],
-    "monthly_summary": [
-      "general"
+    "account_context_keywords": [
+      "应付职工薪酬",
+      "其他应收款",
+      "其他应付款",
+      "内部往来"
     ]
-  },
-  "intent_min_confidence": {
-    "arap": 0.6,
-    "tax": 0.55,
-    "monthly_summary": 0.5,
-    "analysis": 0.5,
-    "fallback": 0.45
-  },
-  "role_mixed_min_ratio": 0.45,
-  "role_mixed_min_positive_score": 1.0,
-  "role_mixed_min_positive_roles": 2,
-  "role_min_primary_score": 0.5,
-  "role_min_confidence": 0.0
+  }
 }

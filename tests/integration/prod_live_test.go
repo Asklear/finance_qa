@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -8,18 +9,23 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
+	dbpkg "financeqa/internal/db"
 	"financeqa/internal/query"
+	"financeqa/internal/support"
 )
 
 func TestProductionLiveAudit(t *testing.T) {
-	// 1. 设置：指向工程根目录的正式数据库
+	if os.Getenv("FINANCEQA_RUN_LIVE_DB_TESTS") != "1" {
+		t.Skip("set FINANCEQA_RUN_LIVE_DB_TESTS=1 to run live production audit")
+	}
+
 	cwd, _ := os.Getwd()
-	// 注意：测试运行时通常在 tests/integration 目录，需要跳回根目录
-	dbPath := filepath.Join(cwd, "..", "..", "finance.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Fatalf("production db not found at: %s", dbPath)
+	root := filepath.Join(cwd, "..", "..")
+	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
+	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	dbPath := support.DefaultDBPath(root)
+	if dbPath == "" {
+		t.Skip("database is not configured; skipping production live audit")
 	}
 
 	company := "南京优集数据科技有限公司"
@@ -29,7 +35,7 @@ func TestProductionLiveAudit(t *testing.T) {
 	}
 
 	// 建立一个直接连接用于获取真值 (Ground Truth)
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := dbpkg.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatalf("failed to open raw db: %v", err)
 	}
@@ -54,10 +60,7 @@ func TestProductionLiveAudit(t *testing.T) {
 	})
 
 	t.Run("Identity_EntityMining_LiangMengYao", func(t *testing.T) {
-		// 审计穿透：针对梁梦瑶进行身份与金额双重断言
-		var expected float64
-		// 核心修正：只计算贷方发生额，避免复式记账导致的金额翻倍
-		err := db.QueryRow("SELECT SUM(amount) FROM journal WHERE summary LIKE '%梁梦瑶%' AND direction = '贷' AND DATE(voucher_date) >= DATE('2026-02-01') AND DATE(voucher_date) <= DATE('2026-02-28')").Scan(&expected)
+		expectedPeriod, expected, err := latestEmployeeExpense(db, "梁梦瑶")
 		if err != nil {
 			t.Fatalf("SQL ground truth failed: %v", err)
 		}
@@ -67,24 +70,25 @@ func TestProductionLiveAudit(t *testing.T) {
 		if !res.Success {
 			t.Errorf("Engine reported failure: %s", res.Message)
 		}
-		
+
 		// 1. 金额断言
 		expectedStr := fmt.Sprintf("%.2f", expected)
 		if !strings.Contains(res.Message, expectedStr) {
 			t.Errorf("Message does not contain expected amount %s. Got: %s", expectedStr, res.Message)
 		}
-		
+
 		// 2. 身份角色断言 (必须识别为 employee)
 		if !strings.Contains(res.Message, "[employee]") {
 			t.Errorf("Expected role [employee] for Liang Mengyao, but not found in message: %s", res.Message)
 		}
-		fmt.Printf("[Check] Entity Liang - Role: employee, Amount: %s [PASS]\n", expectedStr)
+		fmt.Printf("[Check] Entity Liang - Period: %s, Role: employee, Amount: %s [PASS]\n", expectedPeriod, expectedStr)
 	})
 
 	t.Run("Identity_Retrospection_WeiWeiBao", func(t *testing.T) {
-		// 验证回溯逻辑：魏伟保在2月无记录，但在1月有
-		// 审计真值：10277.19 (基于之前的分录结构分析)
-		expected := 10277.19
+		expectedPeriod, expected, err := latestEmployeeExpense(db, "魏伟保")
+		if err != nil {
+			t.Fatalf("SQL ground truth failed: %v", err)
+		}
 
 		res := engine.Query("魏伟保产生了多少费用？")
 
@@ -102,7 +106,7 @@ func TestProductionLiveAudit(t *testing.T) {
 		if !strings.Contains(res.Message, "[employee]") {
 			t.Errorf("Expected role [employee] for Wei Weibao, but not found in message: %s", res.Message)
 		}
-		fmt.Printf("[Check] Entity Wei - Retrospection PASS, Role: employee, Amount: %s [PASS]\n", expectedStr)
+		fmt.Printf("[Check] Entity Wei - Period: %s, Role: employee, Amount: %s [PASS]\n", expectedPeriod, expectedStr)
 	})
 
 	t.Run("Tax_Calculation_OutputTax", func(t *testing.T) {
@@ -144,4 +148,31 @@ func TestProductionLiveAudit(t *testing.T) {
 			fmt.Printf("[Check] Large Bank Inflow - Identified correctly in direct response. [AUDIT PASS]\n")
 		}
 	})
+}
+
+func latestEmployeeExpense(db *sql.DB, name string) (string, float64, error) {
+	var period string
+	if err := db.QueryRow(`
+SELECT period
+FROM journal
+WHERE summary LIKE '%' || ? || '%'
+  AND direction = '贷'
+ORDER BY voucher_date DESC
+LIMIT 1
+`, name).Scan(&period); err != nil {
+		return "", 0, err
+	}
+
+	var amount float64
+	if err := db.QueryRow(`
+SELECT COALESCE(SUM(credit_amount), 0)
+FROM journal
+WHERE summary LIKE '%' || ? || '%'
+  AND direction = '贷'
+  AND account_code LIKE '1002%'
+  AND period = ?
+`, name, period).Scan(&amount); err != nil {
+		return "", 0, err
+	}
+	return period, amount, nil
 }

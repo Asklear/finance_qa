@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"financeqa/internal/query"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"os"
 
 	_ "modernc.org/sqlite"
 
@@ -27,7 +27,7 @@ func TestFallbackUXAndHinting(t *testing.T) {
 
 	t.Run("NonsenseQuery_ShouldProvideRichContext", func(t *testing.T) {
 		res := eng.Query("今天天气不错，帮我看看有没有什么要注意的")
-		
+
 		if res.Success {
 			t.Errorf("expected Success=false for nonsense query, got true")
 		}
@@ -45,7 +45,7 @@ func TestFallbackUXAndHinting(t *testing.T) {
 		if !ok || len(accounts) == 0 {
 			t.Fatalf("expected available_accounts in fallback data, check if company '模拟财务' exists in DB")
 		}
-		
+
 		foundTarget := false
 		targets := []string{"研发支出", "人工", "货币资金", "银行存款", "应收", "支出", "费用"}
 		for _, acc := range accounts {
@@ -55,7 +55,9 @@ func TestFallbackUXAndHinting(t *testing.T) {
 					break
 				}
 			}
-			if foundTarget { break }
+			if foundTarget {
+				break
+			}
 		}
 		if !foundTarget {
 			t.Errorf("expected valid accounting subjects in available accounts, got %v", accounts)
@@ -73,14 +75,14 @@ func TestFallbackUXAndHinting(t *testing.T) {
 
 	t.Run("AmbiguousEntity_ShouldGuideLLM", func(t *testing.T) {
 		res := eng.Query("核心供应商A")
-		
+
 		// 对于仅有实体无意图的查询，如果是 Fallback 成功（返回了提示），则 Success 为 false
 		if !res.Success {
 			if hint, ok := res.Data["hint"].(string); !ok || !strings.Contains(hint, "具体") {
 				t.Errorf("expected hint to guide user towards specific actions")
 			}
 		}
-		
+
 		// 即使失败，也应有逻辑日志说明身份识别结果
 		logs := strings.Join(res.CalculationLogs, "\n")
 		if !strings.Contains(logs, "识别") {
@@ -110,11 +112,16 @@ func setupFallbackTestDB(t *testing.T) string {
 		"交易查询，模拟财务科技有限公司，125922640010001，人民币，20260101-20260228，共93笔_20260401121229.xlsx",
 	}
 
+	imported := 0
 	for _, f := range files {
 		path := filepath.Join(testDataRoot, f)
 		if _, err := os.Stat(path); err == nil {
 			importer.ImportFile(context.Background(), dbPath, path, false)
+			imported++
 		}
+	}
+	if imported == 0 {
+		t.Skip("fallback fixture files are not present in this workspace")
 	}
 
 	return dbPath

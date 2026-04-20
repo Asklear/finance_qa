@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 type SQLiteRepository struct {
@@ -25,15 +23,16 @@ func (r *SQLiteRepository) CreateDimension(ctx context.Context, dim Dimension) (
 	if err != nil {
 		return Dimension{}, err
 	}
-	res, err := r.db.ExecContext(ctx, `
+	row := r.db.QueryRowContext(ctx, `
 INSERT INTO dimensions (code, name, type, description, is_hierarchical, is_active, metadata, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, code, name, type, description, is_hierarchical, is_active, metadata, created_at, updated_at
 `, dim.Code, dim.Name, string(dim.Type), dim.Description, dim.IsHierarchical, dim.IsActive, metadata, now, now)
+	item, err := scanDimension(row)
 	if err != nil {
 		return Dimension{}, mapSQLErr(err)
 	}
-	id, _ := res.LastInsertId()
-	return r.GetDimensionByID(ctx, id)
+	return item, nil
 }
 
 func (r *SQLiteRepository) GetDimensionByID(ctx context.Context, id int64) (Dimension, error) {
@@ -145,15 +144,16 @@ func (r *SQLiteRepository) CreateMember(ctx context.Context, member DimensionMem
 	if err != nil {
 		return DimensionMember{}, err
 	}
-	res, err := r.db.ExecContext(ctx, `
+	row := r.db.QueryRowContext(ctx, `
 INSERT INTO dimension_members (dimension_id, code, name, parent_id, level, path, is_active, sort_order, metadata, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, dimension_id, code, name, parent_id, level, path, is_active, sort_order, metadata, created_at, updated_at
 `, member.DimensionID, member.Code, member.Name, member.ParentID, member.Level, member.Path, member.IsActive, member.SortOrder, metadata, now, now)
+	item, err := scanMember(row)
 	if err != nil {
 		return DimensionMember{}, mapSQLErr(err)
 	}
-	id, _ := res.LastInsertId()
-	return r.GetMemberByID(ctx, id)
+	return item, nil
 }
 
 func (r *SQLiteRepository) GetMemberByID(ctx context.Context, id int64) (DimensionMember, error) {
@@ -281,15 +281,16 @@ ORDER BY id
 
 func (r *SQLiteRepository) CreateMappingRule(ctx context.Context, rule MappingRule) (MappingRule, error) {
 	now := time.Now().UTC()
-	res, err := r.db.ExecContext(ctx, `
+	row := r.db.QueryRowContext(ctx, `
 INSERT INTO mapping_rules (company, rule_name, priority, account_code_pattern, account_name_pattern, summary_pattern, counterparty_pattern, dimension_code, member_code, allocation_ratio, valid_from, valid_to, is_active, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, company, rule_name, priority, account_code_pattern, account_name_pattern, summary_pattern, counterparty_pattern, dimension_code, member_code, allocation_ratio, valid_from, valid_to, is_active, created_at
 `, rule.Company, rule.RuleName, rule.Priority, rule.AccountCodePattern, rule.AccountNamePattern, rule.SummaryPattern, rule.CounterpartyPattern, rule.DimensionCode, rule.MemberCode, rule.AllocationRatio, rule.ValidFrom, rule.ValidTo, rule.IsActive, now)
+	item, err := scanMappingRule(row)
 	if err != nil {
 		return MappingRule{}, mapSQLErr(err)
 	}
-	id, _ := res.LastInsertId()
-	return r.GetMappingRuleByID(ctx, id)
+	return item, nil
 }
 
 func (r *SQLiteRepository) GetMappingRuleByID(ctx context.Context, id int64) (MappingRule, error) {

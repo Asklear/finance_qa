@@ -54,7 +54,7 @@ func TestRunInitDBCommandCreatesDatabase(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "finance.db")
+	dbPath := filepath.Join(tmp, "initdb.sqlite")
 
 	exitCode, _, stderr := runCLI("init-db", "--db", dbPath)
 	if exitCode != 0 {
@@ -90,7 +90,7 @@ func TestRunQueryCommandReturnsAnswer(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "finance.db")
+	dbPath := filepath.Join(tmp, "query.sqlite")
 	if err := seedQueryDB(dbPath); err != nil {
 		t.Fatalf("seed query db: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRunHostDataCommandReturnsPayload(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "finance.db")
+	dbPath := filepath.Join(tmp, "hostdata.sqlite")
 	if err := seedQueryDB(dbPath); err != nil {
 		t.Fatalf("seed query db: %v", err)
 	}
@@ -128,12 +128,15 @@ func TestRunHostDataCommandReturnsPayload(t *testing.T) {
 func TestRunImportCommandLoadsFixture(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "config-show.sqlite")
 	if err := sqlBootstrap(dbPath); err != nil {
 		t.Fatalf("bootstrap db: %v", err)
 	}
 
 	src := filepath.Join("..", "testdata", "交易查询，模拟财务科技有限公司，125922640010001，人民币，20260101-20260228，共93笔_20260401121229.xlsx")
+	if _, err := os.Stat(src); err != nil {
+		t.Skipf("fixture not present: %v", err)
+	}
 	exitCode, stdout, stderr := runCLI("import", "--db", dbPath, src)
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%s", exitCode, stderr)
@@ -160,7 +163,7 @@ func TestRunImportCommandLoadsFixture(t *testing.T) {
 func TestRunDimensionsCommands(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "dimensions.sqlite")
 	if err := sqlBootstrap(dbPath); err != nil {
 		t.Fatalf("bootstrap db: %v", err)
 	}
@@ -187,13 +190,16 @@ func TestRunDimensionsCommands(t *testing.T) {
 func TestRunSyncImportViaDirectory(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "import.sqlite")
 	if err := sqlBootstrap(dbPath); err != nil {
 		t.Fatalf("bootstrap db: %v", err)
 	}
 
 	dir := t.TempDir()
 	src := filepath.Join("..", "testdata", "交易查询，模拟财务科技有限公司，125922640010001，人民币，20260101-20260228，共93笔_20260401121229.xlsx")
+	if _, err := os.Stat(src); err != nil {
+		t.Skipf("fixture not present: %v", err)
+	}
 	dst := filepath.Join(dir, filepath.Base(src))
 	content, err := os.ReadFile(src)
 	if err != nil {
@@ -215,7 +221,7 @@ func TestRunSyncImportViaDirectory(t *testing.T) {
 func TestRunSyncSkipsHiddenAndUnsupportedFiles(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "sync.sqlite")
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".ignored.xlsx"), []byte("ignored"), 0o644); err != nil {
 		t.Fatalf("write hidden fixture: %v", err)
@@ -236,7 +242,7 @@ func TestRunSyncSkipsHiddenAndUnsupportedFiles(t *testing.T) {
 func TestRunDimensionsImportExportCommands(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "host-payload.sqlite")
 	if err := sqlBootstrap(dbPath); err != nil {
 		t.Fatalf("bootstrap db: %v", err)
 	}

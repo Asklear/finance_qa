@@ -1,7 +1,7 @@
 # 财务问答测试报告（15题）
 
 - 测试时间: 2026-04-10
-- 测试命令: `financeqa query --db finance.db --company 南京优集 "<问题>"`
+- 测试命令: `financeqa query --company 南京优集 "<问题>"`
 - 说明: `xxx客户` 替换为 `C0147CF000KKYKZ`（来自 `entities` 表的真实 customer）；`xx月` 替换为 `2月`。项目维度暂无可用真实项目编码。
 
 - 总题数: 15

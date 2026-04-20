@@ -7,6 +7,18 @@ import (
 	"strings"
 )
 
+const (
+	routerGroupHRCost      = "hr_cost"
+	routerGroupHealth      = "health"
+	routerGroupFallback    = "fallback"
+	routerGroupAnalysis    = "analysis"
+	routerGroupHostPayload = "host_payload"
+	routerGroupMonthly     = "monthly_summary"
+	metricKeyRevenue       = "revenue"
+	metricKeyCost          = "cost"
+	metricKeyProfit        = "profit"
+)
+
 // RuleConfig 定义查询层可调规则（默认值 + 外部覆盖）。
 type RuleConfig struct {
 	GenericMetricStopwords         []string            `json:"generic_metric_stopwords"`
@@ -28,9 +40,24 @@ type RuleConfig struct {
 	RoleMixedMinPositiveRoles      int                 `json:"role_mixed_min_positive_roles"`
 	RoleMinPrimaryScore            float64             `json:"role_min_primary_score"`
 	RoleMinConfidence              float64             `json:"role_min_confidence"`
+
+	IntentKeywordLexicon                      map[string][]string `json:"-"`
+	MetricKeywordLexicon                      map[string][]string `json:"-"`
+	HRBreakdownKeywordLexicon                 []string            `json:"-"`
+	CounterpartyClassificationQuestionLexicon []string            `json:"-"`
+	ProfitSingleViewBlockKeywordLexicon       []string            `json:"-"`
+	CounterpartyRoleLexicon                   map[string][]string `json:"-"`
+	CounterpartyTaxLexicon                    map[string][]string `json:"-"`
+	InternalPartyOrgSuffixLexicon             []string            `json:"-"`
+	InternalPartyAccountContextKeywordLexicon []string            `json:"-"`
 }
 
 type ruleConfigFile struct {
+	SchemaVersion int                         `json:"schema_version"`
+	Router        routerRuleConfigFile        `json:"router"`
+	Counterparty  counterpartyRuleConfigFile  `json:"counterparty"`
+	InternalParty internalPartyRuleConfigFile `json:"internal_party"`
+
 	GenericMetricStopwords         []string            `json:"generic_metric_stopwords"`
 	IntentARAPKeywords             []string            `json:"intent_arap_keywords"`
 	IntentHRCostKeywords           []string            `json:"intent_hr_cost_keywords"`
@@ -52,8 +79,49 @@ type ruleConfigFile struct {
 	RoleMinConfidence              *float64            `json:"role_min_confidence"`
 }
 
+type routerRuleConfigFile struct {
+	Stopwords                                  routerStopwordsRuleConfigFile         `json:"stopwords"`
+	Intents                                    map[string]routerIntentRuleConfigFile `json:"intents"`
+	MetricKeywords                             map[string][]string                   `json:"metric_keywords"`
+	HRBreakdownKeywords                        []string                              `json:"hr_breakdown_keywords"`
+	CounterpartyClassificationQuestionKeywords []string                              `json:"counterparty_classification_question_keywords"`
+	ProfitSingleViewBlockKeywords              []string                              `json:"profit_single_view_block_keywords"`
+	FallbackMonthlyExpenseKeywords             []string                              `json:"fallback_monthly_expense_keywords"`
+}
+
+type routerStopwordsRuleConfigFile struct {
+	GenericMetric []string `json:"generic_metric"`
+}
+
+type routerIntentRuleConfigFile struct {
+	Keywords            []string `json:"keywords"`
+	Priority            *int     `json:"priority"`
+	MinConfidence       *float64 `json:"min_confidence"`
+	Conflicts           []string `json:"conflicts"`
+	HighPriorityPhrases []string `json:"high_priority_phrases"`
+}
+
+type counterpartyRuleConfigFile struct {
+	Roles      map[string][]string                 `json:"roles"`
+	Tax        map[string][]string                 `json:"tax"`
+	Thresholds counterpartyThresholdRuleConfigFile `json:"thresholds"`
+}
+
+type counterpartyThresholdRuleConfigFile struct {
+	MixedMinRatio         *float64 `json:"mixed_min_ratio"`
+	MixedMinPositiveScore *float64 `json:"mixed_min_positive_score"`
+	MixedMinPositiveRoles *int     `json:"mixed_min_positive_roles"`
+	MinPrimaryScore       *float64 `json:"min_primary_score"`
+	MinConfidence         *float64 `json:"min_confidence"`
+}
+
+type internalPartyRuleConfigFile struct {
+	OrgSuffixes            []string `json:"org_suffixes"`
+	AccountContextKeywords []string `json:"account_context_keywords"`
+}
+
 func defaultRuleConfig() RuleConfig {
-	return RuleConfig{
+	cfg := RuleConfig{
 		GenericMetricStopwords: []string{
 			"收入", "营收", "销售额",
 			"成本", "总成本", "人力成本", "工资成本", "薪酬成本",
@@ -99,14 +167,16 @@ func defaultRuleConfig() RuleConfig {
 			string(IntentARAPQuery): {"预收款", "预付款", "应收账款", "应付账款"},
 		},
 		IntentPriority: map[string]int{
-			string(IntentHostPayload):    120,
-			string(IntentARAPQuery):      100,
-			string(IntentTaxQuery):       90,
-			string(IntentMonthlySummary): 70,
-			string(IntentAnalysis):       50,
-			string(IntentFallback):       40,
-			string(IntentPrecise):        20,
-			string(IntentGeneral):        10,
+			string(IntentHostPayload):           120,
+			string(IntentLargeTransactionQuery): 110,
+			string(IntentIdentityQuery):         105,
+			string(IntentARAPQuery):             100,
+			string(IntentTaxQuery):              90,
+			string(IntentMonthlySummary):        70,
+			string(IntentAnalysis):              50,
+			string(IntentFallback):              40,
+			string(IntentPrecise):               20,
+			string(IntentGeneral):               10,
 		},
 		IntentConflicts: map[string][]string{
 			string(IntentARAPQuery):      {string(IntentFallback), string(IntentGeneral)},
@@ -125,13 +195,48 @@ func defaultRuleConfig() RuleConfig {
 		RoleMixedMinPositiveRoles: 2,
 		RoleMinPrimaryScore:       0.5,
 		RoleMinConfidence:         0.0,
+		IntentKeywordLexicon: map[string][]string{
+			string(IntentARAPQuery):             {"应收", "应付", "账款", "往来款"},
+			routerGroupHRCost:                   {"人力成本", "工资成本", "薪酬成本", "应付职工薪酬"},
+			string(IntentTaxQuery):              {"税", "销项", "进项", "增值税"},
+			routerGroupHealth:                   {"健康度", "健康", "怎么样"},
+			string(IntentFallback):              {"健康度", "健康", "怎么样", "供应商多少", "多少供应商", "供应商有多少", "人力成本", "工资成本", "薪酬成本", "应付职工薪酬", "整体支出", "总支出", "全部支出"},
+			string(IntentAnalysis):              {"分析", "评分", "评价", "风险", "分析下"},
+			string(IntentHostPayload):           {"宿主llm", "hostllm", "原始数据", "全量财报", "财报原始", "llm数据包"},
+			string(IntentMonthlySummary):        {"概括", "总结", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额"},
+			string(IntentLargeTransactionQuery): {"最大", "单笔", "流入对手方", "流出对手方"},
+			string(IntentIdentityQuery):         {"是谁", "身份", "干嘛的", "哪里的", "谁是"},
+			string(IntentPrecise):               {"期末", "余额", "是多少", "查询余额", "还有多少"},
+		},
+		MetricKeywordLexicon: map[string][]string{
+			metricKeyRevenue: {"收入", "营收", "销售额"},
+			metricKeyCost:    {"成本"},
+			metricKeyProfit:  {"利润"},
+		},
+		HRBreakdownKeywordLexicon:                 []string{"工资", "社保", "公积金", "分别", "拆分", "拆开", "明细", "构成"},
+		CounterpartyClassificationQuestionLexicon: []string{"成本还是收入", "是成本还是收入", "供应商付款还是预收款", "客户还是供应商"},
+		ProfitSingleViewBlockKeywordLexicon:       []string{"现金流", "回款", "到账", "银行卡", "差异", "为什么"},
+		CounterpartyRoleLexicon: map[string][]string{
+			string(CounterpartyCustomer): {"应收", "回款", "收款", "结算款", "销售", "收入", "主营业务收入", "营业收入", "预收", "合同资产", "客户", "1122", "1121"},
+			string(CounterpartySupplier): {"应付", "付款", "采购", "成本", "材料", "供应商", "外包", "2202", "预付账款", "1123", "112301"},
+			string(CounterpartyEmployee): {"工资", "薪酬", "社保", "公积金", "报销", "差旅", "福利", "餐补", "伙食", "应付职工薪酬", "2211"},
+		},
+		CounterpartyTaxLexicon: map[string][]string{
+			string(TaxSideOutput): {"销项税", "222101", "销项"},
+			string(TaxSideInput):  {"进项税", "222102", "进项"},
+		},
+		InternalPartyOrgSuffixLexicon:             []string{"分公司", "子公司", "事业部", "办事处", "分部", "总部", "总公司"},
+		InternalPartyAccountContextKeywordLexicon: []string{"应付职工薪酬", "其他应收款", "其他应付款", "内部往来"},
 	}
+	cfg.finalize()
+	return cfg
 }
 
 func getRuleConfig() RuleConfig {
 	cfg := defaultRuleConfig()
 	mergeRuleConfigFromFile(&cfg)
 	mergeRuleConfigFromEnv(&cfg)
+	cfg.finalize()
 	return cfg
 }
 
@@ -153,32 +258,39 @@ func mergeRuleConfigFromFile(cfg *RuleConfig) {
 	if err := json.Unmarshal(content, &raw); err != nil {
 		return
 	}
+	applyLegacyRuleConfig(cfg, raw)
+	if raw.SchemaVersion >= 2 {
+		applyNestedRuleConfig(cfg, raw)
+	}
+}
+
+func applyLegacyRuleConfig(cfg *RuleConfig, raw ruleConfigFile) {
 	if len(raw.GenericMetricStopwords) > 0 {
 		cfg.GenericMetricStopwords = dedupeNonEmpty(raw.GenericMetricStopwords)
 	}
 	if len(raw.IntentARAPKeywords) > 0 {
-		cfg.IntentARAPKeywords = dedupeNonEmpty(raw.IntentARAPKeywords)
+		setIntentKeywordGroup(cfg, string(IntentARAPQuery), raw.IntentARAPKeywords)
 	}
 	if len(raw.IntentHRCostKeywords) > 0 {
-		cfg.IntentHRCostKeywords = dedupeNonEmpty(raw.IntentHRCostKeywords)
+		setIntentKeywordGroup(cfg, routerGroupHRCost, raw.IntentHRCostKeywords)
 	}
 	if len(raw.IntentTaxKeywords) > 0 {
-		cfg.IntentTaxKeywords = dedupeNonEmpty(raw.IntentTaxKeywords)
+		setIntentKeywordGroup(cfg, string(IntentTaxQuery), raw.IntentTaxKeywords)
 	}
 	if len(raw.IntentHealthKeywords) > 0 {
-		cfg.IntentHealthKeywords = dedupeNonEmpty(raw.IntentHealthKeywords)
+		setIntentKeywordGroup(cfg, routerGroupHealth, raw.IntentHealthKeywords)
 	}
 	if len(raw.IntentFallbackKeywords) > 0 {
-		cfg.IntentFallbackKeywords = dedupeNonEmpty(raw.IntentFallbackKeywords)
+		setIntentKeywordGroup(cfg, string(IntentFallback), raw.IntentFallbackKeywords)
 	}
 	if len(raw.IntentAnalysisKeywords) > 0 {
-		cfg.IntentAnalysisKeywords = dedupeNonEmpty(raw.IntentAnalysisKeywords)
+		setIntentKeywordGroup(cfg, string(IntentAnalysis), raw.IntentAnalysisKeywords)
 	}
 	if len(raw.IntentHostPayloadKeywords) > 0 {
-		cfg.IntentHostPayloadKeywords = dedupeNonEmpty(raw.IntentHostPayloadKeywords)
+		setIntentKeywordGroup(cfg, string(IntentHostPayload), raw.IntentHostPayloadKeywords)
 	}
 	if len(raw.IntentMonthlySummaryKeywords) > 0 {
-		cfg.IntentMonthlySummaryKeywords = dedupeNonEmpty(raw.IntentMonthlySummaryKeywords)
+		setIntentKeywordGroup(cfg, string(IntentMonthlySummary), raw.IntentMonthlySummaryKeywords)
 	}
 	if len(raw.FallbackMonthlyExpenseKeywords) > 0 {
 		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(raw.FallbackMonthlyExpenseKeywords)
@@ -212,33 +324,102 @@ func mergeRuleConfigFromFile(cfg *RuleConfig) {
 	}
 }
 
+func applyNestedRuleConfig(cfg *RuleConfig, raw ruleConfigFile) {
+	if len(raw.Router.Stopwords.GenericMetric) > 0 {
+		cfg.GenericMetricStopwords = dedupeNonEmpty(raw.Router.Stopwords.GenericMetric)
+	}
+	for intentKey, intentCfg := range raw.Router.Intents {
+		if len(intentCfg.Keywords) > 0 {
+			setIntentKeywordGroup(cfg, intentKey, intentCfg.Keywords)
+		}
+		if intentCfg.Priority != nil {
+			cfg.IntentPriority = ensureIntMap(cfg.IntentPriority)
+			cfg.IntentPriority[strings.TrimSpace(intentKey)] = *intentCfg.Priority
+		}
+		if len(intentCfg.Conflicts) > 0 {
+			cfg.IntentConflicts = ensureStringSliceMap(cfg.IntentConflicts)
+			cfg.IntentConflicts[strings.TrimSpace(intentKey)] = dedupeNonEmpty(intentCfg.Conflicts)
+		}
+		if intentCfg.MinConfidence != nil {
+			cfg.IntentMinConfidence = ensureFloatMap(cfg.IntentMinConfidence)
+			cfg.IntentMinConfidence[strings.TrimSpace(intentKey)] = *intentCfg.MinConfidence
+		}
+		if len(intentCfg.HighPriorityPhrases) > 0 {
+			cfg.HighPriorityPhrases = ensureStringSliceMap(cfg.HighPriorityPhrases)
+			cfg.HighPriorityPhrases[strings.TrimSpace(intentKey)] = dedupeNonEmpty(intentCfg.HighPriorityPhrases)
+		}
+	}
+	if len(raw.Router.MetricKeywords) > 0 {
+		cfg.MetricKeywordLexicon = normalizeStringSliceMap(raw.Router.MetricKeywords)
+	}
+	if len(raw.Router.HRBreakdownKeywords) > 0 {
+		cfg.HRBreakdownKeywordLexicon = dedupeNonEmpty(raw.Router.HRBreakdownKeywords)
+	}
+	if len(raw.Router.CounterpartyClassificationQuestionKeywords) > 0 {
+		cfg.CounterpartyClassificationQuestionLexicon = dedupeNonEmpty(raw.Router.CounterpartyClassificationQuestionKeywords)
+	}
+	if len(raw.Router.ProfitSingleViewBlockKeywords) > 0 {
+		cfg.ProfitSingleViewBlockKeywordLexicon = dedupeNonEmpty(raw.Router.ProfitSingleViewBlockKeywords)
+	}
+	if len(raw.Router.FallbackMonthlyExpenseKeywords) > 0 {
+		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(raw.Router.FallbackMonthlyExpenseKeywords)
+	}
+	if len(raw.Counterparty.Roles) > 0 {
+		cfg.CounterpartyRoleLexicon = normalizeStringSliceMap(raw.Counterparty.Roles)
+	}
+	if len(raw.Counterparty.Tax) > 0 {
+		cfg.CounterpartyTaxLexicon = normalizeStringSliceMap(raw.Counterparty.Tax)
+	}
+	if raw.Counterparty.Thresholds.MixedMinRatio != nil {
+		cfg.RoleMixedMinRatio = *raw.Counterparty.Thresholds.MixedMinRatio
+	}
+	if raw.Counterparty.Thresholds.MixedMinPositiveScore != nil {
+		cfg.RoleMixedMinPositiveScore = *raw.Counterparty.Thresholds.MixedMinPositiveScore
+	}
+	if raw.Counterparty.Thresholds.MixedMinPositiveRoles != nil {
+		cfg.RoleMixedMinPositiveRoles = *raw.Counterparty.Thresholds.MixedMinPositiveRoles
+	}
+	if raw.Counterparty.Thresholds.MinPrimaryScore != nil {
+		cfg.RoleMinPrimaryScore = *raw.Counterparty.Thresholds.MinPrimaryScore
+	}
+	if raw.Counterparty.Thresholds.MinConfidence != nil {
+		cfg.RoleMinConfidence = *raw.Counterparty.Thresholds.MinConfidence
+	}
+	if len(raw.InternalParty.OrgSuffixes) > 0 {
+		cfg.InternalPartyOrgSuffixLexicon = dedupeNonEmpty(raw.InternalParty.OrgSuffixes)
+	}
+	if len(raw.InternalParty.AccountContextKeywords) > 0 {
+		cfg.InternalPartyAccountContextKeywordLexicon = dedupeNonEmpty(raw.InternalParty.AccountContextKeywords)
+	}
+}
+
 func mergeRuleConfigFromEnv(cfg *RuleConfig) {
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_METRIC_STOPWORDS")); raw != "" {
 		cfg.GenericMetricStopwords = dedupeNonEmpty(strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_ARAP_KEYWORDS")); raw != "" {
-		cfg.IntentARAPKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, string(IntentARAPQuery), strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_HR_COST_KEYWORDS")); raw != "" {
-		cfg.IntentHRCostKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, routerGroupHRCost, strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_TAX_KEYWORDS")); raw != "" {
-		cfg.IntentTaxKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, string(IntentTaxQuery), strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_HEALTH_KEYWORDS")); raw != "" {
-		cfg.IntentHealthKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, routerGroupHealth, strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_FALLBACK_KEYWORDS")); raw != "" {
-		cfg.IntentFallbackKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, string(IntentFallback), strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_ANALYSIS_KEYWORDS")); raw != "" {
-		cfg.IntentAnalysisKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, string(IntentAnalysis), strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_HOST_PAYLOAD_KEYWORDS")); raw != "" {
-		cfg.IntentHostPayloadKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, string(IntentHostPayload), strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_INTENT_MONTHLY_SUMMARY_KEYWORDS")); raw != "" {
-		cfg.IntentMonthlySummaryKeywords = dedupeNonEmpty(strings.Split(raw, ","))
+		setIntentKeywordGroup(cfg, string(IntentMonthlySummary), strings.Split(raw, ","))
 	}
 	if raw := strings.TrimSpace(os.Getenv("FINANCEQA_FALLBACK_MONTHLY_EXPENSE_KEYWORDS")); raw != "" {
 		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(strings.Split(raw, ","))
@@ -270,6 +451,98 @@ func mergeRuleConfigFromEnv(cfg *RuleConfig) {
 	if v, ok := parseEnvFloat("FINANCEQA_ROLE_MIN_CONFIDENCE"); ok {
 		cfg.RoleMinConfidence = v
 	}
+}
+
+func (cfg *RuleConfig) finalize() {
+	cfg.GenericMetricStopwords = dedupeNonEmpty(cfg.GenericMetricStopwords)
+	cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(cfg.FallbackMonthlyExpenseKeywords)
+	cfg.HighPriorityPhrases = normalizeStringSliceMap(cfg.HighPriorityPhrases)
+	cfg.IntentPriority = normalizeIntMap(cfg.IntentPriority)
+	cfg.IntentConflicts = normalizeStringSliceMap(cfg.IntentConflicts)
+	cfg.IntentMinConfidence = normalizeFloatMap(cfg.IntentMinConfidence)
+
+	cfg.IntentKeywordLexicon = normalizeStringSliceMap(cfg.IntentKeywordLexicon)
+	syncKnownIntentKeywordGroup(cfg, string(IntentARAPQuery), &cfg.IntentARAPKeywords)
+	syncKnownIntentKeywordGroup(cfg, routerGroupHRCost, &cfg.IntentHRCostKeywords)
+	syncKnownIntentKeywordGroup(cfg, string(IntentTaxQuery), &cfg.IntentTaxKeywords)
+	syncKnownIntentKeywordGroup(cfg, routerGroupHealth, &cfg.IntentHealthKeywords)
+	syncKnownIntentKeywordGroup(cfg, string(IntentFallback), &cfg.IntentFallbackKeywords)
+	syncKnownIntentKeywordGroup(cfg, string(IntentAnalysis), &cfg.IntentAnalysisKeywords)
+	syncKnownIntentKeywordGroup(cfg, string(IntentHostPayload), &cfg.IntentHostPayloadKeywords)
+	syncKnownIntentKeywordGroup(cfg, string(IntentMonthlySummary), &cfg.IntentMonthlySummaryKeywords)
+
+	cfg.MetricKeywordLexicon = normalizeStringSliceMap(cfg.MetricKeywordLexicon)
+	cfg.HRBreakdownKeywordLexicon = dedupeNonEmpty(cfg.HRBreakdownKeywordLexicon)
+	cfg.CounterpartyClassificationQuestionLexicon = dedupeNonEmpty(cfg.CounterpartyClassificationQuestionLexicon)
+	cfg.ProfitSingleViewBlockKeywordLexicon = dedupeNonEmpty(cfg.ProfitSingleViewBlockKeywordLexicon)
+	cfg.CounterpartyRoleLexicon = normalizeStringSliceMap(cfg.CounterpartyRoleLexicon)
+	cfg.CounterpartyTaxLexicon = normalizeStringSliceMap(cfg.CounterpartyTaxLexicon)
+	cfg.InternalPartyOrgSuffixLexicon = dedupeNonEmpty(cfg.InternalPartyOrgSuffixLexicon)
+	cfg.InternalPartyAccountContextKeywordLexicon = dedupeNonEmpty(cfg.InternalPartyAccountContextKeywordLexicon)
+}
+
+func setIntentKeywordGroup(cfg *RuleConfig, group string, values []string) {
+	normalized := dedupeNonEmpty(values)
+	if len(normalized) == 0 {
+		return
+	}
+	cfg.IntentKeywordLexicon = ensureStringSliceMap(cfg.IntentKeywordLexicon)
+	cfg.IntentKeywordLexicon[strings.TrimSpace(group)] = normalized
+	switch strings.TrimSpace(group) {
+	case string(IntentARAPQuery):
+		cfg.IntentARAPKeywords = normalized
+	case routerGroupHRCost:
+		cfg.IntentHRCostKeywords = normalized
+	case string(IntentTaxQuery):
+		cfg.IntentTaxKeywords = normalized
+	case routerGroupHealth:
+		cfg.IntentHealthKeywords = normalized
+	case string(IntentFallback):
+		cfg.IntentFallbackKeywords = normalized
+	case string(IntentAnalysis):
+		cfg.IntentAnalysisKeywords = normalized
+	case string(IntentHostPayload):
+		cfg.IntentHostPayloadKeywords = normalized
+	case string(IntentMonthlySummary):
+		cfg.IntentMonthlySummaryKeywords = normalized
+	}
+}
+
+func syncKnownIntentKeywordGroup(cfg *RuleConfig, group string, target *[]string) {
+	if values, ok := cfg.IntentKeywordLexicon[group]; ok && len(values) > 0 {
+		normalized := dedupeNonEmpty(values)
+		*target = normalized
+		cfg.IntentKeywordLexicon[group] = normalized
+		return
+	}
+	normalized := dedupeNonEmpty(*target)
+	*target = normalized
+	if len(normalized) == 0 {
+		return
+	}
+	cfg.IntentKeywordLexicon = ensureStringSliceMap(cfg.IntentKeywordLexicon)
+	cfg.IntentKeywordLexicon[group] = normalized
+}
+
+func ensureStringSliceMap(input map[string][]string) map[string][]string {
+	if input == nil {
+		return map[string][]string{}
+	}
+	return input
+}
+
+func ensureIntMap(input map[string]int) map[string]int {
+	if input == nil {
+		return map[string]int{}
+	}
+	return input
+}
+
+func ensureFloatMap(input map[string]float64) map[string]float64 {
+	if input == nil {
+		return map[string]float64{}
+	}
+	return input
 }
 
 func parseEnvFloat(key string) (float64, bool) {

@@ -76,7 +76,7 @@ func TestEntityYearCumulativeUsesYearRangeInsteadOfSingleMonth(t *testing.T) {
 	}
 }
 
-func TestEntityCoreMetricStillUsesMandatoryDualPerspective(t *testing.T) {
+func TestProfitQuestionUsesSingleAccrualAnswer(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -84,16 +84,19 @@ func TestEntityCoreMetricStillUsesMandatoryDualPerspective(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("飞未云科2026年2月收入、成本、利润分别是多少？")
+	res := engine.Query("2026年2月利润是多少？")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-
-	required := []string{"先说结论", "银行卡上看", "账上看", "差异最大的3个原因", "建议动作"}
-	for _, section := range required {
-		if !strings.Contains(res.Message, section) {
-			t.Fatalf("mandatory boss dual-perspective section missing %q, message=%s", section, res.Message)
-		}
+	if strings.Contains(res.Message, "银行卡上看") || strings.Contains(res.Message, "账上看") {
+		t.Fatalf("profit answer should use single accrual wording, got: %s", res.Message)
+	}
+	monthly, ok := res.Data["monthly"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing monthly payload: %+v", res.Data)
+	}
+	if monthly["profit"] != float64(500) {
+		t.Fatalf("profit = %v, want 500", monthly["profit"])
 	}
 }
 
@@ -164,6 +167,434 @@ func TestHRBreakdownQuestionShouldNotRouteToCounterpartyEntity(t *testing.T) {
 	}
 }
 
+func TestEngineUsesConfigurableMetricKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "metric_keywords": {
+      "profit": ["净赚"]
+    }
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月净赚是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "银行卡上看") || strings.Contains(res.Message, "账上看") {
+		t.Fatalf("custom profit metric keyword should still use single accrual answer, got: %s", res.Message)
+	}
+	monthly, ok := res.Data["monthly"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing monthly payload: %+v", res.Data)
+	}
+	if monthly["profit"] != float64(500) {
+		t.Fatalf("profit = %v, want 500", monthly["profit"])
+	}
+}
+
+func TestEngineUsesConfigurableHRBreakdownKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "hr_breakdown_keywords": ["细拆"]
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月人力成本细拆")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if _, ok := res.Data["hr_breakdown"].(map[string]any); !ok {
+		t.Fatalf("custom hr breakdown keyword should route to breakdown payload, got: %+v", res.Data)
+	}
+}
+
+func TestEngineUsesConfigurableCounterpartyClassificationKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "counterparty_classification_question_keywords": ["归类判断"]
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-28', 'V-LINYUE-CFG-1', '640101', '主营业务成本', '借', 1440000, '预提成本', '', 1440000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-28', 'V-LINYUE-CFG-1', '220201', '应付账款', '贷', 1440000, '预提成本_南京林悦智能科技有限公司_2026.02.28', '', 0, 1440000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert counterparty config data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("南京林悦智能科技有限公司在2026年2月这笔归类判断")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "供应商") {
+		t.Fatalf("custom counterparty classification keyword should use role judgement, got: %s", res.Message)
+	}
+}
+
+func TestEngineUsesConfigurableProfitSingleViewBlockKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "metric_keywords": {
+      "profit": ["净赚"]
+    },
+    "profit_single_view_block_keywords": ["不一致"]
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月净赚为什么不一致？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "银行卡") || !strings.Contains(res.Message, "账") {
+		t.Fatalf("custom profit single-view block keyword should force dual perspective, got: %s", res.Message)
+	}
+}
+
+func TestCounterpartyCostShouldIncludeVoucherSiblingRows(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-28', 'V-LINYUE-1', '640101', '信息服务费', '借', 1440000, '预提成本', '', 1440000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-28', 'V-LINYUE-1', '220201', '单位', '贷', 1440000, '预提成本_南京林悦智能科技有限公司_2026.02.28', '', 0, 1440000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert voucher sibling data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("南京林悦智能科技有限公司2月成本多少")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "供应商相关") {
+		t.Fatalf("expected supplier wording, got: %s", res.Message)
+	}
+	if got := res.Data["amount"]; got != float64(1440000) {
+		t.Fatalf("amount = %v, want 1440000", got)
+	}
+}
+
+func TestInternalPartyUsesConfigurableOrgSuffixesAndContextKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "hr_breakdown_keywords": ["细拆"]
+  },
+  "internal_party": {
+    "org_suffixes": ["中心"],
+    "account_context_keywords": ["内部代发"]
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-18', 'V-INTERNAL-CFG-1', '224101', '其他应付款', '借', 8000, '内部代发薪酬', '华东中心', 8000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-18', 'V-INTERNAL-CFG-1', '100201', '招商银行', '贷', 8000, '支付华东中心代发薪酬', '华东中心', 0, 8000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert configurable internal party data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月人力成本细拆")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	hr, ok := res.Data["hr_breakdown"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hr_breakdown: %+v", res.Data)
+	}
+	cash, ok := hr["cash"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing cash breakdown: %+v", hr)
+	}
+	if cash["分公司内部转账"] != float64(8000) {
+		t.Fatalf("configurable internal party detection failed, got: %+v", cash)
+	}
+}
+
+func TestCounterpartyClassificationQuestionPrefersRoleJudgement(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-28', 'V-LINYUE-CLASS-1', '640101', '主营业务成本', '借', 1440000, '预提成本', '', 1440000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-28', 'V-LINYUE-CLASS-1', '220201', '应付账款', '贷', 1440000, '预提成本_南京林悦智能科技有限公司_2026.02.28', '', 0, 1440000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert classification voucher failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("林悦在2026年2月这笔是成本还是收入？请给判断依据。")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "供应商/成本侧") {
+		t.Fatalf("expected supplier classification, got: %s", res.Message)
+	}
+}
+
+func TestHRBreakdownListsBranchTransferSeparatelyWhenVoucherHasPayrollLiability(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-18', 'V-BRANCH-WAGE-1', '221101', '应付职工薪酬-工资', '借', 8000, '支付分公司代发薪酬', '上海分公司', 8000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-18', 'V-BRANCH-WAGE-1', '100201', '招商银行', '贷', 8000, '上海分公司转账', '上海分公司', 0, 8000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert branch wage voucher failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月人力成本多少？工资、社保、公积金分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	hr, ok := res.Data["hr_breakdown"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hr_breakdown: %+v", res.Data)
+	}
+	cash, ok := hr["cash"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing cash breakdown: %+v", hr)
+	}
+	if cash["工资"] != float64(15000) {
+		t.Fatalf("cash wage = %v, want 15000", cash["工资"])
+	}
+	if cash["分公司内部转账"] != float64(8000) {
+		t.Fatalf("branch transfer = %v, want 8000", cash["分公司内部转账"])
+	}
+}
+
+func TestHRBreakdownDetectsInternalTransferWithoutHardcodedBranchName(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-19', 'V-INTERNAL-TRANSFER-1', '122101', '单位', '借', 9000, '转账南京优集杭州分公司_南京优集杭州分公司_2026.03.19', '', 9000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-19', 'V-INTERNAL-TRANSFER-1', '100201', '招商银行', '贷', 9000, '转账南京优集杭州分公司', '', 0, 9000)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert internal transfer voucher failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月人力成本多少？工资、社保、公积金分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	hr, ok := res.Data["hr_breakdown"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing hr_breakdown: %+v", res.Data)
+	}
+	cash, ok := hr["cash"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing cash breakdown: %+v", hr)
+	}
+	if cash["工资"] != float64(15000) {
+		t.Fatalf("cash wage = %v, want 15000", cash["工资"])
+	}
+	if cash["分公司内部转账"] != float64(9000) {
+		t.Fatalf("branch transfer = %v, want 9000", cash["分公司内部转账"])
+	}
+}
+
+func TestEntityARAPUsesConfidenceAwareWordingForSummaryDerivedMatches(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-28', 'V-JC-OPEN', '112201', '单位', '借', 1000, '为辽宁金程信息科技有限公司服务_辽宁金程信息科技有限公司_2026.02.28', '', 1000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-06', 'V-JC-SETTLE', '112201', '单位', '贷', 1000, '辽宁金程信息科技有限公司转账_辽宁金程信息科技有限公司_2026.03.06', '', 0, 1000)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-25', 'V-JC-NEW', '112201', '单位', '借', 600, '为辽宁金程信息科技有限公司服务_辽宁金程信息科技有限公司_2026.03.25', '', 600, 0)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert summary-derived entity arap data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("辽宁金程信息科技有限公司的应收/应付是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "按开放项推断") {
+		t.Fatalf("message should disclose inferred open-item basis, got: %s", res.Message)
+	}
+}
+
+func TestEntityARAPQuestionUsesCounterpartyOpenItems(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-20', 'V-LINYUE-AP-1', '220201', '应付账款', '贷', 494000, '收到南京林悦智能科技有限公司发票', '', 0, 494000)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-20', 'V-LINYUE-AP-1', '640101', '主营业务成本', '借', 494000, '收到南京林悦智能科技有限公司发票', '', 494000, 0)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert entity ap voucher failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("南京林悦智能科技有限公司的应收/应付是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["receivable_total"]; got != float64(0) {
+		t.Fatalf("receivable_total = %v, want 0", got)
+	}
+	if got := res.Data["payable_total"]; got != float64(494000) {
+		t.Fatalf("payable_total = %v, want 494000", got)
+	}
+	if !strings.Contains(res.Message, "应收 0.00 元") || !strings.Contains(res.Message, "应付 494000.00 元") {
+		t.Fatalf("unexpected entity AR/AP message: %s", res.Message)
+	}
+}
+
 func buildEntityRoutingTestDB(t *testing.T) string {
 	t.Helper()
 
@@ -177,7 +608,9 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 	stmts := []string{
 		`CREATE TABLE journal (
 			company TEXT,
+			period TEXT,
 			voucher_date TEXT,
+			voucher_no TEXT,
 			account_code TEXT,
 			account_name TEXT,
 			direction TEXT,

@@ -1,11 +1,14 @@
 package analysis
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 
-	_ "modernc.org/sqlite"
+	dbpkg "financeqa/internal/db"
+	"financeqa/internal/openitems"
 )
 
 type AgingBucket struct {
@@ -28,7 +31,7 @@ type AgingEngine struct {
 }
 
 func NewAgingEngine(dbPath string) *AgingEngine {
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := dbpkg.Open(context.Background(), dbPath)
 	if err != nil {
 		return &AgingEngine{}
 	}
@@ -44,7 +47,7 @@ func (e *AgingEngine) Close() error {
 
 func (e *AgingEngine) AnalyzeSummary(company, period string) (AgingSummary, error) {
 	if e.db == nil {
-		return AgingSummary{}, fmt.Errorf("sqlite db not available")
+		return AgingSummary{}, fmt.Errorf("db not available")
 	}
 
 	endDate, err := periodEndDate(period)
@@ -54,9 +57,10 @@ func (e *AgingEngine) AnalyzeSummary(company, period string) (AgingSummary, erro
 
 	receivableBuckets, receivableTotal, err := e.loadBuckets(
 		company,
+		period,
 		endDate,
-		"1122%",
-		`CASE WHEN COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0) > 0 THEN COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0) ELSE 0 END`,
+		"1122",
+		openitems.Receivable,
 	)
 	if err != nil {
 		return AgingSummary{}, err
@@ -64,9 +68,10 @@ func (e *AgingEngine) AnalyzeSummary(company, period string) (AgingSummary, erro
 
 	payableBuckets, payableTotal, err := e.loadBuckets(
 		company,
+		period,
 		endDate,
-		"2202%",
-		`CASE WHEN COALESCE(credit_amount, 0) - COALESCE(debit_amount, 0) > 0 THEN COALESCE(credit_amount, 0) - COALESCE(debit_amount, 0) ELSE 0 END`,
+		"2202",
+		openitems.Payable,
 	)
 	if err != nil {
 		return AgingSummary{}, err
@@ -104,7 +109,25 @@ func (e *AgingEngine) AnalyzeSummary(company, period string) (AgingSummary, erro
 	}, nil
 }
 
-func (e *AgingEngine) loadBuckets(company string, endDate time.Time, accountLike string, amountExpr string) ([]AgingBucket, float64, error) {
+func (e *AgingEngine) loadBuckets(company, period string, endDate time.Time, accountPrefix string, kind openitems.AccountKind) ([]AgingBucket, float64, error) {
+	summary, err := openitems.BuildSummary(context.Background(), e.db, openitems.Options{
+		Company:           company,
+		Period:            period,
+		AccountCodePrefix: accountPrefix,
+		Kind:              kind,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("build aging open items: %w", err)
+	}
+	if summary.HasData {
+		return bucketsFromOpenItems(summary.OpenItems), summary.ClosingBalance, nil
+	}
+
+	amountExpr := `CASE WHEN COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0) > 0 THEN COALESCE(debit_amount, 0) - COALESCE(credit_amount, 0) ELSE 0 END`
+	accountLike := accountPrefix + "%"
+	if kind == openitems.Payable {
+		amountExpr = `CASE WHEN COALESCE(credit_amount, 0) - COALESCE(debit_amount, 0) > 0 THEN COALESCE(credit_amount, 0) - COALESCE(debit_amount, 0) ELSE 0 END`
+	}
 	query := fmt.Sprintf(`
 SELECT
   voucher_date,
@@ -124,7 +147,7 @@ WHERE company = ?
 	totals := map[string]float64{
 		"0-30天":  0,
 		"31-60天": 0,
-		"61天以上": 0,
+		"61天以上":  0,
 	}
 	total := 0.0
 
@@ -165,10 +188,37 @@ WHERE company = ?
 	return buckets, total, nil
 }
 
+func bucketsFromOpenItems(items []openitems.OpenItem) []AgingBucket {
+	totals := map[string]float64{
+		"0-30天":  0,
+		"31-60天": 0,
+		"61天以上":  0,
+	}
+	for _, item := range items {
+		switch {
+		case item.AgeDays <= 30:
+			totals["0-30天"] += item.Amount
+		case item.AgeDays <= 60:
+			totals["31-60天"] += item.Amount
+		default:
+			totals["61天以上"] += item.Amount
+		}
+	}
+	return []AgingBucket{
+		{Label: "0-30天", Amount: round2(totals["0-30天"])},
+		{Label: "31-60天", Amount: round2(totals["31-60天"])},
+		{Label: "61天以上", Amount: round2(totals["61天以上"])},
+	}
+}
+
 func periodEndDate(period string) (time.Time, error) {
 	t, err := time.Parse("2006-01", period)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid period %q: %w", period, err)
 	}
 	return t.AddDate(0, 1, -1), nil
+}
+
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }

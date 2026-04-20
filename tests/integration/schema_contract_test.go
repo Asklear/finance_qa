@@ -1,21 +1,35 @@
 package integration_test
 
 import (
+	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
+	dbpkg "financeqa/internal/db"
+	"financeqa/internal/support"
 )
 
 func TestFinanceDBSchemaContract(t *testing.T) {
-	dbPath, err := filepath.Abs("../../finance.db")
-	if err != nil {
-		t.Fatalf("resolve finance.db path: %v", err)
+	if os.Getenv("FINANCEQA_RUN_LIVE_DB_TESTS") != "1" {
+		t.Skip("set FINANCEQA_RUN_LIVE_DB_TESTS=1 to run live database schema contract")
 	}
-	db, err := sql.Open("sqlite", dbPath)
+
+	root, err := filepath.Abs("../..")
 	if err != nil {
-		t.Fatalf("open finance.db: %v", err)
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
+	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	dbPath := support.DefaultDBPath(root)
+	if dbPath == "" {
+		t.Skip("database is not configured; skipping schema contract test")
+	}
+
+	db, err := dbpkg.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open configured db: %v", err)
 	}
 	defer db.Close()
 
@@ -38,25 +52,19 @@ func TestFinanceDBSchemaContract(t *testing.T) {
 
 func tableColumns(t *testing.T, db *sql.DB, table string) map[string]struct{} {
 	t.Helper()
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	rows, err := db.Query("SELECT * FROM " + table + " LIMIT 0")
 	if err != nil {
-		t.Fatalf("pragma table_info(%s): %v", table, err)
+		t.Fatalf("probe columns for %s: %v", table, err)
 	}
 	defer rows.Close()
 
 	cols := map[string]struct{}{}
-	for rows.Next() {
-		var cid int
-		var name, colType string
-		var notnull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &colType, &notnull, &dflt, &pk); err != nil {
-			t.Fatalf("scan pragma row for %s: %v", table, err)
-		}
-		cols[name] = struct{}{}
+	names, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("read columns for %s: %v", table, err)
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows err for %s: %v", table, err)
+	for _, name := range names {
+		cols[name] = struct{}{}
 	}
 	if len(cols) == 0 {
 		t.Fatalf("table %s not found or has no columns", table)

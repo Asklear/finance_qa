@@ -38,40 +38,40 @@ func classifyIntentV2(question string, cfg RuleConfig) (Intent, IntentTrace) {
 		}
 	}
 
-	if containsAny(q, []string{"最大", "单笔", "流入对手方", "流出对手方"}) {
+	if containsAny(q, cfg.IntentKeywords(IntentLargeTransactionQuery)) {
 		addScore(IntentLargeTransactionQuery, 3.2, "large_transaction")
 	}
-	if containsAny(q, []string{"是谁", "身份", "干嘛的", "哪里的", "谁是"}) {
+	if containsAny(q, cfg.IntentKeywords(IntentIdentityQuery)) {
 		addScore(IntentIdentityQuery, 3.0, "identity")
 	}
-	if containsAny(q, cfg.IntentHRCostKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) {
 		addScore(IntentFallback, 2.8, "hr_cost_fallback")
 	}
-	if containsAny(q, cfg.IntentARAPKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentARAPQuery))) {
 		addScore(IntentARAPQuery, 2.8, "arap")
 	}
-	if containsAny(q, cfg.IntentTaxKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentTaxQuery))) {
 		addScore(IntentTaxQuery, 2.8, "tax")
 	}
-	if containsAny(q, cfg.IntentHealthKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHealth)) {
 		addScore(IntentFallback, 2.4, "health_fallback")
 	}
-	if containsAny(q, cfg.IntentAnalysisKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentAnalysis))) {
 		addScore(IntentAnalysis, 2.2, "analysis")
 	}
-	if containsAny(q, cfg.IntentFallbackKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentFallback))) {
 		addScore(IntentFallback, 2.1, "fallback_keyword")
 	}
-	if containsAny(q, cfg.IntentHostPayloadKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentHostPayload))) {
 		addScore(IntentHostPayload, 2.0, "host_payload")
 	}
 	if strings.Contains(q, "项目") && containsAny(q, []string{"收入", "成本", "支出", "应收", "应付", "数据出来"}) {
 		addScore(IntentFallback, 2.0, "project_fallback")
 	}
-	if containsAny(q, cfg.IntentMonthlySummaryKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(string(IntentMonthlySummary))) {
 		addScore(IntentMonthlySummary, 2.0, "monthly_summary")
 	}
-	if containsAny(q, []string{"期末", "余额", "是多少", "查询余额", "还有多少"}) {
+	if containsAny(q, cfg.IntentKeywords(IntentPrecise)) {
 		addScore(IntentPrecise, 1.8, "precise")
 	}
 

@@ -105,6 +105,94 @@ func TestClassifyCounterpartyRecognizesSupplierFromPrepaymentServiceFeeAndInputT
 	}
 }
 
+func TestCounterpartyClassifierUsesConfigurableRoleLexicon(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "counterparty": {
+    "roles": {
+      "customer": ["客证"],
+      "supplier": ["供证"],
+      "employee": ["员证"]
+    }
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	tests := []struct {
+		name     string
+		evidence []query.LedgerEvidence
+		want     query.CounterpartyRole
+	}{
+		{
+			name: "customer",
+			evidence: []query.LedgerEvidence{
+				{Source: "journal", Counterparty: "甲方", Summary: "客证"},
+			},
+			want: query.CounterpartyCustomer,
+		},
+		{
+			name: "supplier",
+			evidence: []query.LedgerEvidence{
+				{Source: "journal", Counterparty: "乙方", Summary: "供证"},
+			},
+			want: query.CounterpartySupplier,
+		},
+		{
+			name: "employee",
+			evidence: []query.LedgerEvidence{
+				{Source: "journal", Counterparty: "丙方", Summary: "员证"},
+			},
+			want: query.CounterpartyEmployee,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := query.ClassifyCounterparty("示例主体", tc.evidence)
+			if got.Role != tc.want {
+				t.Fatalf("ClassifyCounterparty role = %s, want %s; scores=%v signals=%v", got.Role, tc.want, got.Scores, got.Signals)
+			}
+		})
+	}
+}
+
+func TestCounterpartyClassifierUsesConfigurableTaxLexicon(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "counterparty": {
+    "roles": {
+      "customer": ["客证"],
+      "supplier": ["供证"]
+    },
+    "tax": {
+      "output": ["销证"],
+      "input": ["进证"]
+    }
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	report := query.NormalizeTax("示例主体", []query.LedgerEvidence{
+		{Source: "journal", Counterparty: "示例主体", Summary: "客证", CreditAmount: 100},
+		{Source: "journal", Counterparty: "示例主体", Summary: "销证", CreditAmount: 13},
+		{Source: "journal", Counterparty: "示例主体", Summary: "供证", DebitAmount: 80},
+		{Source: "journal", Counterparty: "示例主体", Summary: "进证", DebitAmount: 8},
+	})
+
+	if report.Output.TaxAmount != 13 {
+		t.Fatalf("output tax = %v, want 13", report.Output.TaxAmount)
+	}
+	if report.Input.TaxAmount != 8 {
+		t.Fatalf("input tax = %v, want 8", report.Input.TaxAmount)
+	}
+	if !containsAny(strings.Join(report.Output.Signals, ","), []string{"output_tax:销证"}) {
+		t.Fatalf("expected configurable output tax signal, got %v", report.Output.Signals)
+	}
+	if !containsAny(strings.Join(report.Input.Signals, ","), []string{"input_tax:进证"}) {
+		t.Fatalf("expected configurable input tax signal, got %v", report.Input.Signals)
+	}
+}
+
 func containsAny(s string, keywords []string) bool {
 	for _, kw := range keywords {
 		if strings.Contains(s, kw) {

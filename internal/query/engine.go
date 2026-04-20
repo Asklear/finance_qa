@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"financeqa/internal/accounting"
 	"financeqa/internal/analysis"
+	dbpkg "financeqa/internal/db"
 	"financeqa/internal/dimensions"
+	"financeqa/internal/openitems"
 )
 
 type Result struct {
@@ -64,9 +64,12 @@ type Engine struct {
 }
 
 func NewEngine(dbPath, company string) (*Engine, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	if err := dbpkg.Bootstrap(context.Background(), dbPath); err != nil {
+		return nil, fmt.Errorf("bootstrap db: %w", err)
+	}
+	db, err := dbpkg.Open(context.Background(), dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+		return nil, fmt.Errorf("open db: %w", err)
 	}
 	available, _ := availableCompanies(db)
 	dimRepo := dimensions.NewSQLiteRepository(db)
@@ -131,9 +134,21 @@ func (e *Engine) Query(question string) Result {
 			return finalize(result)
 		}
 	}
+	if shouldUseSingleAccrualProfit(q) {
+		result = e.queryAccrualProfitOnly(from, to)
+		if result.Success {
+			return finalize(result)
+		}
+	}
 
 	entity := e.extractNamedEntity(q)
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
+	if hasRealEntity && isCounterpartyClassificationQuestion(q) {
+		result = e.queryCounterpartyAmountFallback(q, entity, from, to)
+		if result.Success {
+			return finalize(result)
+		}
+	}
 	if shouldUseReconciliation(q) {
 		result = e.queryReconciliation(q, from, to)
 		if result.Success {
@@ -152,7 +167,7 @@ func (e *Engine) Query(question string) Result {
 			return finalize(result)
 		}
 	}
-	if hasRealEntity && containsAny(q, []string{"收入", "营收", "销售额", "回款", "到账", "收款", "成本", "费用", "支出", "付款", "付了", "支付"}) {
+	if hasRealEntity && containsAny(q, append(metricQuestionKeywords(cfg), "回款", "到账", "收款", "费用", "支出", "付款", "付了", "支付")) {
 		result = e.queryCounterpartyAmountFallback(q, entity, from, to)
 		if result.Success {
 			return finalize(result)
@@ -197,7 +212,7 @@ func (e *Engine) Query(question string) Result {
 	}
 
 	// 智能分流降级：如果精确查询由于科目未发现而失败，且存在实体，则自动滑入往来款审计
-	if entity != "" && (result.Message == "account not found" || !strings.Contains(result.Message, "no named")) {
+	if entity != "" && result.Message == "account not found" {
 		return finalize(e.queryFallback(q, from, to, result.Message))
 	}
 	if result.Message == "account not found" || strings.Contains(result.Message, "语义模糊") {
@@ -254,9 +269,17 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 	is, _ := e.calc.ComputeIncomeStatement(e.Company, year, month)
 	// 3) 钱口径
 	cash, _ := e.calc.ComputeCashFlow(e.Company, from, to)
-
 	logs := append([]string{}, e.calc.CalculationLogs...)
 	sqls := append([]string{}, e.calc.ExecutedSQLs...)
+	var bridgeMap map[string]any
+	if bridge, bridgeErr := analysis.AnalyzeProfitCashBridgeWithDB(context.Background(), e.db, e.Company, to); bridgeErr == nil {
+		bridgeMap = bridgeToMap(&bridge)
+		logs = append(logs, fmt.Sprintf("[利润调现金桥] period=%s estimated_operating_cash=%.2f bank_net_cash=%.2f non_operating_delta=%.2f", to, bridge.EstimatedOperatingCash, bridge.BankNetCash, bridge.NonOperatingCashDelta))
+		sqls = appendUniqueStrings(sqls,
+			"profit_cash_bridge(balance_detail): SELECT closing_debit, closing_credit FROM balance_detail WHERE ... AND period IN (?, previous_period) AND account_code IN ('1602','1122','1123','1221','2202','2203','2211','2221','2241','22210101','22210106')",
+			"profit_cash_bridge(income_statement): SELECT current_amount FROM income_statement WHERE ... AND period = ? AND item_name LIKE '%净利润%'",
+		)
+	}
 	sqls = appendUniqueStrings(sqls,
 		"monthlyBookSummary(income_statement): SELECT item_name, current_amount FROM income_statement WHERE ... AND period = ?",
 		"monthlyBookSummary(fallback_journal): ComputeMonthlyFromJournal + ComputeIncomeStatement when income_statement missing required rows",
@@ -300,6 +323,7 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 				},
 			},
 			"cumulative": is, "cash_flow": cash,
+			"profit_cash_bridge": bridgeMap,
 			// 兼容旧版本 top-level 字段（测试与外部调用依赖）
 			"现金流入": cash.Income, "现金流出": cash.Expense, "净现金流": cash.Net,
 			"财务做账口径(看利润)": map[string]any{
@@ -307,6 +331,69 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 				"营业成本及费用": book.TotalCost,
 				"账面利润":    book.Profit,
 			},
+		},
+		ExecutedSQL:     sqls,
+		CalculationLogs: logs,
+	}
+}
+
+func (e *Engine) queryAccrualProfitOnly(from, to string) Result {
+	year, month := parsePeriod(to)
+	e.calc.ResetTrace()
+
+	book, bookSource, err := e.monthlyBookSummary(year, month)
+	if err != nil {
+		return Result{Success: false, Message: err.Error()}
+	}
+	cash, _ := e.calc.ComputeCashFlow(e.Company, from, to)
+	logs := append([]string{}, e.calc.CalculationLogs...)
+	sqls := append([]string{}, e.calc.ExecutedSQLs...)
+
+	var bridgeMap map[string]any
+	if bridge, bridgeErr := analysis.AnalyzeProfitCashBridgeWithDB(context.Background(), e.db, e.Company, to); bridgeErr == nil {
+		bridgeMap = bridgeToMap(&bridge)
+		logs = append(logs, fmt.Sprintf("[利润单口径] period=%s profit=%.2f estimated_operating_cash=%.2f", to, book.Profit, bridge.EstimatedOperatingCash))
+		sqls = appendUniqueStrings(sqls,
+			"profit_cash_bridge(balance_detail): SELECT closing_debit, closing_credit FROM balance_detail WHERE ... AND period IN (?, previous_period) AND account_code IN ('1602','1122','1123','1221','2202','2203','2211','2221','2241','22210101','22210106')",
+			"profit_cash_bridge(income_statement): SELECT current_amount FROM income_statement WHERE ... AND period = ? AND item_name LIKE '%净利润%'",
+		)
+	}
+
+	sqls = appendUniqueStrings(sqls,
+		"monthlyBookSummary(income_statement): SELECT item_name, current_amount FROM income_statement WHERE ... AND period = ?",
+		"monthlyBookSummary(fallback_journal): ComputeMonthlyFromJournal + ComputeIncomeStatement when income_statement missing required rows",
+	)
+	logs = append(logs, fmt.Sprintf("[利润口径] period=%s source=%s", to, bookSource))
+
+	return Result{
+		Success:      true,
+		AnswerMethod: "sql",
+		Message:      fmt.Sprintf("%s 账面利润 %.2f 元（收入 %.2f 元，成本及费用 %.2f 元）。", to, book.Profit, book.Revenue, book.TotalCost),
+		Data: map[string]any{
+			"period":        to,
+			"account_value": book.Profit,
+			"monthly": map[string]any{
+				"year":    year,
+				"month":   month,
+				"source":  bookSource,
+				"revenue": book.Revenue,
+				"cost":    book.TotalCost,
+				"profit":  book.Profit,
+			},
+			"财务做账口径(看利润)": map[string]any{
+				"营业收入":    book.Revenue,
+				"营业成本及费用": book.TotalCost,
+				"账面利润":    book.Profit,
+			},
+			"现金流入": cash.Income,
+			"现金流出": cash.Expense,
+			"净现金流": cash.Net,
+			"cash_flow": map[string]any{
+				"现金流入": cash.Income,
+				"现金流出": cash.Expense,
+				"净现金流": cash.Net,
+			},
+			"profit_cash_bridge": bridgeMap,
 		},
 		ExecutedSQL:     sqls,
 		CalculationLogs: logs,
@@ -342,7 +429,7 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 			Profit:      dualAccrual.Profit,
 		},
 	})
-	msg := buildBossDualPerspectiveMessage(to, dualCash, dualAccrual)
+	msg := buildBossDualPerspectiveMessage(to, dualCash, dualAccrual, unified.Bridge)
 	if len(requestedMetrics) == 1 {
 		msg = fmt.Sprintf("%s\n补充你当前关注的指标：%s - 银行卡上看 %.2f 元，账上看 %.2f 元。", msg, metric, cashValue, accrualValue)
 	}
@@ -357,27 +444,31 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		Message:      msg,
 		AnswerMethod: "sql",
 		Data: map[string]any{
-			"period":            to,
-			"metric":            metric,
-			"money_view":        dualCash,
-			"account_view":      dualAccrual,
-			"money_value":       cashValue,
-			"account_value":     accrualValue,
-			"requested_metrics": requestedMetrics,
-			"一致性守卫":             unified.Guard,
-			"现金流入":              dualCash.Income,
-			"现金流出":              dualCash.Expense,
-			"净现金流":              dualCash.Net,
+			"period":             to,
+			"metric":             metric,
+			"money_view":         dualCash,
+			"account_view":       dualAccrual,
+			"money_value":        cashValue,
+			"account_value":      accrualValue,
+			"requested_metrics":  requestedMetrics,
+			"一致性守卫":              unified.Guard,
+			"profit_cash_bridge": bridgeToMap(unified.Bridge),
+			"现金流入":               dualCash.Income,
+			"现金流出":               dualCash.Expense,
+			"净现金流":               dualCash.Net,
 			"财务做账口径(看利润)": map[string]any{
 				"营业收入":    dualAccrual.Revenue,
 				"营业成本及费用": dualAccrual.TotalCost,
 				"账面利润":    dualAccrual.Profit,
 			},
 			"difference_bridge": map[string]any{
-				"利润与现金净额差":  round2(dualAccrual.Profit - dualCash.Net),
-				"收入确认回款时间差": round2(dualAccrual.Revenue - dualCash.Income),
-				"成本付款确认时间差": round2(dualCash.Expense - dualAccrual.TotalCost),
-				"其他调节项":     round2((dualAccrual.Profit - dualCash.Net) - (dualAccrual.Revenue - dualCash.Income) - (dualCash.Expense - dualAccrual.TotalCost)),
+				"利润与现金净额差":     round2(dualAccrual.Profit - dualCash.Net),
+				"收入确认回款时间差":    round2(dualAccrual.Revenue - dualCash.Income),
+				"成本付款确认时间差":    round2(dualCash.Expense - dualAccrual.TotalCost),
+				"其他调节项":        round2((dualAccrual.Profit - dualCash.Net) - (dualAccrual.Revenue - dualCash.Income) - (dualCash.Expense - dualAccrual.TotalCost)),
+				"经营现金净额估算":     bridgeEstimatedCash(unified.Bridge),
+				"含税项调节后经营现金估算": bridgeAdjustedEstimatedCash(unified.Bridge),
+				"非经营现金差额":      bridgeNonOperatingDelta(unified.Bridge),
 			},
 			"dual_perspective": map[string]any{
 				"cash": map[string]any{
@@ -397,6 +488,62 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		ExecutedSQL:     sqls,
 		CalculationLogs: logs,
 	}
+}
+
+func bridgeToMap(bridge *analysis.ProfitCashBridge) map[string]any {
+	if bridge == nil {
+		return nil
+	}
+	return map[string]any{
+		"net_profit":                       bridge.NetProfit,
+		"depreciation":                     bridge.Depreciation,
+		"ar_increase":                      bridge.ARIncrease,
+		"prepayment_increase":              bridge.PrepaymentIncrease,
+		"other_receivable_increase":        bridge.OtherReceivableIncrease,
+		"other_payable_increase":           bridge.OtherPayableIncrease,
+		"ap_increase":                      bridge.APIncrease,
+		"advance_receipt_increase":         bridge.AdvanceReceiptIncrease,
+		"payroll_increase":                 bridge.PayrollIncrease,
+		"tax_balance_increase":             bridge.TaxBalanceIncrease,
+		"tax_timing_adjustment":            bridge.TaxTimingAdjustment,
+		"estimated_operating_cash":         bridge.EstimatedOperatingCash,
+		"adjusted_operating_cash_estimate": bridge.AdjustedOperatingCashEstimate,
+		"operating_cash_in":                bridge.OperatingCashIn,
+		"operating_cash_out":               bridge.OperatingCashOut,
+		"operating_cash_net":               bridge.OperatingCashNet,
+		"non_operating_cash_in":            bridge.NonOperatingCashIn,
+		"non_operating_cash_out":           bridge.NonOperatingCashOut,
+		"non_operating_cash_net":           bridge.NonOperatingCashNet,
+		"mixed_cash_in":                    bridge.MixedCashIn,
+		"mixed_cash_out":                   bridge.MixedCashOut,
+		"mixed_cash_net":                   bridge.MixedCashNet,
+		"bank_net_cash":                    bridge.BankNetCash,
+		"excluded_cash_net":                bridge.ExcludedCashNet,
+		"operating_cash_gap":               bridge.OperatingCashGap,
+		"adjusted_operating_cash_gap":      bridge.AdjustedOperatingCashGap,
+		"non_operating_cash_delta":         bridge.NonOperatingCashDelta,
+	}
+}
+
+func bridgeEstimatedCash(bridge *analysis.ProfitCashBridge) float64 {
+	if bridge == nil {
+		return 0
+	}
+	return bridge.EstimatedOperatingCash
+}
+
+func bridgeAdjustedEstimatedCash(bridge *analysis.ProfitCashBridge) float64 {
+	if bridge == nil {
+		return 0
+	}
+	return bridge.AdjustedOperatingCashEstimate
+}
+
+func bridgeNonOperatingDelta(bridge *analysis.ProfitCashBridge) float64 {
+	if bridge == nil {
+		return 0
+	}
+	return bridge.NonOperatingCashDelta
 }
 
 func (e *Engine) queryHostLLMPayload(question, from, to string) Result {
@@ -442,7 +589,11 @@ func (e *Engine) queryTax(question, from, to string) Result {
 	}
 
 	msg := fmt.Sprintf("%s 税额查询完成：销项 %.2f 元，进项 %.2f 元", to, output, input)
-	if strings.Contains(question, "进项") {
+	if strings.Contains(question, "净税额") {
+		msg = fmt.Sprintf("%s 净税额 %.2f 元（销项 %.2f 元 - 进项 %.2f 元）", to, output-input, output, input)
+	} else if strings.Contains(question, "销项") && strings.Contains(question, "进项") {
+		msg = fmt.Sprintf("%s 销项税额 %.2f 元，进项税额 %.2f 元，净税额 %.2f 元", to, output, input, output-input)
+	} else if strings.Contains(question, "进项") {
 		msg = fmt.Sprintf("%s 进项税额查询完成：应计 %.2f 元", to, input)
 	} else if strings.Contains(question, "销项") {
 		msg = fmt.Sprintf("%s 销项税额查询完成：应计 %.2f 元", to, output)
@@ -469,11 +620,14 @@ func (e *Engine) queryARAP(question, entity, from, to string) Result {
 	if entity != "" && strings.Contains(question, "项目") {
 		return e.queryProjectARAP(entity, from, to)
 	}
+	if entity != "" && e.isRealBusinessEntity(question, entity) && containsAny(question, []string{"应收", "应付"}) {
+		return e.queryEntityARAP(entity, period)
+	}
 	if strings.Contains(question, "应收") {
-		return e.queryAccountPayableReceivable(period, "应收账款", "1122", "receivable")
+		return e.queryAccountPayableReceivable(period, "应收账款", "1122", "receivable", "")
 	}
 	if strings.Contains(question, "应付") {
-		return e.queryAccountPayableReceivable(period, "应付账款", "2202", "payable")
+		return e.queryAccountPayableReceivable(period, "应付账款", "2202", "payable", "")
 	}
 	if entity != "" {
 		return e.queryCounterpartyAmountFallback(question, entity, from, to)
@@ -487,9 +641,250 @@ func (e *Engine) queryARAP(question, entity, from, to string) Result {
 	}
 }
 
-func (e *Engine) queryAccountPayableReceivable(period, accountName, accountCodePrefix, typ string) Result {
+func (e *Engine) queryAccountPayableReceivable(period, accountName, accountCodePrefix, typ, entity string) Result {
+	if strings.TrimSpace(entity) == "" {
+		official := e.queryAccountPayableReceivableFromBalanceSheet(period, accountName, accountCodePrefix, typ)
+		if official.Success {
+			if openSummary, openResult := e.queryAccountPayableReceivableOpenItems(period, accountName, accountCodePrefix, typ, entity); openSummary {
+				if official.Data == nil {
+					official.Data = map[string]any{}
+				}
+				official.Data["open_item_analysis"] = openResult.Data
+				official.Data["open_item_match"] = approxEqual(anyToFloat64(official.Data["total"]), anyToFloat64(openResult.Data["total"]))
+				official.CalculationLogs = append(official.CalculationLogs,
+					fmt.Sprintf("[开放项补充] open_item_total=%.2f official_total=%.2f matched=%v",
+						anyToFloat64(openResult.Data["total"]), anyToFloat64(official.Data["total"]), official.Data["open_item_match"]),
+				)
+			}
+			return official
+		}
+	}
+
+	if ok, openResult := e.queryAccountPayableReceivableOpenItems(period, accountName, accountCodePrefix, typ, entity); ok {
+		return openResult
+	}
+
+	if strings.TrimSpace(entity) != "" {
+		return Result{
+			Success: false,
+			Message: fmt.Sprintf("[%s] 未找到%s余额", entity, accountName),
+			Data: map[string]any{
+				"entity":  entity,
+				"account": accountName,
+				"period":  period,
+			},
+		}
+	}
+
+	return e.queryAccountPayableReceivableFromBalanceSheet(period, accountName, accountCodePrefix, typ)
+}
+
+func (e *Engine) queryAccountPayableReceivableOpenItems(period, accountName, accountCodePrefix, typ, entity string) (bool, Result) {
+	kind := openitems.Receivable
+	historyLabel := "历史应收"
+	currentLabel := "当月新增应收"
+	if typ == "payable" {
+		kind = openitems.Payable
+		historyLabel = "历史应付"
+		currentLabel = "当月新增应付"
+	}
+	openSummary, err := openitems.BuildSummary(context.Background(), e.db, openitems.Options{
+		Company:           e.Company,
+		Period:            period,
+		AccountCodePrefix: accountCodePrefix,
+		Kind:              kind,
+		Counterparty:      entity,
+	})
+	if err == nil && openSummary.HasData {
+		details := make([]map[string]any, 0, len(openSummary.CounterpartySummaries))
+		for _, item := range openSummary.CounterpartySummaries {
+			detailOpenItems := make([]map[string]any, 0, len(item.OpenItems))
+			for _, openItem := range item.OpenItems {
+				detailOpenItems = append(detailOpenItems, map[string]any{
+					"counterparty": openItem.Counterparty,
+					"source_date":  openItem.SourceDate,
+					"voucher_no":   openItem.VoucherNo,
+					"amount":       openItem.Amount,
+					"age_days":     openItem.AgeDays,
+				})
+			}
+			details = append(details, map[string]any{
+				"counterparty":              item.Counterparty,
+				"opening_balance":           item.OpeningBalance,
+				"current_increase":          item.CurrentIncrease,
+				"current_decrease":          item.CurrentDecrease,
+				"historical_settlement":     item.HistoricalSettlement,
+				"current_period_settlement": item.CurrentSettlement,
+				"settlement_confidence":     settlementConfidenceMap(item.SettlementConfidence),
+				"closing_balance":           item.ClosingBalance,
+				"open_items":                detailOpenItems,
+			})
+		}
+
+		openItemMaps := make([]map[string]any, 0, len(openSummary.OpenItems))
+		for _, item := range openSummary.OpenItems {
+			openItemMaps = append(openItemMaps, map[string]any{
+				"counterparty": item.Counterparty,
+				"source_date":  item.SourceDate,
+				"voucher_no":   item.VoucherNo,
+				"amount":       item.Amount,
+				"age_days":     item.AgeDays,
+			})
+		}
+
+		sumCheck := CheckSumEqualsTotal(extractClosingBalances(details), openSummary.ClosingBalance)
+		rollforwardCheck := CheckOpeningDeltaClosing(openSummary.OpeningBalance, openSummary.CurrentIncrease-openSummary.CurrentDecrease, openSummary.ClosingBalance)
+		scopeLabel := accountName
+		if strings.TrimSpace(entity) != "" {
+			scopeLabel = fmt.Sprintf("%s %s", entity, accountName)
+		}
+		settlementParts := make([]string, 0, 5)
+		if openSummary.HistoricalSettlement > 0 {
+			settlementParts = append(settlementParts, fmt.Sprintf("冲销%s %.2f", historyLabel, openSummary.HistoricalSettlement))
+		}
+		if openSummary.CurrentSettlement > 0 {
+			settlementParts = append(settlementParts, fmt.Sprintf("冲销%s %.2f", currentLabel, openSummary.CurrentSettlement))
+		}
+		if openSummary.SettlementConfidence.ProbableHistoricalSettlement > 0 {
+			settlementParts = append(settlementParts, fmt.Sprintf("高概率冲销%s %.2f", historyLabel, openSummary.SettlementConfidence.ProbableHistoricalSettlement))
+		}
+		if openSummary.SettlementConfidence.ProbableCurrentSettlement > 0 {
+			settlementParts = append(settlementParts, fmt.Sprintf("高概率冲销%s %.2f", currentLabel, openSummary.SettlementConfidence.ProbableCurrentSettlement))
+		}
+		if openSummary.SettlementConfidence.UnmatchedDecrease > 0 {
+			settlementParts = append(settlementParts, fmt.Sprintf("未能直接配对的本月减少 %.2f", openSummary.SettlementConfidence.UnmatchedDecrease))
+		}
+		msg := fmt.Sprintf("%s %s合计 %.2f 元（期初 %.2f，本月新增 %.2f，本月减少 %.2f",
+			period, scopeLabel, openSummary.ClosingBalance, openSummary.OpeningBalance, openSummary.CurrentIncrease, openSummary.CurrentDecrease)
+		if len(settlementParts) > 0 {
+			msg += "，其中" + strings.Join(settlementParts, "，")
+		}
+		msg += "）"
+		return true, Result{
+			Success: true,
+			Message: msg,
+			Data: map[string]any{
+				"type":                      typ,
+				"period":                    period,
+				"total":                     openSummary.ClosingBalance,
+				"details":                   details,
+				"account":                   accountName,
+				"entity":                    entity,
+				"closing":                   openSummary.ClosingBalance,
+				"opening_balance":           openSummary.OpeningBalance,
+				"current_increase":          openSummary.CurrentIncrease,
+				"current_decrease":          openSummary.CurrentDecrease,
+				"historical_settlement":     openSummary.HistoricalSettlement,
+				"current_period_settlement": openSummary.CurrentSettlement,
+				"settlement_confidence":     settlementConfidenceMap(openSummary.SettlementConfidence),
+				"open_items":                openItemMaps,
+				"source":                    "journal_open_items",
+				"arithmetic_checks": map[string]any{
+					"sum_equals_total":  sumCheck,
+					"rollforward_check": rollforwardCheck,
+				},
+			},
+			ExecutedSQL: []string{
+				"queryAccountPayableReceivable(open_items): SELECT voucher_date, account_code, voucher_no, account_name, summary, counterparty, debit_amount, credit_amount FROM journal WHERE ... AND account_code LIKE ? AND voucher_date <= ? ORDER BY DATE(voucher_date), voucher_no, account_code, account_name, summary, counterparty, debit_amount, credit_amount",
+			},
+			CalculationLogs: []string{
+				fmt.Sprintf("[AR/AP开放项] period=%s account=%s opening=%.2f increase=%.2f decrease=%.2f historical_settlement=%.2f current_settlement=%.2f probable_historical=%.2f probable_current=%.2f unmatched=%.2f closing=%.2f counterparty_count=%d", period, accountName, openSummary.OpeningBalance, openSummary.CurrentIncrease, openSummary.CurrentDecrease, openSummary.HistoricalSettlement, openSummary.CurrentSettlement, openSummary.SettlementConfidence.ProbableHistoricalSettlement, openSummary.SettlementConfidence.ProbableCurrentSettlement, openSummary.SettlementConfidence.UnmatchedDecrease, openSummary.ClosingBalance, len(details)),
+				fmt.Sprintf("[算术校验] sum_equals_total passed=%v diff=%.2f", sumCheck.Passed, sumCheck.Diff),
+				fmt.Sprintf("[滚动校验] rollforward passed=%v diff=%.2f", rollforwardCheck.Passed, rollforwardCheck.Diff),
+			},
+		}
+	}
+	return false, Result{}
+}
+
+func (e *Engine) queryEntityARAP(entity, period string) Result {
+	receivable := e.queryAccountPayableReceivable(period, "应收账款", "1122", "receivable", entity)
+	payable := e.queryAccountPayableReceivable(period, "应付账款", "2202", "payable", entity)
+	if !receivable.Success && !payable.Success {
+		return Result{Success: false, Message: fmt.Sprintf("[%s] 未找到应收/应付余额", entity)}
+	}
+
+	receivableTotal := 0.0
+	receivableDetails := []map[string]any{}
+	if receivable.Success {
+		receivableTotal, _ = receivable.Data["total"].(float64)
+		receivableDetails = mapsFromAnySlice(receivable.Data["details"])
+	}
+	payableTotal := 0.0
+	payableDetails := []map[string]any{}
+	if payable.Success {
+		payableTotal, _ = payable.Data["total"].(float64)
+		payableDetails = mapsFromAnySlice(payable.Data["details"])
+	}
+	inferencePrefix := ""
+	if resultUsesInferredOpenItemSettlement(receivable) || resultUsesInferredOpenItemSettlement(payable) {
+		inferencePrefix = "按开放项推断："
+	}
+
+	return Result{
+		Success: true,
+		Message: fmt.Sprintf("[%s] %s %s应收 %.2f 元，应付 %.2f 元", entity, period, inferencePrefix, receivableTotal, payableTotal),
+		Data: map[string]any{
+			"entity":           entity,
+			"period":           period,
+			"receivable_total": round2(receivableTotal),
+			"payable_total":    round2(payableTotal),
+			"receivable":       receivable.Data,
+			"payable":          payable.Data,
+			"details": map[string]any{
+				"receivable": receivableDetails,
+				"payable":    payableDetails,
+			},
+		},
+		ExecutedSQL:     append(append([]string{}, receivable.ExecutedSQL...), payable.ExecutedSQL...),
+		CalculationLogs: append(append([]string{}, receivable.CalculationLogs...), payable.CalculationLogs...),
+	}
+}
+
+func mapsFromAnySlice(v any) []map[string]any {
+	raw, ok := v.([]map[string]any)
+	if ok {
+		return raw
+	}
+	return []map[string]any{}
+}
+
+func settlementConfidenceMap(v openitems.SettlementConfidence) map[string]any {
+	return map[string]any{
+		"confirmed_historical_settlement": v.ConfirmedHistoricalSettlement,
+		"probable_historical_settlement":  v.ProbableHistoricalSettlement,
+		"confirmed_current_settlement":    v.ConfirmedCurrentSettlement,
+		"probable_current_settlement":     v.ProbableCurrentSettlement,
+		"unmatched_decrease":              v.UnmatchedDecrease,
+	}
+}
+
+func resultUsesInferredOpenItemSettlement(result Result) bool {
+	if !result.Success || result.Data == nil {
+		return false
+	}
+	if result.Data["source"] != "journal_open_items" {
+		return false
+	}
+	raw, ok := result.Data["settlement_confidence"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return anyToFloat64(raw["probable_historical_settlement"])+
+		anyToFloat64(raw["probable_current_settlement"])+
+		anyToFloat64(raw["unmatched_decrease"]) > 0
+}
+
+func anyToFloat64(v any) float64 {
+	if f, ok := v.(float64); ok {
+		return f
+	}
+	return 0
+}
+
+func (e *Engine) queryAccountPayableReceivableFromBalanceSheet(period, accountName, accountCodePrefix, typ string) Result {
 	rows, err := e.db.Query(`
-SELECT account_name, closing_balance
+SELECT account_name, opening_balance, closing_balance
 FROM balance_sheet
 WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
   AND period = ?
@@ -501,15 +896,18 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 	defer rows.Close()
 
 	details := make([]map[string]any, 0)
+	openingTotal := 0.0
 	total := 0.0
 	for rows.Next() {
 		var name string
+		var opening float64
 		var closing float64
-		if err := rows.Scan(&name, &closing); err != nil {
+		if err := rows.Scan(&name, &opening, &closing); err != nil {
 			continue
 		}
+		openingTotal += opening
 		total += closing
-		details = append(details, map[string]any{"account": name, "closing_balance": closing})
+		details = append(details, map[string]any{"account": name, "opening_balance": opening, "closing_balance": closing})
 	}
 	if len(details) == 0 {
 		return Result{Success: false, Message: "该期间未找到应收/应付余额"}
@@ -522,21 +920,21 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 		rollforwardCheck = CheckOpeningDeltaClosing(rollforward.OpeningNet, rollforward.DeltaNet, rollforward.ClosingNet)
 	}
 
-	msg := fmt.Sprintf("%s %s合计 %.2f 元", period, accountName, total)
+	msg := fmt.Sprintf("%s %s期末余额 %.2f 元", period, accountName, total)
 	return Result{
 		Success: true,
 		Message: msg,
 		Data: map[string]any{
 			"type": typ, "period": period, "total": total, "details": details,
-			"account": accountName, "closing": total,
+			"account": accountName, "source": "balance_sheet", "opening_balance": round2(openingTotal), "closing": total,
 			"arithmetic_checks": map[string]any{
-				"sum_equals_total":   sumCheck,
-				"rollforward_check":  rollforwardCheck,
+				"sum_equals_total":    sumCheck,
+				"rollforward_check":   rollforwardCheck,
 				"balance_rollforward": rollforward,
 			},
 		},
 		ExecutedSQL: []string{
-			"queryAccountPayableReceivable: SELECT account_name, closing_balance FROM balance_sheet WHERE ... AND (account_name LIKE ? OR account_code LIKE ?)",
+			"queryAccountPayableReceivable: SELECT account_name, opening_balance, closing_balance FROM balance_sheet WHERE ... AND (account_name LIKE ? OR account_code LIKE ?)",
 			"queryAccountPayableReceivable(balance_detail): SELECT SUM(opening_debit), SUM(opening_credit), SUM(current_debit), SUM(current_credit), SUM(closing_debit), SUM(closing_credit) FROM balance_detail WHERE ... AND account_code LIKE ?",
 		},
 		CalculationLogs: []string{
@@ -650,6 +1048,50 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 		"comparison_basis":  snap.ComparisonBasis,
 		"evidence":          evidence,
 		"tax_breakdown":     taxReport,
+	}
+
+	cfg := getRuleConfig()
+	if containsAny(q, cfg.CounterpartyClassificationQuestionKeywords()) {
+		reasonParts := make([]string, 0, 4)
+		if snap.BookCost+snap.BookExpense > 0 {
+			reasonParts = append(reasonParts, fmt.Sprintf("账上成本/费用 %.2f 元", round2(snap.BookCost+snap.BookExpense)))
+		}
+		if snap.RevenueNet > 0 {
+			reasonParts = append(reasonParts, fmt.Sprintf("账上收入 %.2f 元", round2(snap.RevenueNet)))
+		}
+		if snap.BankOut > 0 {
+			reasonParts = append(reasonParts, fmt.Sprintf("银行付款 %.2f 元", round2(snap.BankOut)))
+		}
+		if snap.BankIn > 0 {
+			reasonParts = append(reasonParts, fmt.Sprintf("银行收款 %.2f 元", round2(snap.BankIn)))
+		}
+		reason := strings.Join(reasonParts, "；")
+		switch role {
+		case "supplier":
+			return Result{
+				Success: true,
+				Message: fmt.Sprintf("[%s]%s %s 判断为供应商/成本侧往来。%s。", entity, roleLabel, periodLabel, reason),
+				Data: map[string]any{
+					"entity": entity,
+					"role":   role,
+					"basis":  reasonParts,
+				},
+				ExecutedSQL:     sqls,
+				CalculationLogs: logs,
+			}
+		case "customer":
+			return Result{
+				Success: true,
+				Message: fmt.Sprintf("[%s]%s %s 判断为客户/收入侧往来。%s。", entity, roleLabel, periodLabel, reason),
+				Data: map[string]any{
+					"entity": entity,
+					"role":   role,
+					"basis":  reasonParts,
+				},
+				ExecutedSQL:     sqls,
+				CalculationLogs: logs,
+			}
+		}
 	}
 
 	switch {
@@ -850,7 +1292,7 @@ func (e *Engine) isRealBusinessEntity(question, entity string) bool {
 	if exists == 1 {
 		return true
 	}
-	e.db.QueryRow(`SELECT 1 FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND IFNULL(TRIM(counterparty),'') <> '' AND counterparty LIKE ? LIMIT 1`, e.Company, e.Company, like).Scan(&exists)
+	e.db.QueryRow(`SELECT 1 FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND (summary LIKE ? OR (IFNULL(TRIM(counterparty),'') <> '' AND counterparty LIKE ?)) LIMIT 1`, e.Company, e.Company, like, like).Scan(&exists)
 	return exists == 1
 }
 
@@ -912,7 +1354,7 @@ func (e *Engine) ruleFallback(q, from, to string) Result {
 		return e.querySupplierCount()
 	}
 	// 人力成本
-	if containsAny(q, cfg.IntentHRCostKeywords) {
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) {
 		return e.queryHRBreakdown(from, to)
 	}
 	// 整体支出
@@ -1036,19 +1478,93 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 SELECT
   COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND summary LIKE '%工资%' THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS wage,
   COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND (summary LIKE '%社保%' OR summary LIKE '%社保扣款%') THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS social,
-  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND summary LIKE '%公积金%' THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS housing
+  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND summary LIKE '%公积金%' THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS housing,
+  0 AS branch_transfer
 FROM journal
 WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
   AND voucher_date BETWEEN ? AND ?
 `
+	if e.journalHasVoucherGrouping() {
+		cashSQL = `
+SELECT
+  COALESCE(SUM(CASE WHEN (base.account_code LIKE '1001%' OR base.account_code LIKE '1002%') AND base.direction='贷' AND (
+    NOT (base.summary LIKE '%分公司%' OR IFNULL(base.counterparty,'') LIKE '%分公司%') AND (
+      base.summary LIKE '%工资%' OR
+      base.summary LIKE '%薪酬%' OR
+      EXISTS (
+        SELECT 1 FROM journal sibling
+        WHERE (? LIKE '%' || sibling.company || '%' OR sibling.company LIKE '%' || ? || '%')
+          AND sibling.voucher_date = base.voucher_date
+          AND sibling.voucher_no = base.voucher_no
+          AND sibling.direction = '借'
+          AND (sibling.account_code LIKE '2211%' OR sibling.account_name LIKE '%应付职工薪酬%')
+          AND (sibling.summary LIKE '%工资%' OR sibling.summary LIKE '%薪酬%' OR sibling.account_name LIKE '%工资%' OR sibling.account_name LIKE '%薪酬%')
+      )
+    )
+  ) THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS wage,
+  COALESCE(SUM(CASE WHEN (base.account_code LIKE '1001%' OR base.account_code LIKE '1002%') AND base.direction='贷' AND (
+    base.summary LIKE '%社保%' OR
+    base.summary LIKE '%社保扣款%' OR
+    EXISTS (
+      SELECT 1 FROM journal sibling
+      WHERE (? LIKE '%' || sibling.company || '%' OR sibling.company LIKE '%' || ? || '%')
+        AND sibling.voucher_date = base.voucher_date
+        AND sibling.voucher_no = base.voucher_no
+        AND sibling.direction = '借'
+        AND (sibling.account_code LIKE '2211%' OR sibling.account_name LIKE '%应付职工薪酬%')
+        AND (sibling.summary LIKE '%社保%' OR sibling.account_name LIKE '%社保%')
+    )
+  ) THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS social,
+  COALESCE(SUM(CASE WHEN (base.account_code LIKE '1001%' OR base.account_code LIKE '1002%') AND base.direction='贷' AND (
+    base.summary LIKE '%公积金%' OR
+    EXISTS (
+      SELECT 1 FROM journal sibling
+      WHERE (? LIKE '%' || sibling.company || '%' OR sibling.company LIKE '%' || ? || '%')
+        AND sibling.voucher_date = base.voucher_date
+        AND sibling.voucher_no = base.voucher_no
+        AND sibling.direction = '借'
+        AND (sibling.account_code LIKE '2211%' OR sibling.account_name LIKE '%应付职工薪酬%')
+        AND (sibling.summary LIKE '%公积金%' OR sibling.account_name LIKE '%公积金%')
+    )
+  ) THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS housing,
+  COALESCE(SUM(CASE WHEN (base.account_code LIKE '1001%' OR base.account_code LIKE '1002%') AND base.direction='贷' AND (
+    base.summary LIKE '%分公司%' OR
+    IFNULL(base.counterparty,'') LIKE '%分公司%'
+  ) AND EXISTS (
+      SELECT 1 FROM journal sibling
+      WHERE (? LIKE '%' || sibling.company || '%' OR sibling.company LIKE '%' || ? || '%')
+        AND sibling.voucher_date = base.voucher_date
+        AND sibling.voucher_no = base.voucher_no
+        AND sibling.direction = '借'
+        AND (sibling.account_code LIKE '2211%' OR sibling.account_name LIKE '%应付职工薪酬%')
+    ) THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS branch_transfer
+FROM journal base
+WHERE (? LIKE '%' || base.company || '%' OR base.company LIKE '%' || ? || '%')
+  AND base.voucher_date BETWEEN ? AND ?
+`
+	}
 
 	var accountWage, accountSocial, accountHousing float64
-	var cashWage, cashSocial, cashHousing float64
+	var cashWage, cashSocial, cashHousing, cashBranchTransfer float64
+	branchTransferSQL := ""
+	branchTransferLogs := []string{"[分公司内部转账] voucher grouping unavailable"}
 	e.db.QueryRow(accountSQL, e.Company, e.Company, start, end).Scan(&accountWage, &accountSocial, &accountHousing)
-	e.db.QueryRow(cashSQL, e.Company, e.Company, start, end).Scan(&cashWage, &cashSocial, &cashHousing)
+	if e.journalHasVoucherGrouping() {
+		e.db.QueryRow(
+			cashSQL,
+			e.Company, e.Company,
+			e.Company, e.Company,
+			e.Company, e.Company,
+			e.Company, e.Company,
+			e.Company, e.Company, start, end,
+		).Scan(&cashWage, &cashSocial, &cashHousing, &cashBranchTransfer)
+		cashBranchTransfer, branchTransferSQL, branchTransferLogs = e.detectInternalBranchTransferCash(start, end)
+	} else {
+		e.db.QueryRow(cashSQL, e.Company, e.Company, start, end).Scan(&cashWage, &cashSocial, &cashHousing, &cashBranchTransfer)
+	}
 
 	accountTotal := round2(accountWage + accountSocial + accountHousing)
-	cashTotal := round2(cashWage + cashSocial + cashHousing)
+	cashTotal := round2(cashWage + cashSocial + cashHousing + cashBranchTransfer)
 	usedFallback := false
 	if accountTotal == 0 {
 		var fallbackTotal float64
@@ -1073,29 +1589,55 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 			"total":  accountTotal,
 			"hr_breakdown": map[string]any{
 				"accounting": map[string]any{
-					"工资": round2(accountWage),
-					"社保": round2(accountSocial),
+					"工资":  round2(accountWage),
+					"社保":  round2(accountSocial),
 					"公积金": round2(accountHousing),
-					"合计": accountTotal,
+					"合计":  accountTotal,
 				},
 				"cash": map[string]any{
-					"工资": round2(cashWage),
-					"社保": round2(cashSocial),
-					"公积金": round2(cashHousing),
-					"合计": cashTotal,
+					"工资":      round2(cashWage),
+					"社保":      round2(cashSocial),
+					"公积金":     round2(cashHousing),
+					"分公司内部转账": round2(cashBranchTransfer),
+					"合计":      cashTotal,
 				},
 			},
 		},
 		ExecutedSQL: []string{
 			fmt.Sprintf("queryHRBreakdown(accounting): %s [args: %s, %s, %s]", accountSQL, e.Company, start, end),
 			fmt.Sprintf("queryHRBreakdown(cash): %s [args: %s, %s, %s]", cashSQL, e.Company, start, end),
+			fmt.Sprintf("queryHRBreakdown(branch_transfer): %s [args: %s, %s, %s]", branchTransferSQL, e.Company, start, end),
 		},
 		CalculationLogs: []string{
 			fmt.Sprintf("[人力成本-账上] 工资=%.2f 社保=%.2f 公积金=%.2f 合计=%.2f", round2(accountWage), round2(accountSocial), round2(accountHousing), accountTotal),
-			fmt.Sprintf("[人力成本-现金] 工资=%.2f 社保=%.2f 公积金=%.2f 合计=%.2f", round2(cashWage), round2(cashSocial), round2(cashHousing), cashTotal),
+			fmt.Sprintf("[人力成本-现金] 工资=%.2f 社保=%.2f 公积金=%.2f 分公司内部转账=%.2f 合计=%.2f", round2(cashWage), round2(cashSocial), round2(cashHousing), round2(cashBranchTransfer), cashTotal),
 			fmt.Sprintf("[兜底触发] %v", usedFallback),
+			strings.Join(branchTransferLogs, " | "),
 		},
 	}
+}
+
+func (e *Engine) journalHasVoucherGrouping() bool {
+	cols := e.tableColumns("journal")
+	return cols["voucher_date"] && cols["voucher_no"]
+}
+
+func (e *Engine) tableColumns(table string) map[string]bool {
+	rows, err := e.db.Query(fmt.Sprintf("SELECT * FROM %s LIMIT 0", table))
+	if err != nil {
+		return map[string]bool{}
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return map[string]bool{}
+	}
+	out := make(map[string]bool, len(cols))
+	for _, col := range cols {
+		out[strings.ToLower(strings.TrimSpace(col))] = true
+	}
+	return out
 }
 
 func (e *Engine) queryEntityDataReady(entity, from, to string) Result {
@@ -1321,10 +1863,27 @@ func (e *Engine) HostLLMPayload(from, to, question string) Result {
 }
 
 func shouldForceDualPerspective(q string) bool {
-	if containsAny(q, []string{"人力成本", "工资成本", "薪酬成本", "项目成本", "应收", "应付", "税"}) {
+	cfg := getRuleConfig()
+	blockers := append([]string{"项目成本"}, cfg.intentKeywordGroup(routerGroupHRCost)...)
+	blockers = append(blockers, cfg.intentKeywordGroup(string(IntentARAPQuery))...)
+	blockers = append(blockers, cfg.intentKeywordGroup(string(IntentTaxQuery))...)
+	if containsAny(q, blockers) {
 		return false
 	}
-	return containsAny(q, []string{"收入", "成本", "利润", "销售额"})
+	return containsAny(q, metricQuestionKeywords(cfg))
+}
+
+func shouldUseSingleAccrualProfit(q string) bool {
+	cfg := getRuleConfig()
+	if shouldUseReconciliation(q) || containsAny(q, cfg.ProfitSingleViewBlockKeywords()) {
+		return false
+	}
+	metrics := detectRequestedMetrics(q)
+	return len(metrics) == 1 && metrics[0] == "利润"
+}
+
+func isCounterpartyClassificationQuestion(q string) bool {
+	return containsAny(q, getRuleConfig().CounterpartyClassificationQuestionKeywords())
 }
 
 func shouldBypassDualPerspective(q, entity string) bool {
@@ -1332,8 +1891,8 @@ func shouldBypassDualPerspective(q, entity string) bool {
 }
 
 func shouldUseHRBreakdown(q string, cfg RuleConfig) bool {
-	asksBreakdown := containsAny(q, []string{"工资", "社保", "公积金", "分别", "拆分", "拆开", "明细", "构成"})
-	if containsAny(q, cfg.IntentHRCostKeywords) && asksBreakdown {
+	asksBreakdown := containsAny(q, cfg.HRBreakdownKeywords())
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) && asksBreakdown {
 		return true
 	}
 	return containsAny(q, []string{"工资", "社保", "公积金"}) && containsAny(q, []string{"多少", "明细", "分别", "合计", "成本"})
@@ -1355,13 +1914,14 @@ func isGenericMetricEntity(entity string) bool {
 
 func detectRequestedMetrics(q string) []string {
 	metrics := make([]string, 0, 3)
-	if containsAny(q, []string{"收入", "营收", "销售额"}) {
+	cfg := getRuleConfig()
+	if containsAny(q, cfg.MetricKeywords(metricKeyRevenue)) {
 		metrics = append(metrics, "收入")
 	}
-	if strings.Contains(q, "成本") {
+	if containsAny(q, cfg.MetricKeywords(metricKeyCost)) {
 		metrics = append(metrics, "成本")
 	}
-	if strings.Contains(q, "利润") {
+	if containsAny(q, cfg.MetricKeywords(metricKeyProfit)) {
 		metrics = append(metrics, "利润")
 	}
 	if len(metrics) == 0 {
@@ -1372,15 +1932,21 @@ func detectRequestedMetrics(q string) []string {
 
 func detectCoreMetric(q string) string {
 	switch {
-	case strings.Contains(q, "利润"):
+	case containsAny(q, getRuleConfig().MetricKeywords(metricKeyProfit)):
 		return "利润"
-	case strings.Contains(q, "成本"):
+	case containsAny(q, getRuleConfig().MetricKeywords(metricKeyCost)):
 		return "成本"
-	case strings.Contains(q, "销售额"):
-		return "销售额"
 	default:
 		return "收入"
 	}
+}
+
+func metricQuestionKeywords(cfg RuleConfig) []string {
+	keywords := make([]string, 0, 8)
+	keywords = append(keywords, cfg.MetricKeywords(metricKeyRevenue)...)
+	keywords = append(keywords, cfg.MetricKeywords(metricKeyCost)...)
+	keywords = append(keywords, cfg.MetricKeywords(metricKeyProfit)...)
+	return dedupeStrings(keywords)
 }
 
 func pickMetricValue(metric string, dual *accounting.DualPerspective) (float64, float64) {

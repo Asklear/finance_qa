@@ -1,9 +1,14 @@
+//go:build scriptmain
+// +build scriptmain
+
 package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +17,8 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	dbpkg "financeqa/internal/db"
+	"financeqa/internal/support"
 )
 
 type AuditQuestion struct {
@@ -33,10 +39,10 @@ type validator func(res QueryResult, db *sql.DB) []string
 
 func main() {
 	company := "南京优集数据科技有限公司"
-	dbPath := mustLocateFinanceDB()
-	db, err := sql.Open("sqlite", dbPath)
+	dbPath := mustResolveConfiguredDBTarget()
+	db, err := dbpkg.Open(context.Background(), dbPath)
 	if err != nil {
-		panic(fmt.Sprintf("open finance.db failed: %v", err))
+		panic(fmt.Sprintf("open configured database failed: %v", err))
 	}
 	defer db.Close()
 
@@ -73,7 +79,7 @@ func main() {
 	failCount := 0
 	for _, aq := range questions {
 		start := time.Now()
-		res, parseErr, rawStdout, rawStderr := runQuery(company, aq.Question)
+		res, parseErr, rawStdout, rawStderr := runQuery(dbPath, company, aq.Question)
 		dur := time.Since(start)
 
 		reasons := make([]string, 0)
@@ -107,9 +113,9 @@ func main() {
 	fmt.Println("## 结论: ✅ 全部通过（严格语义断言）。")
 }
 
-func runQuery(company, question string) (QueryResult, error, string, string) {
+func runQuery(dbPath, company, question string) (QueryResult, error, string, string) {
 	goBin := resolveGoBin()
-	cmd := exec.Command(goBin, "run", "cmd/financeqa/main.go", "query", "--company", company, question)
+	cmd := exec.Command(goBin, "run", "cmd/financeqa/main.go", "query", "--db", dbPath, "--company", company, question)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -132,15 +138,15 @@ func resolveGoBin() string {
 	return "go"
 }
 
-func mustLocateFinanceDB() string {
-	candidates := []string{"finance.db", filepath.Join("..", "..", "finance.db")}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			abs, _ := filepath.Abs(c)
-			return abs
-		}
+func mustResolveConfiguredDBTarget() string {
+	root := support.FindProjectRoot()
+	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
+	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	dbTarget := strings.TrimSpace(support.DefaultDBPath(root))
+	if dbTarget == "" {
+		panic(errors.New("database is not configured; set FINANCEQA_DB / PostgreSQL env vars"))
 	}
-	panic("finance.db not found. please run from repo root or tests/scripts")
+	return dbTarget
 }
 
 func mustSuccess(res QueryResult, _ *sql.DB) []string {

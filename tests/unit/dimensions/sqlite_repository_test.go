@@ -15,7 +15,7 @@ import (
 func TestSQLiteRepositoryWorksWithManager(t *testing.T) {
 	t.Parallel()
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "dimensions.sqlite")
 	if err := db.Bootstrap(context.Background(), dbPath); err != nil {
 		t.Fatalf("bootstrap db: %v", err)
 	}

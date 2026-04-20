@@ -10,31 +10,17 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	dbschema "financeqa/internal/db"
 	"financeqa/internal/accounting"
+	dbschema "financeqa/internal/db"
 	"financeqa/internal/dimensions"
 	"financeqa/internal/ingest"
 )
-
-// testDBPath returns the path to finance.db in the project root.
-func testDBPath() string {
-	// Try relative path from test location
-	candidates := []string{
-		filepath.Join("..", "..", "finance.db"),
-	}
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	return filepath.Join("..", "..", "finance.db")
-}
 
 // setupTestDB creates a fresh temporary database and imports all Excel files.
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test_finance.db")
+	dbPath := filepath.Join(tmpDir, "calculator-fixtures.sqlite")
 
 	if err := dbschema.Bootstrap(context.Background(), dbPath); err != nil {
 		t.Fatalf("bootstrap db: %v", err)
@@ -58,6 +44,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		"交易查询，模拟财务科技有限公司，125922640010001，人民币，20260101-20260228，共93笔_20260401121229.xlsx",
 	}
 
+	imported := 0
 	for _, f := range files {
 		path := filepath.Join(testDataRoot, f)
 		if _, err := os.Stat(path); err != nil {
@@ -67,6 +54,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 		if _, err := importer.ImportFile(context.Background(), dbPath, path, false); err != nil {
 			t.Fatalf("import %s: %v", f, err)
 		}
+		imported++
+	}
+	if imported < len(files) {
+		t.Skipf("calculator fixtures not fully present in this workspace: imported %d/%d", imported, len(files))
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
@@ -191,7 +182,7 @@ func TestCompanyConsistency(t *testing.T) {
 	tables := []string{"journal", "balance_detail", "bank_statement"}
 	for _, table := range tables {
 		var exists int
-		err := db.QueryRow("SELECT 1 FROM "+table+" WHERE company LIKE '%模拟财务%' LIMIT 1").Scan(&exists)
+		err := db.QueryRow("SELECT 1 FROM " + table + " WHERE company LIKE '%模拟财务%' LIMIT 1").Scan(&exists)
 		if err != nil {
 			t.Errorf("table %s: failed to find any data for '模拟财务', error: %v", table, err)
 		}
@@ -203,7 +194,7 @@ func TestCompanyConsistency(t *testing.T) {
 func TestDualPerspective(t *testing.T) {
 	db := setupTestDB(t)
 	calc := accounting.NewCalculator(db)
-	
+
 	// 关键加固：注入 Mapper
 	repo := dimensions.NewSQLiteRepository(db)
 	mgr := dimensions.NewManager(repo)

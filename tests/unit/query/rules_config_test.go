@@ -9,6 +9,16 @@ import (
 	"financeqa/internal/query"
 )
 
+func writeRulesConfigFile(t *testing.T, content string) string {
+	t.Helper()
+
+	rulesPath := filepath.Join(t.TempDir(), "rules.json")
+	if err := os.WriteFile(rulesPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write rules file: %v", err)
+	}
+	return rulesPath
+}
+
 func TestMetricStopwordsCanBeConfiguredByEnv(t *testing.T) {
 	t.Setenv("FINANCEQA_METRIC_STOPWORDS", "收入,成本,利润,飞未")
 
@@ -86,9 +96,52 @@ func TestFallbackHRCostKeywordsCanBeConfiguredByEnv(t *testing.T) {
 	}
 }
 
-func TestRulesConfigLoadsIntentV2Fields(t *testing.T) {
-	rulesPath := filepath.Join(t.TempDir(), "rules.json")
-	if err := os.WriteFile(rulesPath, []byte(`{
+func TestRulesConfigLoadsNestedSchema(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "intents": {
+      "arap": {
+        "keywords": ["往来余额", "挂账余额"],
+        "priority": 180,
+        "min_confidence": 0.72,
+        "conflicts": ["fallback"],
+        "high_priority_phrases": ["应收挂账"]
+      }
+    }
+  },
+  "counterparty": {
+    "thresholds": {
+      "mixed_min_ratio": 0.33
+    }
+  }
+}`)
+
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	cfg := query.CurrentRuleConfig()
+	if got := cfg.IntentARAPKeywords; len(got) != 2 || got[0] != "往来余额" || got[1] != "挂账余额" {
+		t.Fatalf("nested arap keywords not loaded, got=%v", got)
+	}
+	if got := cfg.HighPriorityPhrases["arap"]; len(got) != 1 || got[0] != "应收挂账" {
+		t.Fatalf("nested high_priority_phrases not loaded, got=%v", got)
+	}
+	if got := cfg.IntentPriority["arap"]; got != 180 {
+		t.Fatalf("nested intent_priority not loaded, got=%d", got)
+	}
+	if got := cfg.IntentConflicts["arap"]; len(got) != 1 || got[0] != "fallback" {
+		t.Fatalf("nested intent_conflicts not loaded, got=%v", got)
+	}
+	if got := cfg.IntentMinConfidence["arap"]; got != 0.72 {
+		t.Fatalf("nested intent_min_confidence not loaded, got=%v", got)
+	}
+	if cfg.RoleMixedMinRatio != 0.33 {
+		t.Fatalf("nested role threshold not loaded, got=%v", cfg.RoleMixedMinRatio)
+	}
+}
+
+func TestRulesConfigStillLoadsLegacyFlatSchema(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
   "high_priority_phrases": {
     "arap": ["预收款", "应收账款"]
   },
@@ -102,9 +155,7 @@ func TestRulesConfigLoadsIntentV2Fields(t *testing.T) {
   "intent_min_confidence": {
     "arap": 0.65
   }
-}`), 0o600); err != nil {
-		t.Fatalf("write rules file: %v", err)
-	}
+}`)
 
 	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
 	t.Setenv("FINANCEQA_INTENT_PRIORITY", `{"arap":180}`)
@@ -122,5 +173,85 @@ func TestRulesConfigLoadsIntentV2Fields(t *testing.T) {
 	}
 	if got := cfg.IntentMinConfidence["arap"]; got != 0.7 {
 		t.Fatalf("intent_min_confidence env override not effective, got=%v", got)
+	}
+}
+
+func TestRuleLexiconAccessors(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "intents": {
+      "large_transaction": {"keywords": ["峰值来款"]},
+      "identity": {"keywords": ["什么来头"]},
+      "precise": {"keywords": ["结余存量"]}
+    },
+    "metric_keywords": {
+      "profit": ["净赚"]
+    },
+    "hr_breakdown_keywords": ["细拆"],
+    "counterparty_classification_question_keywords": ["归类判断"],
+    "profit_single_view_block_keywords": ["不一致"]
+  },
+  "counterparty": {
+    "roles": {
+      "customer": ["客证"],
+      "supplier": ["供证"],
+      "employee": ["员证"]
+    },
+    "tax": {
+      "output": ["销证"],
+      "input": ["进证"]
+    }
+  },
+  "internal_party": {
+    "org_suffixes": ["中心"],
+    "account_context_keywords": ["内部代发"]
+  }
+}`)
+
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	cfg := query.CurrentRuleConfig()
+	if got := cfg.IntentKeywords(query.IntentLargeTransactionQuery); len(got) != 1 || got[0] != "峰值来款" {
+		t.Fatalf("intent lexicon accessor large_transaction = %v", got)
+	}
+	if got := cfg.IntentKeywords(query.IntentIdentityQuery); len(got) != 1 || got[0] != "什么来头" {
+		t.Fatalf("intent lexicon accessor identity = %v", got)
+	}
+	if got := cfg.IntentKeywords(query.IntentPrecise); len(got) != 1 || got[0] != "结余存量" {
+		t.Fatalf("intent lexicon accessor precise = %v", got)
+	}
+	if got := cfg.MetricKeywords("profit"); len(got) != 1 || got[0] != "净赚" {
+		t.Fatalf("metric lexicon accessor profit = %v", got)
+	}
+	if got := cfg.HRBreakdownKeywords(); len(got) != 1 || got[0] != "细拆" {
+		t.Fatalf("hr breakdown lexicon accessor = %v", got)
+	}
+	if got := cfg.CounterpartyClassificationQuestionKeywords(); len(got) != 1 || got[0] != "归类判断" {
+		t.Fatalf("counterparty classification lexicon accessor = %v", got)
+	}
+	if got := cfg.ProfitSingleViewBlockKeywords(); len(got) != 1 || got[0] != "不一致" {
+		t.Fatalf("profit single view block lexicon accessor = %v", got)
+	}
+	if got := cfg.CounterpartyRoleKeywords(query.CounterpartyCustomer); len(got) != 1 || got[0] != "客证" {
+		t.Fatalf("counterparty customer lexicon accessor = %v", got)
+	}
+	if got := cfg.CounterpartyRoleKeywords(query.CounterpartySupplier); len(got) != 1 || got[0] != "供证" {
+		t.Fatalf("counterparty supplier lexicon accessor = %v", got)
+	}
+	if got := cfg.CounterpartyRoleKeywords(query.CounterpartyEmployee); len(got) != 1 || got[0] != "员证" {
+		t.Fatalf("counterparty employee lexicon accessor = %v", got)
+	}
+	if got := cfg.TaxKeywords(query.TaxSideOutput); len(got) != 1 || got[0] != "销证" {
+		t.Fatalf("tax output lexicon accessor = %v", got)
+	}
+	if got := cfg.TaxKeywords(query.TaxSideInput); len(got) != 1 || got[0] != "进证" {
+		t.Fatalf("tax input lexicon accessor = %v", got)
+	}
+	if got := cfg.InternalPartyOrgSuffixes(); len(got) != 1 || got[0] != "中心" {
+		t.Fatalf("internal party org suffix accessor = %v", got)
+	}
+	if got := cfg.InternalPartyAccountContextKeywords(); len(got) != 1 || got[0] != "内部代发" {
+		t.Fatalf("internal party context keyword accessor = %v", got)
 	}
 }

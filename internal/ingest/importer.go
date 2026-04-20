@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	_ "modernc.org/sqlite"
-
 	dbschema "financeqa/internal/db"
 	"financeqa/internal/dimensions"
 	"financeqa/internal/parser"
@@ -134,12 +132,12 @@ func (i *Importer) ImportParsed(ctx context.Context, dbPath string, result parse
 
 func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, result parser.ParseResult, opts ImportOptions) error {
 	if err := dbschema.Bootstrap(ctx, dbPath); err != nil {
-		return fmt.Errorf("bootstrap sqlite db: %w", err)
+		return fmt.Errorf("bootstrap db: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := dbschema.Open(ctx, dbPath)
 	if err != nil {
-		return fmt.Errorf("open sqlite db: %w", err)
+		return fmt.Errorf("open db: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
@@ -170,6 +168,16 @@ func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, r
 		}
 	}
 
+	existingKeys := map[string]struct{}{}
+	fingerprintColumns := recordFingerprintColumns(result.Metadata.ReportType)
+	if hasPolicy && policy.Enabled {
+		existingKeys, err = loadExistingNormalizedKeys(ctx, tx, result, fingerprintColumns, shouldClear)
+		if err != nil {
+			return fmt.Errorf("load existing dedupe keys: %w", err)
+		}
+	}
+	batchKeys := map[string]struct{}{}
+
 	for _, row := range result.Data {
 		if resolvedCompany != "" {
 			row["company"] = resolvedCompany
@@ -183,6 +191,19 @@ func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, r
 				if m, err := i.dim.ResolveMemberByName(ctx, result.Metadata.Company, "CAS", accName); err == nil {
 					row["account_code"] = m.Code
 				}
+			}
+		}
+
+		if hasPolicy && policy.Enabled {
+			key := normalizedRecordKey(row, fingerprintColumns)
+			if key != "" {
+				if _, ok := existingKeys[key]; ok {
+					continue
+				}
+				if _, ok := batchKeys[key]; ok {
+					continue
+				}
+				batchKeys[key] = struct{}{}
 			}
 		}
 
@@ -259,6 +280,23 @@ func defaultDedupeColumns(tableName string) []string {
 	}
 }
 
+func recordFingerprintColumns(tableName string) []string {
+	switch tableName {
+	case "bank_statement":
+		return []string{"company", "account_no", "account_name", "currency", "transaction_date", "transaction_time", "transaction_type", "debit_amount", "credit_amount", "balance", "summary", "counterparty_name", "counterparty_account"}
+	case "journal":
+		return []string{"company", "period", "voucher_date", "voucher_no", "account_code", "account_name", "summary", "direction", "amount", "debit_amount", "credit_amount", "counterparty"}
+	case "income_statement":
+		return []string{"company", "period", "item_name", "current_amount", "cumulative_amount"}
+	case "balance_sheet":
+		return []string{"company", "period", "account_code", "account_name", "opening_balance", "closing_balance"}
+	case "balance_detail":
+		return []string{"company", "year", "period", "account_code", "account_name", "account_level", "opening_debit", "opening_credit", "current_debit", "current_credit", "closing_debit", "closing_credit"}
+	default:
+		return defaultDedupeColumns(tableName)
+	}
+}
+
 func dedupeKeepLatest(ctx context.Context, tx *sql.Tx, tableName string, keyColumns []string) error {
 	keyColumns = sanitizeColumns(keyColumns)
 	if len(keyColumns) == 0 {
@@ -267,7 +305,7 @@ func dedupeKeepLatest(ctx context.Context, tx *sql.Tx, tableName string, keyColu
 
 	var keyExprs []string
 	for _, col := range keyColumns {
-		keyExprs = append(keyExprs, fmt.Sprintf("COALESCE(CAST(%s AS TEXT), '')", col))
+		keyExprs = append(keyExprs, fmt.Sprintf("TRIM(COALESCE(CAST(%s AS TEXT), ''))", col))
 	}
 	partition := strings.Join(keyExprs, ", ")
 	query := fmt.Sprintf(`
@@ -291,9 +329,11 @@ WHERE id IN (
 func sanitizeColumns(cols []string) []string {
 	allowed := map[string]struct{}{
 		"company":              {},
+		"year":                 {},
 		"period":               {},
 		"account_name":         {},
 		"account_code":         {},
+		"account_level":        {},
 		"item_name":            {},
 		"account_no":           {},
 		"currency":             {},
@@ -308,6 +348,19 @@ func sanitizeColumns(cols []string) []string {
 		"counterparty_account": {},
 		"voucher_date":         {},
 		"voucher_no":           {},
+		"direction":            {},
+		"amount":               {},
+		"counterparty":         {},
+		"opening_balance":      {},
+		"closing_balance":      {},
+		"current_amount":       {},
+		"cumulative_amount":    {},
+		"opening_debit":        {},
+		"opening_credit":       {},
+		"current_debit":        {},
+		"current_credit":       {},
+		"closing_debit":        {},
+		"closing_credit":       {},
 	}
 
 	seen := map[string]struct{}{}
@@ -325,6 +378,154 @@ func sanitizeColumns(cols []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func loadExistingNormalizedKeys(ctx context.Context, tx *sql.Tx, result parser.ParseResult, keyColumns []string, shouldClear bool) (map[string]struct{}, error) {
+	keys := map[string]struct{}{}
+	if shouldClear {
+		return keys, nil
+	}
+
+	cols := sanitizeColumns(keyColumns)
+	if len(cols) == 0 {
+		return keys, nil
+	}
+
+	whereSQL, args := existingKeyScope(result)
+	query := fmt.Sprintf("SELECT %s FROM %s %s", strings.Join(cols, ", "), result.Metadata.ReportType, whereSQL)
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		values, err := scanRowValues(rows, len(cols))
+		if err != nil {
+			return nil, err
+		}
+		key := normalizedValuesKey(values)
+		if key == "" {
+			continue
+		}
+		keys[key] = struct{}{}
+	}
+	return keys, rows.Err()
+}
+
+func existingKeyScope(result parser.ParseResult) (string, []any) {
+	company := strings.TrimSpace(result.Metadata.Company)
+	switch result.Metadata.ReportType {
+	case "income_statement", "balance_sheet", "balance_detail":
+		period := strings.TrimSpace(result.Metadata.PeriodEnd)
+		if company != "" && period != "" {
+			return "WHERE company = ? AND period = ?", []any{company, period}
+		}
+	case "journal":
+		minDate, maxDate := recordDateRange(result.Data, "voucher_date", "date")
+		if company != "" && minDate != "" && maxDate != "" {
+			return "WHERE company = ? AND voucher_date BETWEEN ? AND ?", []any{company, minDate, maxDate}
+		}
+	case "bank_statement":
+		minDate, maxDate := recordDateRange(result.Data, "transaction_date")
+		if company != "" && minDate != "" && maxDate != "" {
+			return "WHERE company = ? AND transaction_date BETWEEN ? AND ?", []any{company, minDate, maxDate}
+		}
+	}
+	if company != "" {
+		return "WHERE company = ?", []any{company}
+	}
+	return "", nil
+}
+
+func recordDateRange(rows []parser.Record, fields ...string) (string, string) {
+	minDate := ""
+	maxDate := ""
+	for _, row := range rows {
+		value := ""
+		for _, field := range fields {
+			value = strings.TrimSpace(fmt.Sprintf("%v", row[field]))
+			if value != "" && value != "<nil>" {
+				break
+			}
+		}
+		if value == "" || value == "<nil>" {
+			continue
+		}
+		if minDate == "" || value < minDate {
+			minDate = value
+		}
+		if maxDate == "" || value > maxDate {
+			maxDate = value
+		}
+	}
+	return minDate, maxDate
+}
+
+func scanRowValues(rows *sql.Rows, count int) ([]any, error) {
+	values := make([]any, count)
+	dest := make([]any, count)
+	for i := range values {
+		dest[i] = &values[i]
+	}
+	if err := rows.Scan(dest...); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func normalizedRecordKey(row parser.Record, keyColumns []string) string {
+	cols := sanitizeColumns(keyColumns)
+	if len(cols) == 0 {
+		return ""
+	}
+	values := make([]any, 0, len(cols))
+	for _, col := range cols {
+		values = append(values, row[col])
+	}
+	return normalizedValuesKey(values)
+}
+
+func normalizedValuesKey(values []any) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, normalizeKeyValue(value))
+	}
+	return strings.Join(parts, "\x1f")
+}
+
+func normalizeKeyValue(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case []byte:
+		return strings.TrimSpace(string(v))
+	case float64:
+		return fmt.Sprintf("%.6f", v)
+	case float32:
+		return fmt.Sprintf("%.6f", v)
+	case int:
+		return fmt.Sprintf("%.6f", float64(v))
+	case int64:
+		return fmt.Sprintf("%.6f", float64(v))
+	case int32:
+		return fmt.Sprintf("%.6f", float64(v))
+	case uint:
+		return fmt.Sprintf("%.6f", float64(v))
+	case uint64:
+		return fmt.Sprintf("%.6f", float64(v))
+	case uint32:
+		return fmt.Sprintf("%.6f", float64(v))
+	case bool:
+		if v {
+			return "1"
+		}
+		return "0"
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", v))
+	}
 }
 
 func resolveCompanyForImport(ctx context.Context, tx *sql.Tx, parsedCompany, override string) (string, error) {

@@ -11,6 +11,11 @@ import (
 	"financeqa/internal/types"
 )
 
+// Legacy query keyword manager.
+//
+// New query-layer keyword and lexicon rules should go to config/rules.json and
+// be loaded via internal/query/rules_config.go. This manager remains only for
+// backward compatibility with older query_keywords.json consumers.
 func defaultKeywordsConfig() types.KeywordsConfig {
 	return types.KeywordsConfig{
 		Intents: map[string]types.IntentConfig{

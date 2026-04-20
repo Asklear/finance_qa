@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -25,6 +24,9 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	_ = support.LoadDotEnv(".env")
+	_ = support.LoadDotEnv("/root/finance_qa/.env")
+
 	if len(args) == 0 {
 		printUsage(stderr)
 		return 1
@@ -59,7 +61,7 @@ func runInitDB(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("init-db", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -158,7 +160,7 @@ func isProductionMode() bool {
 func runQuery(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", "模拟财务", "company name to query")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -195,7 +197,7 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 func runHostData(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("host-data", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", "模拟财务", "company name to query")
 	from := fs.String("from", "", "period start in YYYY-MM")
 	to := fs.String("to", "", "period end in YYYY-MM")
@@ -228,7 +230,7 @@ func runHostData(args []string, stdout, stderr io.Writer) int {
 func runImport(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 	incremental := fs.Bool("incremental", false, "incremental import (don't clear existing data)")
 	company := fs.String("company", "", "override company name for imported file")
 	if err := fs.Parse(args); err != nil {
@@ -240,7 +242,7 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	db, err := sql.Open("sqlite", *dbPath)
+	db, err := db.Open(context.Background(), *dbPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open db failed: %v\n", err)
 		return 1
@@ -270,7 +272,7 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 func runSync(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 	incremental := fs.Bool("incremental", false, "incremental sync (don't clear existing data)")
 	company := fs.String("company", "", "override company name for all imported files in this sync")
 	if err := fs.Parse(args); err != nil {
@@ -282,7 +284,7 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	db, err := sql.Open("sqlite", *dbPath)
+	db, err := db.Open(context.Background(), *dbPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open db failed: %v\n", err)
 		return 1
@@ -312,7 +314,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "list":
 		fs := flag.NewFlagSet("dimensions list", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
@@ -331,7 +333,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "add-dimension":
 		fs := flag.NewFlagSet("dimensions add-dimension", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		code := fs.String("code", "", "dimension code")
 		name := fs.String("name", "", "dimension name")
 		typ := fs.String("type", "custom", "dimension type")
@@ -359,7 +361,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "add-member":
 		fs := flag.NewFlagSet("dimensions add-member", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		dimensionCode := fs.String("dimension", "", "dimension code")
 		code := fs.String("code", "", "member code")
 		name := fs.String("name", "", "member name")
@@ -390,7 +392,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "mapping-stats":
 		fs := flag.NewFlagSet("dimensions mapping-stats", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		company := fs.String("company", "", "company")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -414,7 +416,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "seed-standard":
 		fs := flag.NewFlagSet("dimensions seed-standard", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		company := fs.String("company", "", "company to initialize standard rules for")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
@@ -442,7 +444,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "export-package":
 		fs := flag.NewFlagSet("dimensions export-package", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		outputPath := fs.String("output", "", "output file path")
 		format := fs.String("format", "json", "export format")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -475,7 +477,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "import-dimensions":
 		fs := flag.NewFlagSet("dimensions import-dimensions", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		filePath := fs.String("file", "", "input json file")
 		validateOnly := fs.Bool("validate-only", false, "validate without persisting")
 		skipExisting := fs.Bool("skip-existing", false, "skip existing dimensions")
@@ -512,7 +514,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "import-members":
 		fs := flag.NewFlagSet("dimensions import-members", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		dimensionCode := fs.String("dimension", "", "dimension code")
 		filePath := fs.String("file", "", "input json file")
 		validateOnly := fs.Bool("validate-only", false, "validate without persisting")
@@ -550,7 +552,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "import-rules":
 		fs := flag.NewFlagSet("dimensions import-rules", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		filePath := fs.String("file", "", "input json file")
 		company := fs.String("company", "", "override company")
 		validateOnly := fs.Bool("validate-only", false, "validate without persisting")
@@ -589,7 +591,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 	case "preview-import":
 		fs := flag.NewFlagSet("dimensions preview-import", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		dbPath := fs.String("db", support.DefaultDBPath(""), "path to sqlite database file")
+		dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 		previewType := fs.String("type", "", "preview type: dimensions or members")
 		dimensionCode := fs.String("dimension", "", "dimension code for member preview")
 		filePath := fs.String("file", "", "input json file")
@@ -641,7 +643,7 @@ func runDimensions(args []string, stdout, stderr io.Writer) int {
 }
 
 func openDimensionsManager(dbPath string) (*dimensions.Manager, func(), error) {
-	sqlDB, err := sql.Open("sqlite", dbPath)
+	sqlDB, err := db.Open(context.Background(), dbPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -684,23 +686,23 @@ func writeJSONFile(path string, v any) error {
 }
 
 func printUsage(out io.Writer) {
-	fmt.Fprintln(out, "financeqa - Go CLI foundation")
+	fmt.Fprintln(out, "financeqa - PostgreSQL CLI")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Usage:")
-	fmt.Fprintln(out, "  financeqa init-db [--db <path>]")
+	fmt.Fprintln(out, "  financeqa init-db [--db <dsn>]")
 	fmt.Fprintln(out, "  financeqa config show [--config <path>]")
 	fmt.Fprintln(out, "  financeqa keywords intents [--keywords <path>]")
-	fmt.Fprintln(out, "  financeqa query [--db <path>] [--company <name>] <question>")
-	fmt.Fprintln(out, "  financeqa import [--db <path>] [--incremental] <file>")
-	fmt.Fprintln(out, "  financeqa sync [--db <path>] [--incremental] <directory>")
-	fmt.Fprintln(out, "  financeqa dimensions list [--db <path>]")
-	fmt.Fprintln(out, "  financeqa dimensions add-dimension --db <path> --code <code> --name <name> --type <type>")
-	fmt.Fprintln(out, "  financeqa dimensions add-member --db <path> --dimension <code> --code <code> --name <name>")
-	fmt.Fprintln(out, "  financeqa dimensions mapping-stats [--db <path>] [--company <name>]")
-	fmt.Fprintln(out, "  financeqa dimensions seed-standard [--db <path>] --company <name>")
-	fmt.Fprintln(out, "  financeqa dimensions export-package --db <path> --output <file> [--format json]")
-	fmt.Fprintln(out, "  financeqa dimensions import-dimensions --db <path> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
-	fmt.Fprintln(out, "  financeqa dimensions import-members --db <path> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
-	fmt.Fprintln(out, "  financeqa dimensions import-rules --db <path> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing]")
-	fmt.Fprintln(out, "  financeqa dimensions preview-import --db <path> --type <dimensions|members> --file <file> [--dimension <code>]")
+	fmt.Fprintln(out, "  financeqa query [--db <dsn>] [--company <name>] <question>")
+	fmt.Fprintln(out, "  financeqa import [--db <dsn>] [--incremental] <file>")
+	fmt.Fprintln(out, "  financeqa sync [--db <dsn>] [--incremental] <directory>")
+	fmt.Fprintln(out, "  financeqa dimensions list [--db <dsn>]")
+	fmt.Fprintln(out, "  financeqa dimensions add-dimension --db <dsn> --code <code> --name <name> --type <type>")
+	fmt.Fprintln(out, "  financeqa dimensions add-member --db <dsn> --dimension <code> --code <code> --name <name>")
+	fmt.Fprintln(out, "  financeqa dimensions mapping-stats [--db <dsn>] [--company <name>]")
+	fmt.Fprintln(out, "  financeqa dimensions seed-standard [--db <dsn>] --company <name>")
+	fmt.Fprintln(out, "  financeqa dimensions export-package --db <dsn> --output <file> [--format json]")
+	fmt.Fprintln(out, "  financeqa dimensions import-dimensions --db <dsn> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
+	fmt.Fprintln(out, "  financeqa dimensions import-members --db <dsn> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
+	fmt.Fprintln(out, "  financeqa dimensions import-rules --db <dsn> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing]")
+	fmt.Fprintln(out, "  financeqa dimensions preview-import --db <dsn> --type <dimensions|members> --file <file> [--dimension <code>]")
 }

@@ -103,6 +103,82 @@ func TestImportParsed_BankStatement_IncrementalLatestKeepsHistoryAndDedupes(t *t
 	}
 }
 
+func TestImportParsed_BankStatement_NormalizedDuplicateShouldBeSkippedOnUpload(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "policy_bank_normalized.db")
+	imp := ingest.NewImporter(nil)
+
+	first := parser.ParseResult{
+		Metadata: parser.FileMetadata{
+			Company:    "测试公司",
+			ReportType: "bank_statement",
+		},
+		Data: []parser.Record{
+			{
+				"company":              "测试公司",
+				"account_no":           "A001",
+				"account_name":         "基本户",
+				"currency":             "人民币",
+				"transaction_date":     "2026-03-01",
+				"transaction_time":     "09:00:00",
+				"transaction_type":     "转账",
+				"debit_amount":         100.0,
+				"credit_amount":        0.0,
+				"balance":              900.0,
+				"summary":              "付款A",
+				"counterparty_name":    "供应商A",
+				"counterparty_account": "CP-A",
+			},
+		},
+	}
+	if err := imp.ImportParsed(ctx, dbPath, first, false); err != nil {
+		t.Fatalf("first import failed: %v", err)
+	}
+
+	second := parser.ParseResult{
+		Metadata: parser.FileMetadata{
+			Company:    "测试公司",
+			ReportType: "bank_statement",
+		},
+		Data: []parser.Record{
+			{
+				"company":              "测试公司",
+				"account_no":           " A001 ",
+				"account_name":         "基本户",
+				"currency":             "人民币",
+				"transaction_date":     "2026-03-01",
+				"transaction_time":     "09:00:00",
+				"transaction_type":     "转账",
+				"debit_amount":         100.0,
+				"credit_amount":        0.0,
+				"balance":              900.0,
+				"summary":              " 付款A ",
+				"counterparty_name":    " 供应商A ",
+				"counterparty_account": "CP-A",
+			},
+		},
+	}
+	if err := imp.ImportParsed(ctx, dbPath, second, false); err != nil {
+		t.Fatalf("second import failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite failed: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM bank_statement`).Scan(&rows); err != nil {
+		t.Fatalf("count bank_statement failed: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("expected normalized duplicate to be skipped, got %d rows", rows)
+	}
+}
+
 func TestImportParsed_IncomeStatement_FullReplaceOverridesIncrementalFlag(t *testing.T) {
 	t.Parallel()
 

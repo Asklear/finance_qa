@@ -55,6 +55,7 @@ func NormalizeInputTax(counterparty string, evidence []LedgerEvidence) TaxBreakd
 }
 
 func normalizeTaxSide(side TaxSide, counterparty string, role CounterpartyRole, evidence []LedgerEvidence) TaxBreakdown {
+	cfg := getRuleConfig()
 	var cashIn, cashOut, accrual, tax float64
 	signals := make([]string, 0, len(evidence)*2)
 
@@ -78,22 +79,22 @@ func normalizeTaxSide(side TaxSide, counterparty string, role CounterpartyRole, 
 
 		switch side {
 		case TaxSideOutput:
-			if isRevenueEvidence(text, ev) {
+			if isRevenueEvidence(text, ev, cfg) {
 				accrual += chooseAmount(ev)
-				signals = append(signals, "revenue:"+pickFirstHit(text, customerKeywords))
+				signals = append(signals, "revenue:"+pickFirstHit(text, cfg.CounterpartyRoleKeywords(CounterpartyCustomer)))
 			}
-			if isOutputTaxEvidence(text, ev) {
+			if isOutputTaxEvidence(text, ev, cfg) {
 				tax += chooseAmount(ev)
-				signals = append(signals, "output_tax:"+pickFirstHit(text, outputTaxKeywords))
+				signals = append(signals, "output_tax:"+pickFirstHit(text, cfg.TaxKeywords(TaxSideOutput)))
 			}
 		case TaxSideInput:
-			if isCostEvidence(text, ev) {
+			if isCostEvidence(text, ev, cfg) {
 				accrual += chooseAmount(ev)
-				signals = append(signals, "cost:"+pickFirstHit(text, supplierKeywords))
+				signals = append(signals, "cost:"+pickFirstHit(text, cfg.CounterpartyRoleKeywords(CounterpartySupplier)))
 			}
-			if isInputTaxEvidence(text, ev) {
+			if isInputTaxEvidence(text, ev, cfg) {
 				tax += chooseAmount(ev)
-				signals = append(signals, "input_tax:"+pickFirstHit(text, inputTaxKeywords))
+				signals = append(signals, "input_tax:"+pickFirstHit(text, cfg.TaxKeywords(TaxSideInput)))
 			}
 		}
 	}
@@ -169,29 +170,29 @@ func hasARCollectionSignals(evidence []LedgerEvidence) bool {
 	return false
 }
 
-func isRevenueEvidence(text string, ev LedgerEvidence) bool {
+func isRevenueEvidence(text string, ev LedgerEvidence, cfg RuleConfig) bool {
 	if hasAny(text, []string{"营业收入", "主营业务收入", "销售收入", "收入", "销售", "6001", "4001"}) {
 		return true
 	}
-	return ev.CreditAmount > 0 && hasAny(text, customerKeywords)
+	return ev.CreditAmount > 0 && hasAny(text, cfg.CounterpartyRoleKeywords(CounterpartyCustomer))
 }
 
-func isCostEvidence(text string, ev LedgerEvidence) bool {
+func isCostEvidence(text string, ev LedgerEvidence, cfg RuleConfig) bool {
 	if hasAny(text, []string{"营业成本", "成本", "采购", "费用", "支出", "服务费", "技术服务费", "6601", "6602", "6401", "5001", "存货", "材料"}) {
 		return true
 	}
-	return ev.DebitAmount > 0 && hasAny(text, supplierKeywords)
+	return ev.DebitAmount > 0 && hasAny(text, cfg.CounterpartyRoleKeywords(CounterpartySupplier))
 }
 
-func isOutputTaxEvidence(text string, ev LedgerEvidence) bool {
-	if hasAny(text, outputTaxKeywords) {
+func isOutputTaxEvidence(text string, ev LedgerEvidence, cfg RuleConfig) bool {
+	if hasAny(text, cfg.TaxKeywords(TaxSideOutput)) {
 		return true
 	}
 	return ev.CreditAmount > 0 && hasAny(text, []string{"应交税费"})
 }
 
-func isInputTaxEvidence(text string, ev LedgerEvidence) bool {
-	if hasAny(text, inputTaxKeywords) {
+func isInputTaxEvidence(text string, ev LedgerEvidence, cfg RuleConfig) bool {
+	if hasAny(text, cfg.TaxKeywords(TaxSideInput)) {
 		return true
 	}
 	return ev.DebitAmount > 0 && hasAny(text, []string{"应交税费"})

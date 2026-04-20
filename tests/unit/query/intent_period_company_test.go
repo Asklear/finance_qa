@@ -93,3 +93,60 @@ func TestClassifyIntentV2TraceContract(t *testing.T) {
 		t.Fatalf("expected non-empty scores")
 	}
 }
+
+func TestIntentRouterConfigurableLargeTransactionKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "intents": {
+      "large_transaction": {
+        "keywords": ["峰值来款"]
+      }
+    }
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	intent, _ := query.ClassifyIntentV2("3月峰值来款是谁")
+	if intent != query.IntentLargeTransactionQuery {
+		t.Fatalf("ClassifyIntentV2 with configurable large transaction keywords = %s, want %s", intent, query.IntentLargeTransactionQuery)
+	}
+}
+
+func TestIntentRouterConfigurableIdentityKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "intents": {
+      "identity": {
+        "keywords": ["什么来头"]
+      }
+    }
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	intent, _ := query.ClassifyIntentV2("汇智什么来头")
+	if intent != query.IntentIdentityQuery {
+		t.Fatalf("ClassifyIntentV2 with configurable identity keywords = %s, want %s", intent, query.IntentIdentityQuery)
+	}
+}
+
+func TestIntentRouterConfigurablePreciseKeywords(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "intents": {
+      "precise": {
+        "keywords": ["结余存量"]
+      }
+    }
+  }
+}`)
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	intent, _ := query.ClassifyIntentV2("货币资金结余存量")
+	if intent != query.IntentPrecise {
+		t.Fatalf("ClassifyIntentV2 with configurable precise keywords = %s, want %s", intent, query.IntentPrecise)
+	}
+}

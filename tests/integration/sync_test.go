@@ -19,6 +19,9 @@ func TestImporterSyncDirectory(t *testing.T) {
 
 	dir := t.TempDir()
 	src := filepath.Join("..", "testdata", "交易查询，模拟财务科技有限公司，125922640010001，人民币，20260101-20260228，共93笔_20260401121229.xlsx")
+	if _, err := os.Stat(src); err != nil {
+		t.Skipf("fixture not present: %v", err)
+	}
 	dst := filepath.Join(dir, filepath.Base(src))
 	content, err := os.ReadFile(src)
 	if err != nil {
@@ -28,7 +31,7 @@ func TestImporterSyncDirectory(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	dbPath := filepath.Join(t.TempDir(), "finance.db")
+	dbPath := filepath.Join(t.TempDir(), "sync-target.sqlite")
 	if err := db.Bootstrap(context.Background(), dbPath); err != nil {
 		t.Fatalf("bootstrap db: %v", err)
 	}
