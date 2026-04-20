@@ -17,20 +17,14 @@ echo "🔨 2. 跨平台编译 CLI 双架构执行文件..."
 mkdir -p "$OUTPUT_DIR/bin"
 
 # 编译 Linux x64 (服务端最常见架构)
-# CGO_ENABLED=1 because mattn/go-sqlite3 requires cgo. We'll compile natively or require gcc locally
-echo ">> 编译适用你本机的二进制执行档 (默认带着 SQLite cgo 驱动)..."
+echo ">> 编译适用你本机的二进制执行档..."
 go build -o "$OUTPUT_DIR/bin/financeqa" ./cmd/financeqa/...
 
 echo "📦 3. 规整并打包知识与附带资产..."
-# 将给 AI 读的说明手册放入根目录
+# 将给 AI 读的说明手册放入根目录，并保留附录的相对路径
 cp SKILL.md "$OUTPUT_DIR/"
-
-# 放入测试沙箱使用的 DB 供测试（如果有正式生产环境，这里不打包）
-# 如果目前库里没有任何 DB 也是没问题的, sync 指令可以自己通过导出的表格凭空生成
-if [ -f "finance.db" ]; then
-    cp finance.db "$OUTPUT_DIR/bin/"
-    echo ">> (提示: 已将本地 finance.db 包含进测试包内待部署)"
-fi
+mkdir -p "$OUTPUT_DIR/docs"
+cp docs/SKILL_APPENDIX_FULL_2026-04-15.md "$OUTPUT_DIR/docs/"
 
 echo "🗜️ 4. 打包最终 OpenClaw 安装包..."
 cd dist

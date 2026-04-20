@@ -4,15 +4,74 @@ Bridge OpenClaw finance tools to finance_qa Go CLI.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 FINANCEQA_BIN = Path(os.environ.get("FINANCEQA_BIN", "/root/finance_qa/financeqa"))
-FINANCEQA_DB = Path(os.environ.get("FINANCEQA_DB", "/root/finance_qa/finance.db"))
+REPO_ROOT = Path(__file__).resolve().parents[3]
+FINANCEQA_SKILL_PATH = Path(os.environ.get("FINANCEQA_SKILL_PATH", str(REPO_ROOT / "SKILL.md")))
+
+
+def load_dotenv_if_exists(path):
+    p = Path(path)
+    if not p.exists():
+        return
+    for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        key = k.strip()
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = v.strip().strip("'").strip('"')
+
+
+load_dotenv_if_exists(".env")
+load_dotenv_if_exists("/root/finance_qa/.env")
+
+
+def load_contract_versions(skill_path):
+    raw = skill_path.read_text(encoding="utf-8")
+
+    def capture(name):
+        pattern = re.compile(r"`" + re.escape(name) + r"`:\s*`([^`]+)`")
+        match = pattern.search(raw)
+        if not match:
+            raise RuntimeError(f"missing {name} in skill contract file: {skill_path}")
+        return match.group(1).strip()
+
+    return capture("skill_contract_version"), capture("bridge_protocol_version")
+
+
+def default_db_target():
+    explicit = os.environ.get("FINANCEQA_DB")
+    if explicit:
+        return explicit
+    pg_host = os.environ.get("PGHOST", "")
+    pg_port = os.environ.get("PGPORT", "5432")
+    pg_user = os.environ.get("PGUSER", "")
+    pg_pass = os.environ.get("PGPASSWORD", "")
+    pg_db = os.environ.get("PGDATABASE", "")
+    pg_schema = os.environ.get("FINANCEQA_PG_SCHEMA", "tenant_uhub")
+    if pg_host and pg_user and pg_db:
+        return (
+            f"host={pg_host} port={pg_port} user={pg_user} password={pg_pass} "
+            f"dbname={pg_db} search_path={pg_schema},public"
+        )
+    return ""
+
+
+FINANCEQA_DB = default_db_target()
 DEFAULT_COMPANY = os.environ.get("FINANCEQA_DEFAULT_COMPANY", "南京优集数据科技有限公司")
-BRIDGE_PROTOCOL_VERSION = "v2"
+SKILL_CONTRACT_VERSION, BRIDGE_PROTOCOL_VERSION = load_contract_versions(FINANCEQA_SKILL_PATH)
 
 TOOLS = [
     {
@@ -73,8 +132,14 @@ def parse_json_or_none(text):
 def ensure_runtime_ready():
     if not FINANCEQA_BIN.exists():
         raise RuntimeError(f"financeqa binary not found: {FINANCEQA_BIN}")
-    if not FINANCEQA_DB.exists():
-        raise RuntimeError(f"finance database not found: {FINANCEQA_DB}")
+    db_text = str(FINANCEQA_DB)
+    if not db_text.strip():
+        raise RuntimeError("finance database is not configured; set FINANCEQA_DB or PostgreSQL env vars")
+    # FINANCEQA_DB can be either an explicit local sqlite path or a PostgreSQL DSN.
+    if "host=" in db_text and "dbname=" in db_text:
+        return
+    if not Path(FINANCEQA_DB).exists():
+        raise RuntimeError(f"finance database/dsn not found: {FINANCEQA_DB}")
 
 
 def now_utc_iso():
@@ -159,6 +224,7 @@ def build_structured_response(payload, query):
     payload = ensure_trace_fields(payload)
     payload["boss_reply"] = build_boss_reply(payload, query)
     payload["bridge_meta"] = {
+        "skill_contract_version": SKILL_CONTRACT_VERSION,
         "protocol_version": BRIDGE_PROTOCOL_VERSION,
         "generated_at": now_utc_iso(),
         "query": query,
@@ -258,6 +324,7 @@ def run_upload(file_path):
         raise RuntimeError((proc.stderr or proc.stdout or "").strip())
     payload = parse_json_or_none(proc.stdout) or {"raw": (proc.stdout or "").strip()}
     payload["bridge_meta"] = {
+        "skill_contract_version": SKILL_CONTRACT_VERSION,
         "protocol_version": BRIDGE_PROTOCOL_VERSION,
         "generated_at": now_utc_iso(),
         "company": DEFAULT_COMPANY,

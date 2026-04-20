@@ -33,3 +33,8 @@ test_questions*.txt
 scratch/
 tests/scripts/verification_v2.go
 .gstack/
+.env
+.env.*
+!.env.example
+.tmp*/
+dist/

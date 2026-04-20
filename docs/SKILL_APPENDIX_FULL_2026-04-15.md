@@ -1,11 +1,19 @@
 ---
 name: "finance"
-description: "v2.0.0｜面向老板问答的财务查询能力说明（双视角 + 可追溯过程 + 上层Agent兜底）"
+description: "Use when OpenClaw or Claude needs to call finance_qa for老板财务问答、宿主LLM兜底数据、报表导入、维度管理或财务配置查询。"
 ---
 
 # finance_qa Agent 调用手册（全功能暴露）
 
 本文档目标：把本代码库所有已实现功能与接口完整暴露，便于各类 Agent 直接调用。
+
+## 0. 附录状态
+
+1. `appendix_doc_version`: `2026-04-20.1`
+2. `skill_contract_version`: `2026-04-20.1`
+3. `bridge_protocol_version`: `v2`
+4. `last_updated`: `2026-04-20`
+5. 说明：文件名中的 `2026-04-15` 目前保留为历史命名；正文内容已按当前契约持续更新。
 
 ## 1. 能力定位
 
@@ -37,8 +45,9 @@ description: "v2.0.0｜面向老板问答的财务查询能力说明（双视角
 15. `data.exposed_fields.hr_breakdown`
 16. `data.exposed_fields.arithmetic_checks`
 17. `data.exposed_fields.intent_trace`
-18. `bridge_meta.protocol_version`
-19. `bridge_meta.capabilities`
+18. `bridge_meta.skill_contract_version`
+19. `bridge_meta.protocol_version`
+20. `bridge_meta.capabilities`
 
 说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
 
@@ -201,7 +210,7 @@ description: "v2.0.0｜面向老板问答的财务查询能力说明（双视角
 
 补充：
 
-1. 当前 `finance_bridge.py` 只注册上述 3 个工具，不再在桥接层读取或注入 `SKILL.md` 内容。
+1. 当前 `finance_bridge.py` 只注册上述 3 个工具，不再在桥接层读取或注入 `SKILL.md` 正文内容；但会读取 `SKILL.md` 顶部的契约版本标记，写入 `bridge_meta`。
 2. `sync`、`dimensions`、`config`、`keywords` 等高级功能，建议通过“直接 CLI 命令工具”暴露给 Agent（例如 shell/tool-call），不要假设桥接层已封装。
 3. 对任意 Agent 的桥接层，优先保留原始结构化响应与全部已实现字段，不要提前做摘要裁剪或白名单过滤。
 
@@ -321,19 +330,19 @@ description: "v2.0.0｜面向老板问答的财务查询能力说明（双视角
 
 ```bash
 # 查询
-./financeqa query --db finance.db --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
+./financeqa query --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
 
 # 主动获取上层 Agent 数据包
-./financeqa host-data --db finance.db --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
+./financeqa host-data --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
 
 # 单文件导入
-./financeqa import --db finance.db /path/to/report.xls
+./financeqa import /path/to/report.xls
 
 # 目录同步
-./financeqa sync --db finance.db /path/to/reports
+./financeqa sync /path/to/reports
 
 # 查看维度
-./financeqa dimensions list --db finance.db
+./financeqa dimensions list
 ```
 
 ## 11.1 测试与验收入口（建议发布前执行）
@@ -344,11 +353,15 @@ description: "v2.0.0｜面向老板问答的财务查询能力说明（双视角
 
 # 20道老板高频问题真实数据测试（JSON题库驱动）
 ./tests/scripts/run_top20_realdata_check.sh
+
+# 用户确认的19条问题真实数据测试
+./tests/scripts/run_user19_realdata_check.sh
 ```
 
 20题测试报告输出路径：
 
 1. `docs/2026-04-14-20问真实数据测试报告.md`
+2. `docs/2026-04-20-19问真实数据测试报告.md`
 
 ## 12. 财务统计基本原则（不可违反）
 

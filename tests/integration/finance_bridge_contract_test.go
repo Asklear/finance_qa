@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestFinanceBridgeListToolsAndV2Response(t *testing.T) {
 	tmp := t.TempDir()
 	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
 	skillPath := filepath.Join(tmp, "SKILL.md")
-	dbPath := filepath.Join(tmp, "finance.db")
+	dbPath := filepath.Join(tmp, "bridge-contract.sqlite")
 
 	stubScript := `#!/usr/bin/env bash
 set -euo pipefail
@@ -49,14 +50,13 @@ exit 2
 	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
 		t.Fatalf("write stub bin: %v", err)
 	}
-	if err := os.WriteFile(skillPath, []byte(`name: finance
-description: "version 1.2.3"
-`), 0o644); err != nil {
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
 		t.Fatalf("write skill: %v", err)
 	}
 	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
 		t.Fatalf("write db: %v", err)
 	}
+	skillContractVersion, bridgeProtocolVersion := readSkillContractVersions(t, skillPath)
 
 	listReq := `{"action":"list"}`
 	listRaw := runBridge(t, stubBin, dbPath, skillPath, listReq)
@@ -80,8 +80,11 @@ description: "version 1.2.3"
 		t.Fatalf("answer_method should be sql, got %v", method)
 	}
 	bridgeMeta := mustMapMap(t, payload, "bridge_meta")
-	if pv := bridgeMeta["protocol_version"]; pv != "v2" {
-		t.Fatalf("protocol_version should be v2, got %v", pv)
+	if pv := bridgeMeta["protocol_version"]; pv != bridgeProtocolVersion {
+		t.Fatalf("protocol_version should be %s, got %v", bridgeProtocolVersion, pv)
+	}
+	if sv := bridgeMeta["skill_contract_version"]; sv != skillContractVersion {
+		t.Fatalf("skill_contract_version should be %s, got %v", skillContractVersion, sv)
 	}
 	data := mustMapMap(t, payload, "data")
 	if _, ok := data["trace"].(map[string]any); !ok {
@@ -102,7 +105,7 @@ func TestFinanceBridgeFallbackToHostData(t *testing.T) {
 	tmp := t.TempDir()
 	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
 	skillPath := filepath.Join(tmp, "SKILL.md")
-	dbPath := filepath.Join(tmp, "finance.db")
+	dbPath := filepath.Join(tmp, "bridge-rollforward.sqlite")
 
 	stubScript := `#!/usr/bin/env bash
 set -euo pipefail
@@ -123,12 +126,13 @@ echo '{"success":true}'
 	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
 		t.Fatalf("write stub bin: %v", err)
 	}
-	if err := os.WriteFile(skillPath, []byte("name: finance\n"), 0o644); err != nil {
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
 		t.Fatalf("write skill: %v", err)
 	}
 	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
 		t.Fatalf("write db: %v", err)
 	}
+	skillContractVersion, bridgeProtocolVersion := readSkillContractVersions(t, skillPath)
 
 	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"FAIL_ME"}}`
 	callRaw := runBridge(t, stubBin, dbPath, skillPath, callReq)
@@ -147,6 +151,26 @@ echo '{"success":true}'
 	logs, ok := trace["calculation_logs"].([]any)
 	if !ok || len(logs) == 0 {
 		t.Fatalf("fallback should include trace.calculation_logs, got %v", trace["calculation_logs"])
+	}
+	bridgeMeta := mustMapMap(t, payload, "bridge_meta")
+	if pv := bridgeMeta["protocol_version"]; pv != bridgeProtocolVersion {
+		t.Fatalf("fallback protocol_version should be %s, got %v", bridgeProtocolVersion, pv)
+	}
+	if sv := bridgeMeta["skill_contract_version"]; sv != skillContractVersion {
+		t.Fatalf("fallback skill_contract_version should be %s, got %v", skillContractVersion, sv)
+	}
+}
+
+func TestRepositorySkillDocumentPublishesContractVersions(t *testing.T) {
+	t.Parallel()
+
+	skillPath := filepath.Join("..", "..", "SKILL.md")
+	skillContractVersion, bridgeProtocolVersion := readSkillContractVersions(t, skillPath)
+	if strings.TrimSpace(skillContractVersion) == "" {
+		t.Fatalf("skill_contract_version should not be empty")
+	}
+	if strings.TrimSpace(bridgeProtocolVersion) == "" {
+		t.Fatalf("bridge_protocol_version should not be empty")
 	}
 }
 
@@ -210,3 +234,36 @@ func mustMapMap(t *testing.T, m map[string]any, key string) map[string]any {
 	return obj
 }
 
+func sampleSkillMarkdown() string {
+	return `---
+name: finance
+description: "Use when OpenClaw or Claude needs to call finance_qa."
+---
+
+# finance_qa 调用契约
+
+## 0. 契约版本
+
+1. ` + "`skill_contract_version`: `2026-04-20.1`" + `
+2. ` + "`bridge_protocol_version`: `v2`" + `
+`
+}
+
+func readSkillContractVersions(t *testing.T, skillPath string) (string, string) {
+	t.Helper()
+	raw, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read skill file: %v", err)
+	}
+	return captureSkillVersion(t, string(raw), "skill_contract_version"), captureSkillVersion(t, string(raw), "bridge_protocol_version")
+}
+
+func captureSkillVersion(t *testing.T, skillDoc, key string) string {
+	t.Helper()
+	pattern := regexp.MustCompile("`" + regexp.QuoteMeta(key) + "`:\\s*`([^`]+)`")
+	match := pattern.FindStringSubmatch(skillDoc)
+	if len(match) != 2 {
+		t.Fatalf("missing %s in skill doc", key)
+	}
+	return match[1]
+}
