@@ -9,6 +9,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 FINANCEQA_BIN = Path(os.environ.get("FINANCEQA_BIN", "/root/finance_qa/financeqa"))
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -168,6 +169,39 @@ def ensure_runtime_ready():
 
 def now_utc_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def summarize_db_target(db_target):
+    text = str(db_target or "").strip()
+    if not text:
+        return ""
+
+    lowered = text.lower()
+    if text in (":memory:", "file::memory:?cache=shared"):
+        return "sqlite(memory)"
+
+    is_pg_kv = "host=" in lowered and "dbname=" in lowered
+    is_pg_url = lowered.startswith("postgres://") or lowered.startswith("postgresql://")
+    if is_pg_kv or is_pg_url:
+        schema = ""
+        if is_pg_kv:
+            match = re.search(r"(?:^|\s)search_path=([^\s]+)", text)
+            if match:
+                schema = match.group(1).split(",", 1)[0].strip()
+        else:
+            parsed = urlparse(text)
+            query = parse_qs(parsed.query)
+            search_path = (query.get("search_path") or [""])[0]
+            if search_path:
+                schema = search_path.split(",", 1)[0].strip()
+        if schema:
+            return f"postgresql(schema={schema})"
+        return "postgresql"
+
+    if lowered.endswith((".db", ".sqlite", ".sqlite3")) or "/" in text or "\\" in text:
+        return "sqlite(local)"
+
+    return "configured"
 
 
 def normalize_exposed_fields(data):
@@ -354,7 +388,7 @@ def build_structured_response(payload, query):
         "generated_at": now_utc_iso(),
         "query": query,
         "company": DEFAULT_COMPANY,
-        "db": str(FINANCEQA_DB),
+        "db": summarize_db_target(FINANCEQA_DB),
         "skill_path": str(FINANCEQA_SKILL_PATH),
         "skill_appendix_relative_path": SKILL_APPENDIX_RELATIVE_PATH,
         "skill_appendix_path": str(SKILL_APPENDIX_PATH),
@@ -462,7 +496,7 @@ def run_upload(file_path):
         "protocol_version": BRIDGE_PROTOCOL_VERSION,
         "generated_at": now_utc_iso(),
         "company": DEFAULT_COMPANY,
-        "db": str(FINANCEQA_DB),
+        "db": summarize_db_target(FINANCEQA_DB),
         "skill_path": str(FINANCEQA_SKILL_PATH),
         "skill_appendix_relative_path": SKILL_APPENDIX_RELATIVE_PATH,
         "skill_appendix_path": str(SKILL_APPENDIX_PATH),

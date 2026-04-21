@@ -93,6 +93,9 @@ exit 2
 	if sv := bridgeMeta["skill_contract_version"]; sv != skillContractVersion {
 		t.Fatalf("skill_contract_version should be %s, got %v", skillContractVersion, sv)
 	}
+	if db := bridgeMeta["db"]; db != "sqlite(local)" {
+		t.Fatalf("bridge_meta.db should be redacted sqlite(local), got %v", db)
+	}
 	if rel := bridgeMeta["skill_appendix_relative_path"]; rel != "docs/SKILL_APPENDIX_FULL.md" {
 		t.Fatalf("skill_appendix_relative_path should be docs/SKILL_APPENDIX_FULL.md, got %v", rel)
 	}
@@ -261,6 +264,61 @@ exit 2
 	}
 }
 
+func TestFinanceBridgeRedactsBridgeMetaDBForPostgres(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
+	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
+	pgDSN := "host=db.example.internal port=5432 user=finance password=super-secret dbname=finance_prod search_path=tenant_uhub,public"
+
+	stubScript := `#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+if [[ "$cmd" == "query" ]]; then
+  cat <<'JSON'
+{"success":true,"message":"ok","answer_method":"sql","data":{"metric":"营收","period":"2026-03","total":3106310.34},"executed_sql":["SELECT 1"],"calculation_logs":["calc-ok"]}
+JSON
+  exit 0
+fi
+if [[ "$cmd" == "host-data" ]]; then
+  echo '{"success":true,"answer_method":"llm_payload","data":{"llm_payload":{}}}'
+  exit 0
+fi
+echo "unknown cmd: $cmd" >&2
+exit 2
+`
+	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub bin: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
+
+	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"2026年3月营收是多少"}}`
+	callRaw := runBridgeWithDBTarget(t, stubBin, pgDSN, skillPath, callReq)
+	payload := parseBridgeContentPayload(t, callRaw)
+	bridgeMeta := mustMapMap(t, payload, "bridge_meta")
+
+	db, _ := bridgeMeta["db"].(string)
+	if db != "postgresql(schema=tenant_uhub)" {
+		t.Fatalf("bridge_meta.db should be redacted postgresql(schema=tenant_uhub), got %q", db)
+	}
+	for _, forbidden := range []string{"db.example.internal", "super-secret", "finance_prod", "user=finance"} {
+		if strings.Contains(db, forbidden) {
+			t.Fatalf("bridge_meta.db should not leak %q, got %q", forbidden, db)
+		}
+	}
+}
+
 func TestRepositorySkillDocumentPublishesContractVersions(t *testing.T) {
 	t.Parallel()
 
@@ -281,6 +339,25 @@ func runBridge(t *testing.T, binPath, dbPath, skillPath, reqJSON string) string 
 	cmd.Env = append(os.Environ(),
 		"FINANCEQA_BIN="+binPath,
 		"FINANCEQA_DB="+dbPath,
+		"FINANCEQA_SKILL_PATH="+skillPath,
+	)
+	cmd.Stdin = strings.NewReader(reqJSON)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("run bridge failed: %v, stderr=%s, stdout=%s", err, stderr.String(), stdout.String())
+	}
+	return stdout.String()
+}
+
+func runBridgeWithDBTarget(t *testing.T, binPath, dbTarget, skillPath, reqJSON string) string {
+	t.Helper()
+	bridgePath := filepath.Join("..", "..", "plugin", "openclaw-finance", "server", "finance_bridge.py")
+	cmd := exec.Command("python3", bridgePath)
+	cmd.Env = append(os.Environ(),
+		"FINANCEQA_BIN="+binPath,
+		"FINANCEQA_DB="+dbTarget,
 		"FINANCEQA_SKILL_PATH="+skillPath,
 	)
 	cmd.Stdin = strings.NewReader(reqJSON)
