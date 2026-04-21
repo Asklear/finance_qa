@@ -63,6 +63,16 @@ type Engine struct {
 	dim       *dimensions.Manager
 }
 
+type coreMetricCoverage struct {
+	RequestedFrom string
+	RequestedTo   string
+	ActualFrom    string
+	ActualTo      string
+	AvailableTo   string
+	Truncated     bool
+	HasData       bool
+}
+
 func NewEngine(dbPath, company string) (*Engine, error) {
 	if err := dbpkg.Bootstrap(context.Background(), dbPath); err != nil {
 		return nil, fmt.Errorf("bootstrap db: %w", err)
@@ -177,7 +187,7 @@ func (e *Engine) Query(question string) Result {
 
 	entity := e.extractNamedEntity(q)
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
-	if !hasRealEntity && shouldForceDualPerspective(q) {
+	if isIntervalCoreMetricQuestion(q, entity, hasRealEntity, from, to) || shouldPreferCoreMetricSummary(q, entity, hasRealEntity, from, to) {
 		result = e.queryDualPerspectiveForCoreMetric(q, from, to)
 		if result.Success {
 			return finalize(result)
@@ -459,14 +469,48 @@ func (e *Engine) queryAccrualProfitOnly(from, to string) Result {
 }
 
 func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Result {
-	year, month := parsePeriod(to)
+	coverage := e.resolveCoreMetricCoverage(from, to)
+	requestedPeriodLabel := displayPeriod(from, to)
+	if !coverage.HasData {
+		cutoff := coverage.AvailableTo
+		if strings.TrimSpace(cutoff) == "" {
+			cutoff = "当前已入库账期"
+		}
+		return Result{
+			Success:      true,
+			Message:      fmt.Sprintf("你问的是 %s，但当前账务数据仅到 %s，这个期间还没有可用数据。", requestedPeriodLabel, cutoff),
+			AnswerMethod: "sql",
+			Data: map[string]any{
+				"period":           requestedPeriodLabel,
+				"requested_period": requestedPeriodLabel,
+				"data_ready":       false,
+				"coverage": map[string]any{
+					"requested_from": from,
+					"requested_to":   to,
+					"actual_from":    coverage.ActualFrom,
+					"actual_to":      coverage.ActualTo,
+					"available_to":   coverage.AvailableTo,
+					"truncated":      coverage.Truncated,
+					"data_ready":     false,
+				},
+			},
+			ExecutedSQL: []string{
+				"coverage_guard: inspect latest available period across income_statement / balance_detail / journal / bank_statement",
+			},
+			CalculationLogs: []string{
+				fmt.Sprintf("[覆盖范围] requested=%s actual=%s available_to=%s truncated=%t data_ready=false", requestedPeriodLabel, displayPeriod(coverage.ActualFrom, coverage.ActualTo), coverage.AvailableTo, coverage.Truncated),
+			},
+		}
+	}
+
 	e.calc.ResetTrace()
-	unified, sqls, logs, err := e.computeUnifiedCoreMetrics(from, to, year, month)
+	unified, sqls, logs, err := e.computeUnifiedCoreMetrics(coverage.ActualFrom, coverage.ActualTo)
 	if err != nil {
 		return Result{Success: false, Message: err.Error()}
 	}
 	dualCash := unified.Cash
 	dualAccrual := unified.Accrual
+	periodLabel := unified.Period
 
 	requestedMetrics := detectRequestedMetrics(question)
 	primaryMetric := firstMetricOrDefault(requestedMetrics, detectCoreMetric(question))
@@ -490,7 +534,7 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		Cash:    cashView,
 		Accrual: accrualView,
 	})
-	msg := buildBossDualPerspectiveMessage(to, dualCash, dualAccrual, unified.Bridge)
+	msg := buildBossDualPerspectiveMessage(periodLabel, dualCash, dualAccrual, unified.Bridge)
 	if len(requestedMetrics) == 1 {
 		cashValue, accrualValue = pickMetricValue(primaryMetric, &accounting.DualPerspective{
 			Cash:    cashView,
@@ -498,43 +542,68 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		})
 		msg = fmt.Sprintf("%s\n补充你当前关注的指标：%s - 现金口径 %.2f 元，经营口径 %.2f 元。", msg, primaryMetric, cashValue, accrualValue)
 	}
+	if coverage.Truncated {
+		msg = fmt.Sprintf("你问的是 %s，但当前账务数据仅到 %s，以下先按 %s 已出账数据回答。\n%s", requestedPeriodLabel, coverage.AvailableTo, periodLabel, msg)
+	}
 
 	logs = append(logs, fmt.Sprintf("[核心指标-默认双口径] metric=%s requested=%v cash=%.2f accrual=%.2f", metric, requestedMetrics, cashValue, accrualValue))
+	logs = append(logs, fmt.Sprintf("[覆盖范围] requested=%s actual=%s available_to=%s truncated=%t data_ready=true", requestedPeriodLabel, periodLabel, coverage.AvailableTo, coverage.Truncated))
 	sqls = appendUniqueStrings(sqls,
 		"dual_perspective(cash): ComputeCashFlow over bank_statement in selected period",
-		"dual_perspective(accrual): monthlyBookSummary => income_statement.current_amount (fallback journal if missing)",
+		"dual_perspective(accrual): aggregate monthlyBookSummary across selected period and cross-check with income_statement.cumulative_amount when available",
+		"coverage_guard: inspect latest available period across income_statement / balance_detail / journal / bank_statement",
 	)
+	summaryPayload := map[string]any{
+		"source":  unified.AccrualFrom,
+		"revenue": dualAccrual.Revenue,
+		"cost":    dualAccrual.TotalCost,
+		"profit":  dualAccrual.Profit,
+	}
+	if from == to {
+		year, month := parsePeriod(to)
+		summaryPayload["year"] = year
+		summaryPayload["month"] = month
+	} else {
+		summaryPayload["from"] = from
+		summaryPayload["to"] = to
+	}
 	return Result{
 		Success:      true,
 		Message:      msg,
 		AnswerMethod: "sql",
 		Data: map[string]any{
-			"period":             to,
-			"metric":             metric,
-			"money_view":         cashView,
-			"account_view":       accrualView,
-			"money_value":        cashValue,
-			"account_value":      accrualValue,
-			"total":              accrualValue,
+			"period":           periodLabel,
+			"requested_period": requestedPeriodLabel,
+			"metric":           metric,
+			"money_view":       cashView,
+			"account_view":     accrualView,
+			"money_value":      cashValue,
+			"account_value":    accrualValue,
+			"total":            accrualValue,
+			"data_ready":       true,
+			"coverage": map[string]any{
+				"requested_from": from,
+				"requested_to":   to,
+				"actual_from":    coverage.ActualFrom,
+				"actual_to":      coverage.ActualTo,
+				"available_to":   coverage.AvailableTo,
+				"truncated":      coverage.Truncated,
+				"data_ready":     true,
+			},
 			"requested_metrics":  requestedMetrics,
 			"一致性守卫":              unified.Guard,
+			"range_validation":   unified.AccrualValidation,
 			"profit_cash_bridge": bridgeToMap(unified.Bridge),
 			"metrics": map[string]any{
 				"收入": round2(dualAccrual.Revenue),
 				"成本": round2(dualAccrual.TotalCost),
 				"利润": round2(dualAccrual.Profit),
 			},
-			"monthly": map[string]any{
-				"year":    year,
-				"month":   month,
-				"source":  unified.AccrualFrom,
-				"revenue": dualAccrual.Revenue,
-				"cost":    dualAccrual.TotalCost,
-				"profit":  dualAccrual.Profit,
-			},
-			"现金流入": dualCash.Income,
-			"现金流出": dualCash.Expense,
-			"净现金流": dualCash.Net,
+			"monthly":       summaryPayload,
+			"range_summary": summaryPayload,
+			"现金流入":          dualCash.Income,
+			"现金流出":          dualCash.Expense,
+			"净现金流":          dualCash.Net,
 			"cash_flow": map[string]any{
 				"现金流入": dualCash.Income,
 				"现金流出": dualCash.Expense,
@@ -572,6 +641,72 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 		ExecutedSQL:     sqls,
 		CalculationLogs: logs,
 	}
+}
+
+func (e *Engine) resolveCoreMetricCoverage(from, to string) coreMetricCoverage {
+	coverage := coreMetricCoverage{
+		RequestedFrom: from,
+		RequestedTo:   to,
+		ActualFrom:    from,
+		ActualTo:      to,
+		HasData:       true,
+	}
+	availableTo := e.latestAvailableFinancialPeriod()
+	coverage.AvailableTo = availableTo
+	if strings.TrimSpace(availableTo) == "" {
+		return coverage
+	}
+	if strings.TrimSpace(from) == "" {
+		coverage.ActualFrom = availableTo
+		coverage.RequestedFrom = availableTo
+	}
+	if strings.TrimSpace(to) == "" {
+		coverage.ActualTo = availableTo
+		coverage.RequestedTo = availableTo
+		return coverage
+	}
+	if coverage.ActualFrom > availableTo {
+		coverage.HasData = false
+		coverage.ActualFrom = ""
+		coverage.ActualTo = ""
+		return coverage
+	}
+	if coverage.ActualTo > availableTo {
+		coverage.ActualTo = availableTo
+		coverage.Truncated = true
+	}
+	if coverage.ActualFrom != "" && coverage.ActualTo != "" && coverage.ActualFrom > coverage.ActualTo {
+		coverage.HasData = false
+	}
+	return coverage
+}
+
+func (e *Engine) latestAvailableFinancialPeriod() string {
+	queries := []string{
+		`SELECT MAX(period) FROM income_statement WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+		`SELECT MAX(period) FROM balance_detail WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+		`SELECT MAX(period) FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+		`SELECT MAX(SUBSTR(transaction_date, 1, 7)) FROM bank_statement WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+	}
+	best := ""
+	for _, sqlTxt := range queries {
+		var period sql.NullString
+		if err := e.db.QueryRow(sqlTxt, e.Company, e.Company).Scan(&period); err != nil {
+			continue
+		}
+		candidate := strings.TrimSpace(period.String)
+		if candidate != "" && candidate > best {
+			best = candidate
+		}
+	}
+	if best != "" {
+		return best
+	}
+	anchor := e.getLatestPeriodAnchor()
+	if anchor.IsZero() {
+		return ""
+	}
+	return anchor.Format("2006-01")
 }
 
 func bridgeToMap(bridge *analysis.ProfitCashBridge) map[string]any {
@@ -1243,7 +1378,11 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 		if amount > 0 {
 			msg := fmt.Sprintf("[%s]%s %s %s %.2f 元", entity, roleLabel, periodLabel, label, amount)
 			if role == "supplier" || role == "mixed" {
-				msg = fmt.Sprintf("[%s]%s %s 属于供应商相关，%s %.2f 元，不应归到收入差异里。", entity, roleLabel, periodLabel, label, amount)
+				if label == "付款" && containsAny(q, []string{"成本", "费用"}) {
+					msg = fmt.Sprintf("[%s]%s %s 属于供应商相关。当前账上未匹配到同期间成本/费用分录，先按付款口径识别到 %.2f 元，不应归到收入差异里。", entity, roleLabel, periodLabel, amount)
+				} else {
+					msg = fmt.Sprintf("[%s]%s %s 属于供应商相关，%s %.2f 元，不应归到收入差异里。", entity, roleLabel, periodLabel, label, amount)
+				}
 			}
 			resultData["amount"] = amount
 			resultData["total"] = amount
@@ -1259,6 +1398,20 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 	fallbackAmount := round2(math.Max(snap.BankIn, math.Max(snap.BankOut, math.Max(snap.RevenueNet, snap.BookCost+snap.BookExpense))))
 	if fallbackAmount == 0 {
 		return Result{Success: false, Message: fmt.Sprintf("穿透审计失败：[%s] 无发生额", entity)}
+	}
+	if (role == "supplier" || role == "mixed") && containsAny(q, []string{"成本", "费用", "支出", "付款"}) {
+		msg := fmt.Sprintf("[%s]%s %s 属于供应商相关，当前可确认付款 %.2f 元。若问的是账面成本/费用，现有库里未匹配到同期间分录，所以先按付款口径回答。", entity, roleLabel, periodLabel, round2(math.Max(snap.BankOut, fallbackAmount)))
+		resultData["amount"] = round2(math.Max(snap.BankOut, fallbackAmount))
+		resultData["total"] = round2(math.Max(snap.BankOut, fallbackAmount))
+		resultData["payment"] = round2(math.Max(snap.BankOut, fallbackAmount))
+		resultData["comparison_basis"] = "payment_fallback_due_missing_book_cost"
+		return Result{
+			Success:         true,
+			Message:         msg,
+			Data:            resultData,
+			ExecutedSQL:     sqls,
+			CalculationLogs: logs,
+		}
 	}
 	resultData["amount"] = fallbackAmount
 	resultData["total"] = fallbackAmount
@@ -1327,7 +1480,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 		for length := len(runes); length >= 2; length-- {
 			for i := 0; i <= len(runes)-length; i++ {
 				sub := string(runes[i : i+length])
-				if len(sub) < 2 || isGenericMetricEntity(sub) || containsAny(sub, []string{"帮我", "一下", "查询", "多少", "哪些", "价格", "一共", "支出", "报销", "经营", "分析", "风险", "健康", "评价", "应收", "应付", "账款", "费用", "资金", "货币", "流水", "工资", "社保", "公积金", "人力成本", "薪酬"}) {
+				if len(sub) < 2 || isGenericMetricEntity(sub) || looksLikeTemporalMetricEntity(sub) || containsAny(sub, []string{"帮我", "一下", "查询", "多少", "哪些", "价格", "一共", "支出", "报销", "经营", "分析", "风险", "健康", "评价", "应收", "应付", "账款", "费用", "资金", "货币", "流水", "工资", "社保", "公积金", "人力成本", "薪酬", "营收", "收入", "成本", "利润", "季度", "半年", "全年", "年度", "累计", "年内"}) {
 					continue
 				}
 				var exists int
@@ -1367,7 +1520,7 @@ func (e *Engine) extractNamedEntity(question string) string {
 
 func (e *Engine) isRealBusinessEntity(question, entity string) bool {
 	name := strings.TrimSpace(entity)
-	if len([]rune(name)) < 2 || isGenericMetricEntity(name) {
+	if len([]rune(name)) < 2 || isGenericMetricEntity(name) || looksLikeTemporalMetricEntity(name) {
 		return false
 	}
 
@@ -1384,6 +1537,24 @@ func (e *Engine) isRealBusinessEntity(question, entity string) bool {
 	}
 	e.db.QueryRow(`SELECT 1 FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%') AND (summary LIKE ? OR (IFNULL(TRIM(counterparty),'') <> '' AND counterparty LIKE ?)) LIMIT 1`, e.Company, e.Company, like, like).Scan(&exists)
 	return exists == 1
+}
+
+func looksLikeTemporalMetricEntity(entity string) bool {
+	normalized := normalizeEntityText(entity)
+	if normalized == "" {
+		return false
+	}
+	temporalKeywords := []string{
+		"季度", "第一季度", "第二季度", "第三季度", "第四季度",
+		"上半年", "下半年", "全年", "全年度", "整年", "年度",
+		"今年", "本年", "累计", "年内",
+	}
+	for _, keyword := range temporalKeywords {
+		if normalizeEntityText(keyword) == normalized {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) queryAnalysis(period string) Result {
@@ -1439,6 +1610,11 @@ func (e *Engine) queryFallback(q, from, to, err string) Result {
 
 func (e *Engine) ruleFallback(q, from, to string) Result {
 	cfg := getRuleConfig()
+	entity := e.extractNamedEntity(q)
+	hasRealEntity := e.isRealBusinessEntity(q, entity)
+	if isIntervalCoreMetricQuestion(q, entity, hasRealEntity, from, to) || shouldPreferCoreMetricSummary(q, entity, hasRealEntity, from, to) {
+		return e.queryDualPerspectiveForCoreMetric(q, from, to)
+	}
 	if strings.Contains(q, "供应商") && strings.Contains(q, "多少") {
 		return e.querySupplierPayments(from, to)
 	}
@@ -1450,7 +1626,6 @@ func (e *Engine) ruleFallback(q, from, to string) Result {
 	if containsAny(q, cfg.FallbackMonthlyExpenseKeywords) {
 		return e.queryMonthlyExpenseFromBank(from, to)
 	}
-	entity := e.extractNamedEntity(q)
 	if entity != "" && strings.Contains(q, "数据出来") {
 		return e.queryEntityDataReady(entity, from, to)
 	}
@@ -2084,6 +2259,38 @@ func shouldForceDualPerspective(q string) bool {
 		return false
 	}
 	return containsAny(q, metricQuestionKeywords(cfg))
+}
+
+func shouldPreferCoreMetricSummary(q, entity string, hasRealEntity bool, from, to string) bool {
+	if !shouldForceDualPerspective(q) {
+		return false
+	}
+	if !hasRealEntity {
+		return true
+	}
+	if from == to {
+		return false
+	}
+	if isGenericMetricEntity(entity) || looksLikeTemporalMetricEntity(entity) {
+		return true
+	}
+	return false
+}
+
+func isIntervalCoreMetricQuestion(q, entity string, hasRealEntity bool, from, to string) bool {
+	if from == to {
+		return false
+	}
+	if hasRealEntity {
+		return false
+	}
+	if strings.TrimSpace(entity) != "" && !isGenericMetricEntity(entity) && !looksLikeTemporalMetricEntity(entity) {
+		return false
+	}
+	if !containsAny(q, metricQuestionKeywords(getRuleConfig())) {
+		return false
+	}
+	return containsAny(q, []string{"季度", "q1", "q2", "q3", "q4", "Q1", "Q2", "Q3", "Q4", "上半年", "下半年", "全年", "全年度", "整年", "年度", "累计", "年内"})
 }
 
 func shouldUseSingleAccrualCoreMetrics(q string) bool {

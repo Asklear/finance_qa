@@ -22,6 +22,15 @@ func TestExtractPeriodWithNow(t *testing.T) {
 		{name: "month only current year", question: "2月收入", wantFrom: "2026-02", wantTo: "2026-02"},
 		{name: "month only previous year", question: "12月收入", wantFrom: "2025-12", wantTo: "2025-12"},
 		{name: "explicit year cumulative", question: "飞未云科2026年累计销售额多少", wantFrom: "2026-01", wantTo: "2026-04"},
+		{name: "explicit year quarter chinese", question: "2026年第一季度营收", wantFrom: "2026-01", wantTo: "2026-03"},
+		{name: "explicit year quarter q-format", question: "2026年Q1收入", wantFrom: "2026-01", wantTo: "2026-03"},
+		{name: "relative quarter without year", question: "第一季度收入", wantFrom: "2026-01", wantTo: "2026-03"},
+		{name: "explicit year first half", question: "2026年上半年营收", wantFrom: "2026-01", wantTo: "2026-06"},
+		{name: "explicit year second half", question: "2026年下半年营收", wantFrom: "2026-07", wantTo: "2026-12"},
+		{name: "relative first half", question: "上半年营收", wantFrom: "2026-01", wantTo: "2026-06"},
+		{name: "relative second half", question: "下半年营收", wantFrom: "2025-07", wantTo: "2025-12"},
+		{name: "explicit year full year", question: "2026年全年营收", wantFrom: "2026-01", wantTo: "2026-12"},
+		{name: "relative this year full year", question: "今年全年营收", wantFrom: "2026-01", wantTo: "2026-12"},
 	}
 
 	for _, tc := range cases {

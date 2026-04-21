@@ -92,6 +92,98 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 		month int
 	}
 
+	formatPeriod := func(y, m int) string {
+		return fmt.Sprintf("%04d-%02d", y, m)
+	}
+	halfRange := func(y int, half int) (string, string) {
+		if half == 1 {
+			return formatPeriod(y, 1), formatPeriod(y, 6)
+		}
+		return formatPeriod(y, 7), formatPeriod(y, 12)
+	}
+	quarterRange := func(y int, quarter int) (string, string) {
+		startMonth := (quarter-1)*3 + 1
+		endMonth := startMonth + 2
+		return formatPeriod(y, startMonth), formatPeriod(y, endMonth)
+	}
+	parseQuarterToken := func(token string) int {
+		s := strings.ToUpper(strings.TrimSpace(token))
+		s = strings.TrimPrefix(s, "第")
+		s = strings.TrimSuffix(s, "季")
+		s = strings.TrimSuffix(s, "度")
+		s = strings.TrimSuffix(s, "季度")
+		s = strings.TrimPrefix(s, "Q")
+		switch s {
+		case "1", "一":
+			return 1
+		case "2", "二", "两":
+			return 2
+		case "3", "三":
+			return 3
+		case "4", "四":
+			return 4
+		}
+		return 0
+	}
+
+	// 0) 年度 / 半年度 / 季度（先于月度规则）
+	fullYearRe := regexp.MustCompile(`(20\d{2})年\s*(?:全年|整年|全年度|年度)`)
+	if m := fullYearRe.FindStringSubmatch(q); len(m) == 2 {
+		y := mustAtoi(m[1])
+		return formatPeriod(y, 1), formatPeriod(y, 12)
+	}
+	if strings.Contains(q, "今年全年") || strings.Contains(q, "本年全年") {
+		return formatPeriod(year, 1), formatPeriod(year, 12)
+	}
+
+	explicitHalfRe := regexp.MustCompile(`(20\d{2})年\s*(上半年|下半年)`)
+	if m := explicitHalfRe.FindStringSubmatch(q); len(m) == 3 {
+		y := mustAtoi(m[1])
+		if strings.Contains(m[2], "上") {
+			return halfRange(y, 1)
+		}
+		return halfRange(y, 2)
+	}
+	if strings.Contains(q, "上半年") || strings.Contains(q, "下半年") {
+		targetYear := year
+		targetHalf := 1
+		if strings.Contains(q, "下半年") {
+			targetHalf = 2
+			if anchorMonth < 7 {
+				targetYear = year - 1
+			}
+		}
+		return halfRange(targetYear, targetHalf)
+	}
+
+	explicitQuarterRe := regexp.MustCompile(`(20\d{2})年\s*(?:第?\s*([一二三四1234])\s*季度|Q\s*([1-4]))`)
+	if m := explicitQuarterRe.FindStringSubmatch(q); len(m) == 4 {
+		y := mustAtoi(m[1])
+		token := m[2]
+		if token == "" {
+			token = m[3]
+		}
+		if quarter := parseQuarterToken(token); quarter >= 1 && quarter <= 4 {
+			return quarterRange(y, quarter)
+		}
+	}
+	relativeQuarterRe := regexp.MustCompile(`(?:第?\s*([一二三四1234])\s*季度|Q\s*([1-4]))`)
+	if m := relativeQuarterRe.FindStringSubmatch(q); len(m) == 3 {
+		token := m[1]
+		if token == "" {
+			token = m[2]
+		}
+		if quarter := parseQuarterToken(token); quarter >= 1 && quarter <= 4 {
+			targetYear := year
+			_, to := quarterRange(year, quarter)
+			toMonth := mustAtoi(strings.Split(to, "-")[1])
+			if toMonth > anchorMonth && (toMonth-anchorMonth) >= 6 {
+				targetYear = year - 1
+			}
+			return quarterRange(targetYear, quarter)
+		}
+	}
+
 	// 1) 显式范围: 某年1月到某年2月
 	rangeRe := regexp.MustCompile(`(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?\s*(?:到|至|-|~)\s*(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月`)
 	if m := rangeRe.FindStringSubmatch(q); len(m) == 5 {
@@ -104,8 +196,8 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 		}
 	}
 
-	// 1.1) 显式年份累计: 某年累计/全年/年内
-	yearCumulativeRe := regexp.MustCompile(`(20\d{2})年\s*(?:累计|全年|年内|累计销售额|累计收入|累计营收|累计回款)`)
+	// 1.1) 显式年份累计(YTD): 某年累计/年内
+	yearCumulativeRe := regexp.MustCompile(`(20\d{2})年\s*(?:累计|年内|累计销售额|累计收入|累计营收|累计回款)`)
 	if m := yearCumulativeRe.FindStringSubmatch(q); len(m) == 2 {
 		y := mustAtoi(m[1])
 		endMonth := 12

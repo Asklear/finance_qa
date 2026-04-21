@@ -135,6 +135,60 @@ func TestRevenueQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	}
 }
 
+func TestRangeRevenueQuestionsAggregateAcrossPeriods(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	cases := []struct {
+		name           string
+		question       string
+		wantPeriod     string
+		wantRequested  string
+		wantCoverageTo string
+		wantTruncated  bool
+		wantRevenue    float64
+	}{
+		{name: "quarter", question: "2026年第一季度营收", wantPeriod: "2026-01~2026-02", wantRequested: "2026-01~2026-03", wantCoverageTo: "2026-02", wantTruncated: true, wantRevenue: 2000},
+		{name: "half year", question: "2026年上半年营收", wantPeriod: "2026-01~2026-02", wantRequested: "2026-01~2026-06", wantCoverageTo: "2026-02", wantTruncated: true, wantRevenue: 2000},
+		{name: "full year", question: "2026年全年营收", wantPeriod: "2026-01~2026-02", wantRequested: "2026-01~2026-12", wantCoverageTo: "2026-02", wantTruncated: true, wantRevenue: 2000},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := engine.Query(tc.question)
+			if !res.Success {
+				t.Fatalf("query failed: %+v", res)
+			}
+			if got, ok := res.Data["account_value"].(float64); !ok || got != tc.wantRevenue {
+				t.Fatalf("account_value = %v, want %v, message=%s", res.Data["account_value"], tc.wantRevenue, res.Message)
+			}
+			if got, ok := res.Data["period"].(string); !ok || got != tc.wantPeriod {
+				t.Fatalf("period = %v, want %s", res.Data["period"], tc.wantPeriod)
+			}
+			if got, ok := res.Data["requested_period"].(string); !ok || got != tc.wantRequested {
+				t.Fatalf("requested_period = %v, want %s", res.Data["requested_period"], tc.wantRequested)
+			}
+			coverage, ok := res.Data["coverage"].(map[string]any)
+			if !ok {
+				t.Fatalf("missing coverage metadata: %+v", res.Data)
+			}
+			if got := coverage["actual_to"]; got != tc.wantCoverageTo {
+				t.Fatalf("coverage.actual_to = %v, want %s", got, tc.wantCoverageTo)
+			}
+			if got, ok := coverage["truncated"].(bool); !ok || got != tc.wantTruncated {
+				t.Fatalf("coverage.truncated = %v, want %t", coverage["truncated"], tc.wantTruncated)
+			}
+			if !strings.Contains(res.Message, tc.wantRequested) || !strings.Contains(res.Message, tc.wantPeriod) {
+				t.Fatalf("expected requested and actual periods in message, got: %s", res.Message)
+			}
+		})
+	}
+}
+
 func TestMultiMetricQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
@@ -484,6 +538,42 @@ func TestCounterpartyCostShouldIncludeVoucherSiblingRows(t *testing.T) {
 	}
 }
 
+func TestSupplierCostQuestionFallsBackToPaymentButKeepsSupplierCostWording(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`
+INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+VALUES ('南京优集数据科技有限公司', '2026-03-15', '南京林悦智能科技有限公司', '供应商付款', 1915915.19, 0)
+`); err != nil {
+		t.Fatalf("insert supplier payment bank row failed: %v", err)
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("南京林悦智能科技有限公司3月成本多少")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["role"]; got != "supplier" {
+		t.Fatalf("role = %v, want supplier", got)
+	}
+	if got := res.Data["amount"]; got != float64(1915915.19) {
+		t.Fatalf("amount = %v, want 1915915.19", got)
+	}
+	if !strings.Contains(res.Message, "供应商") || !strings.Contains(res.Message, "成本") || !strings.Contains(res.Message, "付款口径") {
+		t.Fatalf("expected supplier cost fallback wording, got: %s", res.Message)
+	}
+}
+
 func TestInternalPartyUsesConfigurableOrgSuffixesAndContextKeywords(t *testing.T) {
 	rulesPath := writeRulesConfigFile(t, `{
   "schema_version": 2,
@@ -830,7 +920,8 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 			company TEXT,
 			period TEXT,
 			item_name TEXT,
-			current_amount REAL
+			current_amount REAL,
+			cumulative_amount REAL
 		)`,
 	}
 	for _, stmt := range stmts {
@@ -850,14 +941,14 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 		 VALUES ('南京优集数据科技有限公司', '2026-01-20', '6401', '主营业务成本', '借', 400, '1月项目成本', '飞未云科', 400, 0)`,
 		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
 		 VALUES ('南京优集数据科技有限公司', '2026-02-10', '6001', '主营业务收入', '贷', 800, '2月飞未收入确认', '飞未云科', 0, 800)`,
-		`INSERT INTO income_statement(company, period, item_name, current_amount)
-		 VALUES ('南京优集数据科技有限公司', '2026-01', '一、营业收入', 1200)`,
-		`INSERT INTO income_statement(company, period, item_name, current_amount)
-		 VALUES ('南京优集数据科技有限公司', '2026-01', '五、净利润', 800)`,
-		`INSERT INTO income_statement(company, period, item_name, current_amount)
-		 VALUES ('南京优集数据科技有限公司', '2026-02', '一、营业收入', 800)`,
-		`INSERT INTO income_statement(company, period, item_name, current_amount)
-		 VALUES ('南京优集数据科技有限公司', '2026-02', '五、净利润', 500)`,
+		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01', '一、营业收入', 1200, 1200)`,
+		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01', '五、净利润', 800, 800)`,
+		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '一、营业收入', 800, 2000)`,
+		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '五、净利润', 500, 1300)`,
 		`INSERT INTO balance_sheet(company, period, account_name, account_code, opening_balance, closing_balance)
 		 VALUES ('南京优集数据科技有限公司', '2026-02', '应付职工薪酬', '2211', 0, 300)`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)

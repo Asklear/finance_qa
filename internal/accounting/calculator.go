@@ -158,12 +158,17 @@ type AccrualPerspective struct {
 	Profit      float64 `json:"账面利润"`    // 净利润
 }
 
+func monthDateBounds(year, month int) (string, string) {
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, -1)
+	return start.Format("2006-01-02"), end.Format("2006-01-02")
+}
+
 // ComputeMonthlyFromJournal calculates revenue, cost and profit for a specific
 // month by aggregating journal entries. It excludes "期间损益结转" entries to
 // avoid double counting.
 func (c *Calculator) ComputeMonthlyFromJournal(company string, year, month int) (*MonthlyMetrics, error) {
-	startDate := fmt.Sprintf("%d-%02d-01", year, month)
-	endDate := fmt.Sprintf("%d-%02d-31", year, month) // SQLite DATE handles overflow
+	startDate, endDate := monthDateBounds(year, month)
 
 	sqlTxt := `
 SELECT account_code, direction, COALESCE(amount, 0) as amount, summary
@@ -234,7 +239,7 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 // up to and including the specified month (cumulative from January).
 func (c *Calculator) ComputeIncomeStatement(company string, year, month int) (*IncomeStatementResult, error) {
 	startDate := fmt.Sprintf("%d-01-01", year)
-	endDate := fmt.Sprintf("%d-%02d-31", year, month)
+	_, endDate := monthDateBounds(year, month)
 
 	rows, err := c.db.Query(`
 SELECT account_code, direction, COALESCE(amount, 0) as amount
@@ -439,7 +444,7 @@ LIMIT 1
 // ComputeBalanceFromJournal computes the trial balance from journal entries
 // using opening balances from balance_detail.
 func (c *Calculator) ComputeBalanceFromJournal(company string, year, month int) ([]BalanceDetailRow, error) {
-	endDate := fmt.Sprintf("%d-%02d-31", year, month)
+	_, endDate := monthDateBounds(year, month)
 
 	// Step 1: Load opening balances from balance_detail (period end)
 	openings := make(map[string]BalanceDetailRow)

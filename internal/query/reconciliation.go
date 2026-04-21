@@ -263,6 +263,10 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 		}, "income_statement", nil
 	}
 
+	if !e.hasJournalActivityForMonth(year, month) {
+		return monthlyBookView{}, "empty_month", nil
+	}
+
 	monthly, err := e.calc.ComputeMonthlyFromJournal(e.Company, year, month)
 	if err != nil {
 		return monthlyBookView{}, "", err
@@ -281,6 +285,23 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 		TotalCost:      round2(is.Cost + is.TaxSurcharge + is.SellingExpense + is.AdminExpense + is.FinanceExpense),
 		Profit:         monthly.Profit,
 	}, "journal_fallback", nil
+}
+
+func (e *Engine) hasJournalActivityForMonth(year, month int) bool {
+	startDate := fmt.Sprintf("%d-%02d-01", year, month)
+	endDate := monthEndDay(fmt.Sprintf("%d-%02d", year, month))
+	var count int
+	if err := e.db.QueryRow(`
+SELECT COUNT(1)
+FROM journal
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND DATE(voucher_date) >= DATE(?)
+  AND DATE(voucher_date) <= DATE(?)
+  AND summary NOT LIKE '%期间损益结转%'
+`, e.Company, e.Company, startDate, endDate).Scan(&count); err != nil {
+		return false
+	}
+	return count > 0
 }
 
 func (e *Engine) topCounterpartiesByCashMovement(from, to string, limit int) []string {
