@@ -201,9 +201,69 @@ def ensure_trace_fields(payload):
     return payload
 
 
+def first_float(*values):
+    for value in values:
+        if value is None or value == "":
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def is_receipt_question(query):
+    text = (query or "").strip()
+    if not text:
+        return False
+    keywords = ("回款", "到账", "收款")
+    return any(keyword in text for keyword in keywords)
+
+
+def build_host_summary_contract(payload, query):
+    data = payload.get("data") or {}
+    if payload.get("answer_method") == "llm_payload" or not payload.get("success"):
+        return None
+
+    total_amount = first_float(
+        data.get("amount"),
+        data.get("total"),
+        data.get("bank_in"),
+    )
+    sub_period = str(data.get("sub_period") or "").strip()
+    sub_period_amount = first_float(data.get("sub_period_receipts"))
+
+    if not is_receipt_question(query):
+        return None
+    if total_amount is None or not sub_period or sub_period_amount is None:
+        return None
+
+    entity = str(
+        data.get("entity")
+        or data.get("counterparty")
+        or data.get("name")
+        or ""
+    ).strip()
+    contract = {
+        "kind": "counterparty_receipts_with_subperiod",
+        "total_amount": total_amount,
+        "sub_period": sub_period,
+        "sub_period_amount": sub_period_amount,
+        "safe_to_quote_message": True,
+    }
+    if entity:
+        contract["entity"] = entity
+    if data.get("role"):
+        contract["role"] = data.get("role")
+    if data.get("comparison_basis"):
+        contract["comparison_basis"] = data.get("comparison_basis")
+    return contract
+
+
 def build_boss_reply(payload, query):
     data = payload.get("data") or {}
     msg = payload.get("message") or ""
+    summary_contract = build_host_summary_contract(payload, query)
 
     requested_metrics = data.get("requested_metrics") or []
     if isinstance(requested_metrics, tuple):
@@ -216,6 +276,17 @@ def build_boss_reply(payload, query):
             "结论": "这个问题当前不能直接精算，已切到财报原始数据模式继续判断。",
             "原因": msg or "原问题语义不够具体，系统已准备全量财报数据供二次推理。",
             "建议": "请补充时间和对象（如客户/项目/月份）；或让宿主LLM基于 llm_payload 给最终口径。",
+        }
+
+    if summary_contract and summary_contract.get("kind") == "counterparty_receipts_with_subperiod":
+        entity = summary_contract.get("entity") or "该主体"
+        total_amount = float(summary_contract.get("total_amount", 0))
+        sub_period = summary_contract.get("sub_period") or "当前子期间"
+        sub_period_amount = float(summary_contract.get("sub_period_amount", 0))
+        return {
+            "结论": f"{entity}累计回款 {total_amount:.2f} 元，其中 {sub_period} 到账 {sub_period_amount:.2f} 元。",
+            "原因": "累计回款和子期间到账是两个层次的金额，宿主应直接引用后端拆分结果，不能把子期间到账误当成累计值。",
+            "建议": "如果还要继续判断这些回款对应哪些月份收入，请再追问应收配对或历史回款归属。",
         }
 
     metric = data.get("metric")
@@ -274,6 +345,9 @@ def build_boss_reply(payload, query):
 def build_structured_response(payload, query):
     payload = ensure_trace_fields(payload)
     payload["boss_reply"] = build_boss_reply(payload, query)
+    summary_contract = build_host_summary_contract(payload, query)
+    if summary_contract:
+        payload["host_summary_contract"] = summary_contract
     payload["bridge_meta"] = {
         "skill_contract_version": SKILL_CONTRACT_VERSION,
         "protocol_version": BRIDGE_PROTOCOL_VERSION,

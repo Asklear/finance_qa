@@ -17,7 +17,7 @@ func TestFinanceBridgeListToolsAndV2Response(t *testing.T) {
 	tmp := t.TempDir()
 	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
 	skillPath := filepath.Join(tmp, "SKILL.md")
-	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL_2026-04-15.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
 	dbPath := filepath.Join(tmp, "bridge-contract.sqlite")
 
 	stubScript := `#!/usr/bin/env bash
@@ -93,8 +93,8 @@ exit 2
 	if sv := bridgeMeta["skill_contract_version"]; sv != skillContractVersion {
 		t.Fatalf("skill_contract_version should be %s, got %v", skillContractVersion, sv)
 	}
-	if rel := bridgeMeta["skill_appendix_relative_path"]; rel != "docs/SKILL_APPENDIX_FULL_2026-04-15.md" {
-		t.Fatalf("skill_appendix_relative_path should be docs/SKILL_APPENDIX_FULL_2026-04-15.md, got %v", rel)
+	if rel := bridgeMeta["skill_appendix_relative_path"]; rel != "docs/SKILL_APPENDIX_FULL.md" {
+		t.Fatalf("skill_appendix_relative_path should be docs/SKILL_APPENDIX_FULL.md, got %v", rel)
 	}
 	resolvedAppendixPath, err := filepath.EvalSymlinks(appendixPath)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestFinanceBridgeFallbackToHostData(t *testing.T) {
 	tmp := t.TempDir()
 	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
 	skillPath := filepath.Join(tmp, "SKILL.md")
-	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL_2026-04-15.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
 	dbPath := filepath.Join(tmp, "bridge-rollforward.sqlite")
 
 	stubScript := `#!/usr/bin/env bash
@@ -188,6 +188,76 @@ echo '{"success":true}'
 	}
 	if exists := bridgeMeta["skill_appendix_exists"]; exists != true {
 		t.Fatalf("skill_appendix_exists should be true, got %v", exists)
+	}
+}
+
+func TestFinanceBridgeReceiptBossReplyKeepsCumulativeAndSubPeriodSeparate(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
+	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
+	dbPath := filepath.Join(tmp, "bridge-receipts.sqlite")
+
+	stubScript := `#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+if [[ "$cmd" == "query" ]]; then
+  cat <<'JSON'
+{"success":true,"message":"[金程]（识别为[customer]） 今年到账 6647398.33 元；其中3月到账 2130771.59 元。数据库能确认这类到账包含历史应收回款因素，不能直接当成当期新收入。","answer_method":"sql","data":{"entity":"金程","role":"customer","amount":6647398.33,"total":6647398.33,"bank_in":6647398.33,"sub_period":"2026-03","sub_period_receipts":2130771.59,"comparison_basis":"historical_receipt_and_current_revenue"},"executed_sql":["SELECT 1"],"calculation_logs":["calc-ok"]}
+JSON
+  exit 0
+fi
+if [[ "$cmd" == "host-data" ]]; then
+  echo '{"success":true,"answer_method":"llm_payload","data":{"llm_payload":{}}}'
+  exit 0
+fi
+echo "unknown cmd: $cmd" >&2
+exit 2
+`
+	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub bin: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"金程今年回款多少？其中3月到账多少？"}}`
+	callRaw := runBridge(t, stubBin, dbPath, skillPath, callReq)
+	payload := parseBridgeContentPayload(t, callRaw)
+
+	bossReply := mustMapMap(t, payload, "boss_reply")
+	conclusion, _ := bossReply["结论"].(string)
+	if !strings.Contains(conclusion, "6647398.33") {
+		t.Fatalf("boss reply should preserve cumulative amount, got %s", conclusion)
+	}
+	if !strings.Contains(conclusion, "2130771.59") {
+		t.Fatalf("boss reply should preserve sub-period amount, got %s", conclusion)
+	}
+	if strings.Contains(conclusion, "全部在 3 月到账") {
+		t.Fatalf("boss reply should not collapse cumulative receipts into sub-period receipts, got %s", conclusion)
+	}
+
+	contract := mustMapMap(t, payload, "host_summary_contract")
+	if kind := contract["kind"]; kind != "counterparty_receipts_with_subperiod" {
+		t.Fatalf("host_summary_contract.kind should be counterparty_receipts_with_subperiod, got %v", kind)
+	}
+	if total := contract["total_amount"]; total != float64(6647398.33) {
+		t.Fatalf("host_summary_contract.total_amount should be 6647398.33, got %v", total)
+	}
+	if sub := contract["sub_period_amount"]; sub != float64(2130771.59) {
+		t.Fatalf("host_summary_contract.sub_period_amount should be 2130771.59, got %v", sub)
 	}
 }
 
@@ -279,7 +349,7 @@ description: "Use when OpenClaw or Claude needs to call finance_qa."
 
 ## 附录
 
-1. ` + "`docs/SKILL_APPENDIX_FULL_2026-04-15.md`" + `
+1. ` + "`docs/SKILL_APPENDIX_FULL.md`" + `
 `
 }
 
