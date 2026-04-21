@@ -13,7 +13,7 @@ sequenceDiagram
     Boss->>Host: 自然语言问题
     Host->>Host: 读取 SKILL.md
     opt 需要细粒度规则
-        Host->>Host: 读取 docs/SKILL_APPENDIX_FULL_2026-04-15.md
+        Host->>Host: 读取 docs/SKILL_APPENDIX_FULL.md
     end
     Host->>Bridge: finance-query(query)
     Bridge->>Bridge: 读取 SKILL.md 契约版本

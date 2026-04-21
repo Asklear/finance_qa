@@ -1,334 +1,155 @@
 ---
 name: "finance"
-description: "Use when OpenClaw or Claude needs to call finance_qa for老板财务问答、宿主LLM兜底数据、报表导入、维度管理或财务配置查询。"
+description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务问题、读取结构化财务结果，或在不能直接精算时切到宿主LLM兜底。"
 ---
 
-# finance_qa 调用契约
+# finance_qa 宿主问答契约
 
-目标：让 OpenClaw / Claude / 宿主 Agent 用最少上下文稳定调用本仓库能力，直接回答老板财务问题，并在失败时自动切到可审计的兜底数据模式。
+目标：让 OpenClaw / Claude / 宿主 Agent 用最少上下文稳定调用本仓库能力，直接回答老板问题；研发测试、部署、验收和全量运维命令不放在主 skill 里，避免污染宿主问答上下文。
 
 ## 0. 契约版本
 
-1. `skill_contract_version`: `2026-04-21.1`
+1. `skill_contract_version`: `2026-04-21.2`
 2. `bridge_protocol_version`: `v2`
+3. 按需附录：`docs/SKILL_APPENDIX_FULL.md`
 
 ## 1. 运行前提
 
 1. 默认公司：`南京优集数据科技有限公司`
-2. 默认数据库：
-   - 优先 `FINANCEQA_DB`
-   - 其次 `FINANCEQA_PG_DSN`
-   - 其次 `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/FINANCEQA_PG_SCHEMA`
-3. 未配置数据库时，CLI/桥接层现在会明确报错，不再回退根目录 `finance.db`
+2. 默认数据库优先级：
+   - `FINANCEQA_DB`
+   - `FINANCEQA_PG_DSN`
+   - `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/FINANCEQA_PG_SCHEMA`
+3. 未配置数据库时，CLI/桥接层会明确报错，不再回退本地 `finance.db`
 4. 桥接默认二进制：`/root/finance_qa/financeqa`
 5. 桥接层会自动加载：
    - 当前目录 `.env`
    - `/root/finance_qa/.env`
+6. OpenClaw 桥接返回的是 `content[0].text`，宿主必须先把这段文本再解析成 JSON
 
-## 2. 能力地图
-
-### 2.1 OpenClaw 桥接工具
+## 2. 宿主优先使用的工具
 
 1. `finance-query`
-   - 用途：老板财务问答主入口
+   - 老板财务问答主入口
    - 参数：
 ```json
-{"query":"2026年3月收入是多少"}
+{"query":"2026年3月收入、成本、利润分别是多少？"}
 ```
 
 2. `finance-host-data`
-   - 用途：给宿主 LLM 提供原始财务数据包
+   - 当 `finance-query` 不能稳定直答时，输出宿主 LLM 兜底数据包
    - 参数：
 ```json
 {"query":"为什么3月利润和现金差这么大","from":"2026-03","to":"2026-03"}
 ```
 
 3. `finance-upload`
-   - 用途：导入单个 Excel / 报表文件
+   - 单文件导入财务报表时使用
    - 参数：
 ```json
 {"filePath":"/abs/path/report.xlsx"}
 ```
 
-### 2.2 直接 CLI
+说明：
 
-1. `financeqa query [--db <dsn-or-path>] [--company <name>] <question>`
-2. `financeqa host-data [--db <dsn-or-path>] [--company <name>] [--from YYYY-MM] [--to YYYY-MM] [question]`
-3. `financeqa import [--db <dsn-or-path>] [--incremental] [--company <name>] <file>`
-4. `financeqa sync [--db <dsn-or-path>] [--incremental] [--company <name>] <directory>`
-5. `financeqa config show [--config <path>]`
-6. `financeqa keywords intents [--keywords <path>]`
-7. `financeqa dimensions list [--db <dsn-or-path>]`
-8. `financeqa dimensions add-dimension --db <dsn-or-path> --code <code> --name <name> --type <type> [--hierarchical]`
-9. `financeqa dimensions add-member --db <dsn-or-path> --dimension <code> --code <code> --name <name>`
-10. `financeqa dimensions mapping-stats [--db <dsn-or-path>] [--company <name>]`
-11. `financeqa dimensions seed-standard [--db <dsn-or-path>] --company <name>`
-12. `financeqa dimensions export-package --db <dsn-or-path> --output <file> [--format json]`
-13. `financeqa dimensions import-dimensions --db <dsn-or-path> --file <file> [--validate-only] [--skip-existing] [--update-existing]`
-14. `financeqa dimensions import-members --db <dsn-or-path> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing]`
-15. `financeqa dimensions import-rules --db <dsn-or-path> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing]`
-16. `financeqa dimensions preview-import --db <dsn-or-path> --type <dimensions|members> --file <file> [--dimension <code>]`
+1. 主 skill 面向宿主问答，不再展开测试、部署、回归、维度维护、批量同步等研发/运维指令。
+2. 如果人类操作者明确要求维护能力，再看 `README.md`、CLI `--help` 或附录，不要默认把这些内容注入老板问答上下文。
 
-### 2.3 Go SDK
+## 3. 宿主结果消费顺序
 
-1. `query.NewEngine(dbPath, company)`
-2. `(*Engine).Query(question)`
-3. `(*Engine).HostLLMPayload(from, to, question)`
-4. `(*Engine).Close()`
-
-## 3. 模块接口
-
-### 3.1 问答模块
-
-主入口：
-
-1. 桥接：`finance-query`
-2. CLI：`financeqa query`
-3. SDK：`Engine.Query`
-
-行为：
-
-1. 成功时：
-   - `stdout` 输出完整 JSON
-   - exit code = `0`
-2. 失败时：
-   - `stdout` 仍输出完整 JSON
-   - `stderr` 输出错误消息
-   - exit code = `1`
-3. 这条规则非常重要：
-   - 先解析 `stdout` JSON
-   - 再看 exit code
-   - 不能因为 exit code 非 0 就丢弃 `stdout`
-
-### 3.2 宿主 LLM 数据包模块
-
-主入口：
-
-1. 桥接：`finance-host-data`
-2. CLI：`financeqa host-data`
-3. SDK：`Engine.HostLLMPayload`
-
-行为：
-
-1. `from/to` 为空时，会自动锚定数据库最新账期
-2. 返回 `answer_method = llm_payload`
-3. 主要看 `data.llm_payload`
-
-### 3.3 导入模块
-
-1. 单文件导入：
-   - 桥接：`finance-upload`
-   - CLI：`financeqa import`
-   - 返回 `ImportSummary`
-
-2. 目录批量导入：
-   - CLI：`financeqa sync`
-   - 返回 `SyncSummary`
-
-导入参数：
-
-1. `--incremental`
-   - 保留已有数据
-   - 走去重 / 增量策略
-2. `--company`
-   - 覆盖导入文件里的公司名
-
-### 3.4 维度模块
-
-1. 管理主体：`dimensions.Manager`
-2. 交换主体：`dimensions.DataExchange`
-3. 典型用途：
-   - 科目到维度映射
-   - 标准规则初始化
-   - 维度/成员/规则的导入导出
-
-返回类型：
-
-1. `list` -> `PaginatedResult`
-2. `export-package` -> `ExportDataPackage`
-3. `import-*` -> `DetailedImportReport`
-4. `preview-import` -> `ImportPreview`
-
-### 3.5 配置与规则模块
-
-1. `financeqa config show`
-   - 输出 YAML
-2. `financeqa keywords intents`
-   - 输出意图名称列表，逐行文本
-3. 查询规则文件：
-   - 默认 `config/rules.json`
-   - 可由 `FINANCEQA_RULES_PATH` 覆盖
-
-## 4. 返回契约
-
-### 4.1 问答/host-data 标准字段
-
-每次回答都必须尽量保留这些字段，不要裁掉：
-
-1. `success`
-2. `message`
-3. `answer_method`
-   - `sql`
-   - `llm_payload`
-4. `data`
-5. `executed_sql`
-6. `calculation_logs`
-
-### 4.2 `data` 内必须关注的字段
-
-1. `data.answer_method`
-2. `data.trace.executed_sql`
-3. `data.trace.calculation_logs`
-4. `data.process.executed_sql`
-5. `data.process.calculation_logs`
-6. `data.executed_sql`
-7. `data.calculation_logs`
-8. `data.intent_trace`
-   - `router_version`
-   - `matched`
-   - `scores`
-   - `final_intent`
-   - `confidence`
-9. `data.exposed_fields`
-   - `dual_perspective`
-   - `hr_breakdown`
-   - `arithmetic_checks`
-   - `intent_trace`
-
-### 4.3 桥接层附加字段
-
-桥接层会再补这些：
-
-1. `boss_reply`
+1. 先解析桥接返回的 `content[0].text` JSON。
+2. 若存在 `boss_reply`，优先直接使用：
    - `结论`
    - `原因`
    - `建议`
-2. `bridge_meta`
-   - `skill_contract_version`
-   - `protocol_version`
-   - `generated_at`
-   - `query`
-   - `company`
-   - `db`
-   - `skill_path`
-   - `skill_appendix_relative_path`
-   - `skill_appendix_path`
-   - `skill_appendix_exists`
-   - `capabilities`
+3. 若存在 `host_summary_contract`，宿主摘要必须受它约束，不能脱离结构化字段自行重算。
+4. 若没有 `boss_reply`，再退回 `message`。
+5. 无论对老板是否展示，都要保留：
+   - `success`
+   - `answer_method`
+   - `data`
+   - `executed_sql`
+   - `calculation_logs`
+   - `data.trace`
+   - `data.intent_trace`
+   - `bridge_meta`
+6. 若 `success=false` 或 `answer_method=llm_payload`：
+   - 立即调用 `finance-host-data`
+   - 让宿主 LLM 基于 `data.llm_payload` 继续判断
 
-注意：
+## 4. 宿主不能自己改写的结构化约束
 
-1. OpenClaw 桥接返回的是 `text` 内容
-2. `content[0].text` 本身是一段 JSON 字符串
-3. 宿主必须再做一次 JSON 解析
-4. appendix 正文仍由 OpenClaw / Claude 的 skills 机制按相对路径加载，bridge 只负责校验 appendix 文件存在并把路径元信息写回 `bridge_meta`
+1. `boss_reply` 是后端已整理好的老板口径，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里二次拼数。
+2. `host_summary_contract` 出现时，必须按其字段回答，不允许自行改写成别的时间口径。
+3. 对“累计回款 + 子期间到账”类问题：
+   - `total_amount` 是累计值
+   - `sub_period_amount` 是子期间值
+   - 不能把 `sub_period_receipts` 当累计值
+   - 不能把“其中 3 月到账”改写成“全部在 3 月到账”
+4. CLI 非 0 退出码不等于没有结果：
+   - 必须优先解析 `stdout` JSON
+   - 再看 exit code
 
-## 5. 调用决策
+## 5. 老板问答规则
 
-### 5.1 OpenClaw / Claude 默认流程
+1. 核心经营指标：
+   - 收入 / 成本 / 利润 / 销售额默认先给现金收付，再补经营确认
+   - 回答顺序保持“先现金、再经营”
+2. 差异原因：
+   - 只有在用户追问“为什么不一样/差额是什么造成”时，再展开利润调现金桥、回款时点和成本确认时差
+3. 明确主体问题：
+   - 如果问题明确点名客户 / 供应商 / 员工 / 项目 / 分公司，优先回答主体审计结果
+   - 不要强行改成整月汇总
+4. 人力成本：
+   - 要看 `hr_breakdown`
+   - 至少覆盖工资、社保、公积金
+   - 分公司内部转账要单列解释，不能静默并入别的科目
+5. 应收 / 应付：
+   - 以开放项配对和余额逻辑为准
+   - 不能只按当月回款/付款机械相减
+6. 区间问题：
+   - 季度 / 半年 / 全年 / 累计必须按区间聚合
+   - 不能把最后一个月的 `current_amount` 当整个区间答案
+   - 要做 `current_amount` 和 `cumulative_amount` 的合理性交叉验证
+7. 证据不足：
+   - 直接说“目前库里还不能硬判”
+   - 说明缺什么字段
+   - 告诉老板下一步该查什么
 
-1. 先调 `finance-query`
-2. 若 `success=true` 且 `answer_method=sql`
-   - 直接用结果回答老板
-3. 若 `success=false` 或 `answer_method=llm_payload`
-   - 立即切 `finance-host-data`
-   - 用 `data.llm_payload` 交给宿主 LLM 继续归纳
-
-### 5.2 桥接层自动 fallback
-
-`finance-query` 在桥接层里已经内置降级：
-
-1. 如果底层 `financeqa query` exit code 非 0
-2. 桥接会自动再调用一次 `financeqa host-data`
-3. 然后返回：
-   - `answer_method = llm_payload`
-   - `data.fallback_attempted = true`
-   - `data.llm_payload = ...`
-
-但宿主仍应按上面的标准流程检查结果，不要假设每次都是直接可答。
-
-## 6. 老板问题的回答规则
-
-1. 默认先走可计算路径，再做语言归纳
-2. 收入 / 成本 / 利润 / 销售额等核心经营指标，默认先给现金口径，再补经营口径
-   - 优先返回 `money_view` / `account_view` / `metrics`
-   - `message` 顺序保持“先现金、再经营”，不要只落单口径
-3. 如果问题继续追问 `差异原因` / `为什么不一样`，再展开利润调现金桥、回款时点差异和成本确认时差
-4. 如果问题明确在问某个客户 / 供应商 / 员工 / 项目，优先返回主体审计结果，不强行改成整月汇总双口径
-5. 人力成本问题，要关注：
-   - `hr_breakdown`
-   - `工资`
-   - `社保`
-   - `公积金`
-   - 分公司内部转账应作为单列信息解释
-6. 应收应付问题，要以开放项配对逻辑为准，不能只按当月回款/付款机械相减
-7. 证据不足时必须明确：
-   - 还不能硬判
-   - 缺什么字段
-   - 下一步该查什么
-8. 意图识别必须按功能模块分流，不允许把“季度/半年/全年/累计”的区间核心指标误答成单月结果
-9. 输出前必须做合理性交叉验证；校验失败时，要保留校验结果并明确提示“需复核”
-
-## 7. 绝对红线
+## 6. 绝对红线
 
 1. 不能把银行到账直接当当月收入确认
-2. 不能把供应商付款 / 工资 / 税费 / 借款还款误归因为收入差异
+2. 不能把供应商付款、工资、税费、借款还款直接归因为收入差异
 3. 不能只靠银行对手方名称判断客户 / 供应商身份
 4. 不能在证据不足时编造结算月份、合同归属、开票归属
-5. 不能只返回一个数字，不带过程字段
+5. 不能只给一个数字，不保留结构化过程字段
 6. 不能因为 CLI 非 0 退出码直接丢弃 `stdout` JSON
-7. 不能把桥接工具当成全部能力入口，批量导入和维度管理需要允许直连 CLI
-8. 不能把季度/半年/全年问题偷换成最后一个月的 `current_amount`
-9. 不能跳过 `current_amount` 与 `cumulative_amount` 的区间合理性校验
+7. 不能无视 `host_summary_contract`，自行从日志或证据里重算金额
+8. 不能把 `sub_period_receipts` 改写成累计回款
+9. 不能把季度 / 半年 / 全年问题偷换成最后一个月结果
 
-## 8. 最小示例
+## 7. 最小调用示例
 
-### 8.1 直接问答
+### 7.1 直接问答
 
 ```bash
-./financeqa query --company "南京优集数据科技有限公司" "2026年3月收入是多少"
+./financeqa query --company "南京优集数据科技有限公司" "2026年3月收入、成本、利润分别是多少？"
 ```
 
-### 8.2 获取宿主 LLM 数据包
+### 7.2 获取宿主兜底数据包
 
 ```bash
 ./financeqa host-data --company "南京优集数据科技有限公司" --from 2026-03 --to 2026-03 "为什么3月利润和现金差这么大"
 ```
 
-### 8.3 单文件导入
+### 7.3 单文件导入
 
 ```bash
 ./financeqa import --company "南京优集数据科技有限公司" /abs/path/report.xlsx
 ```
 
-### 8.4 批量导入
+## 8. 附录说明
 
-```bash
-./financeqa sync --incremental /abs/path/reports/
-```
-
-### 8.5 维度导出
-
-```bash
-./financeqa dimensions export-package --output /tmp/dimensions.json
-```
-
-## 9. 验收
-
-默认回归：
-
-1. `/opt/homebrew/bin/go test ./...`
-
-真实数据库回归：
-
-1. `./tests/scripts/run_top20_realdata_check.sh`
-2. `./tests/scripts/run_user19_realdata_check.sh`
-3. `/opt/homebrew/bin/go run -tags scriptmain tests/scripts/prod_audit_regression.go`
-4. 如需运行 live DB 集成测试，显式设置：
-   - `FINANCEQA_RUN_LIVE_DB_TESTS=1`
-
-## 10. 附录
-
-1. 完整历史规则与财务说明：`docs/SKILL_APPENDIX_FULL_2026-04-15.md`
-2. 若本文件与附录冲突，以本文件为准
-3. 发布到 Claude / OpenClaw 时，必须保留相对路径 `docs/SKILL_APPENDIX_FULL_2026-04-15.md`
+1. 更细的财务规则、问法覆盖和统计原则，按需参考 `docs/SKILL_APPENDIX_FULL.md`
+2. 若主 skill 与附录冲突，以主 skill 为准
+3. 发布到 Claude / OpenClaw 时，必须保留相对路径 `docs/SKILL_APPENDIX_FULL.md`

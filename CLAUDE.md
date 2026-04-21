@@ -27,7 +27,9 @@
 3. 涉及报表导入，使用 `finance-upload`（单文件）。
 4. 若要批量导入、维度管理、配置查看，走直接 CLI 能力（`sync`、`dimensions`、`config`、`keywords`）。
 5. 不依赖桥接层注入 skill 内容；skill 由宿主 skills 机制统一加载。
-6. 注入策略使用“核心版 SKILL + 按需附录”：优先遵循仓库根目录 `SKILL.md`，仅在需要细粒度规则时再参考 `docs/SKILL_APPENDIX_FULL_2026-04-15.md`。
+6. 注入策略使用“核心版 SKILL + 按需附录”：优先遵循仓库根目录 `SKILL.md`，仅在需要细粒度规则时再参考 `docs/SKILL_APPENDIX_FULL.md`。
+7. 若桥接结果里存在 `boss_reply`，优先直接引用，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里重算金额。
+8. 若存在 `host_summary_contract`，摘要必须受它约束，尤其不能把子期间到账改写成累计回款，也不能把累计回款压成单月到账。
 
 ## 结果风格
 

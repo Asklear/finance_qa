@@ -24,7 +24,7 @@ echo "📦 3. 规整并打包知识与附带资产..."
 # 将给 AI 读的说明手册放入根目录，并保留附录的相对路径
 cp SKILL.md "$OUTPUT_DIR/"
 mkdir -p "$OUTPUT_DIR/docs"
-cp docs/SKILL_APPENDIX_FULL_2026-04-15.md "$OUTPUT_DIR/docs/"
+cp docs/SKILL_APPENDIX_FULL.md "$OUTPUT_DIR/docs/"
 
 echo "🗜️ 4. 打包最终 OpenClaw 安装包..."
 cd dist

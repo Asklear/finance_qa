@@ -220,11 +220,12 @@ finance_qa/
 │   ├── query/              # 自然语言查询引擎 (含词法归一化、Intent Router V2、llm_payload 输出)
 │   ├── support/            # 全局路径与工具支持
 │   └── types/              # 通用数据结构定义
-├── tests/                  # 质量保障体系 (完全独立于源代码)
-│   ├── unit/               # 单元测试 (按模块镜像排列，执行黑盒验证)
-│   ├── integration/        # 集成测试 (覆盖核心财务场景，配套严格回归与20题真实数据检查)
+├── tests/                  # 跨包测试、集成回归、测试数据与测试脚本
+│   ├── unit/               # 黑盒/契约型单元测试（按领域归类，不要求与源码同目录）
+│   ├── integration/        # 集成/契约/回归测试（跨模块、桥接层、真实题库）
 │   ├── testdata/           # 样本库 (已脱敏的典型财务报表样本)
-│   └── scripts/            # 开发工具脚本 (test_runner.go)
+│   ├── scripts/            # 测试与部署辅助脚本
+│   └── README.md           # 测试目录放置规范
 ├── docs/                   # 项目说明文档
 └── README.md
 ```
@@ -239,11 +240,17 @@ finance_qa/
 ### 2. 运行测试
 本项目采用全自动化的集成测试套件，可一键验证重构后的业务逻辑对齐情况：
 ```bash
-# 运行单元测试
-go test ./internal/...
+# 运行全部 Go 测试（包含 internal 包内测试 + tests 目录测试）
+go test ./... -count=1
+
+# 运行包内单元测试（适合改动 internal 逻辑后快速回归）
+go test ./internal/... -count=1
+
+# 运行 tests 目录下的黑盒/契约单元测试
+go test ./tests/unit/... -count=1
 
 # 运行集成测试 (全量覆盖业务场景)
-go test ./tests/integration/...
+go test ./tests/integration/... -count=1
 
 # 运行回归检查工具 (自动输出生产提问审计对照表)
 /opt/homebrew/bin/go run tests/scripts/prod_audit_regression.go
@@ -254,6 +261,22 @@ go test ./tests/integration/...
 # 运行用户确认的 19 条问题真实数据检查
 ./tests/scripts/run_user19_realdata_check.sh
 ```
+
+### 3. 测试文件应该放哪里
+仓库当前采用混合布局，不要求所有 `*_test.go` 都放进顶层 `tests/`：
+
+- 放在源码旁边：适合测试单个 package 的内部逻辑、未导出辅助函数、SQL 兼容边界。
+- 放在 `tests/unit/`：适合黑盒单元测试、规则契约测试、跨多个 package 的轻量级行为验证。
+- 放在 `tests/integration/`：适合集成测试、bridge/host 契约测试、真实数据题库回归、线上 smoke。
+- 放在 `tests/testdata/`：仅存放测试输入、基准输出和报告样本，不放执行逻辑。
+- 放在 `tests/scripts/`：仅存放测试驱动脚本、部署校验脚本和辅助工具。
+
+快速判断标准：
+
+- 如果测试必须和某个 package 紧耦合，优先就地放。
+- 如果测试代表“外部调用者视角”，优先放 `tests/unit` 或 `tests/integration`。
+- 如果测试会连 PostgreSQL、桥接层、CLI、线上环境，统一放 `tests/integration`。
+- 新增测试前，先看 [tests/README.md](/Users/gaorongvc/work/other/finance_qa/tests/README.md) 的放置规范。
 
 ## 六、查询结果契约（对接层必读）
 
@@ -299,8 +322,8 @@ go test ./tests/integration/...
 当前推荐使用“核心版 SKILL + 附录”：
 
 1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）
-2. 详细规则：`docs/SKILL_APPENDIX_FULL_2026-04-15.md`（按需查阅）
-3. 发布到 Claude Code / OpenClaw 时，需保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL_2026-04-15.md` 这条相对路径
+2. 详细规则：`docs/SKILL_APPENDIX_FULL.md`（按需查阅）
+3. 发布到 Claude Code / OpenClaw 时，需保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 这条相对路径
 
 ## 七、Agent 对接能力矩阵
 

@@ -4,7 +4,7 @@
 flowchart LR
     subgraph LocalRepo["本地仓库"]
         LR1["SKILL.md"]
-        LR2["docs/SKILL_APPENDIX_FULL_2026-04-15.md"]
+        LR2["docs/SKILL_APPENDIX_FULL.md"]
         LR3["plugin/openclaw-finance/server/finance_bridge.py"]
         LR4["tests/scripts/build_openclaw_package.sh"]
         LR5["tests/scripts/sync_openclaw_bridge_and_skill.sh"]
@@ -18,14 +18,14 @@ flowchart LR
 
     subgraph Package["OpenClaw 安装包 dist/finance_qa_plugin"]
         PK1["SKILL.md"]
-        PK2["docs/SKILL_APPENDIX_FULL_2026-04-15.md"]
+        PK2["docs/SKILL_APPENDIX_FULL.md"]
         PK3["bin/financeqa"]
         PK1 --> PK2
     end
 
     subgraph HostRepo["服务器仓库 /root/finance_qa"]
         HR1["SKILL.md"]
-        HR2["docs/SKILL_APPENDIX_FULL_2026-04-15.md"]
+        HR2["docs/SKILL_APPENDIX_FULL.md"]
         HR3["plugin/openclaw-finance/server/finance_bridge.py"]
         HR4["financeqa"]
         HR1 --> HR2
@@ -33,7 +33,7 @@ flowchart LR
 
     subgraph OpenClaw["OpenClaw 默认目录"]
         OC1["/root/.openclaw/skills/finance/SKILL.md"]
-        OC2["/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL_2026-04-15.md"]
+        OC2["/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         OC3["/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py"]
         OC1 -. symlink .-> HR1
         OC2 -. symlink .-> HR2
@@ -43,7 +43,7 @@ flowchart LR
 
     subgraph Claude["Claude Code 工作区"]
         CC1["workspace/SKILL.md"]
-        CC2["workspace/docs/SKILL_APPENDIX_FULL_2026-04-15.md"]
+        CC2["workspace/docs/SKILL_APPENDIX_FULL.md"]
         CC1 --> CC2
     end
 
@@ -76,7 +76,7 @@ flowchart LR
 
 1. 规则支持两种覆盖：`rules.json` 文件、环境变量。
 2. bridge 运行时只读取 `SKILL.md` 顶部契约版本，不在桥接层重复注入 skill 正文；细粒度规则仍由宿主按相对路径读取 appendix。
-3. OpenClaw / Claude Code 发布时必须保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL_2026-04-15.md` 这条相对路径。
+3. OpenClaw / Claude Code 发布时必须保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 这条相对路径。
 4. 线上调用建议优先走结构化 JSON；当 `answer_method=llm_payload` 时，由宿主基于 `llm_payload` 做最终语言归纳。
 
 ## 默认路径
@@ -93,15 +93,15 @@ flowchart LR
 
 1. `build_openclaw_package.sh` 必须把以下文件一起打包：
    - `SKILL.md`
-   - `docs/SKILL_APPENDIX_FULL_2026-04-15.md`
+   - `docs/SKILL_APPENDIX_FULL.md`
    - `bin/financeqa`
 2. `sync_openclaw_bridge_and_skill.sh` 必须把以下文件一起同步到服务器仓库：
    - `SKILL.md`
-   - `docs/SKILL_APPENDIX_FULL_2026-04-15.md`
+   - `docs/SKILL_APPENDIX_FULL.md`
    - `plugin/openclaw-finance/server/finance_bridge.py`
 3. OpenClaw skill 目录内必须保留：
    - `SKILL.md`
-   - `docs/SKILL_APPENDIX_FULL_2026-04-15.md`
+   - `docs/SKILL_APPENDIX_FULL.md`
 4. 如果线上目录不是默认值，应通过这些变量覆盖：
    - `REMOTE_REPO_DIR`
    - `REMOTE_REPO_BRIDGE_DIR`
@@ -110,7 +110,7 @@ flowchart LR
 
 ## 运行时要点
 
-1. OpenClaw 读取的是 skill 目录中的 `SKILL.md`，再按相对路径继续读取 `docs/SKILL_APPENDIX_FULL_2026-04-15.md`。
+1. OpenClaw 读取的是 skill 目录中的 `SKILL.md`，再按相对路径继续读取 `docs/SKILL_APPENDIX_FULL.md`。
 2. Claude Code 通常直接在完整工作区中读取 `SKILL.md` 与 `docs/...`，不依赖 OpenClaw 目录。
 3. bridge 只把 `SKILL.md` 当作契约版本来源，不把 appendix 正文注入返回。
 4. 当 `finance-query` 不能稳定回答时，bridge 会自动补调 `financeqa host-data`，并把 `llm_payload` 留给宿主继续归纳。
