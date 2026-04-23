@@ -9,12 +9,11 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 0. 附录状态
 
-1. `appendix_doc_version`: `2026-04-21.2`
-2. `skill_contract_version`: `2026-04-21.2`
+1. `appendix_doc_version`: `2026-04-23.2`
+2. `skill_contract_version`: `2026-04-23.2`
 3. `bridge_protocol_version`: `v2`
-4. `last_updated`: `2026-04-21`
+4. `last_updated`: `2026-04-23`
 5. 当前规范文件名：`docs/SKILL_APPENDIX_FULL.md`
-6. 旧文件名 `docs/SKILL_APPENDIX_FULL_2026-04-15.md` 仅保留为兼容别名。
 
 ## 1. 能力定位
 
@@ -22,7 +21,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 1. 数据层：初始化库、导入报表、目录同步。
 2. 规则层：自然语言意图识别、实体识别、账期识别。
-3. 计算层：双视角核算（银行卡实际进出账 + 财务报表确认）、税额、应收应付、项目收支等。
+3. 计算层：双视角核算（银行卡实际进出账 + 财务报表确认）、合同维度台账、税额、应收应付、项目收支等。
 4. 兜底层：输出 `llm_payload` 全量财报上下文给上层 Agent 或宿主模型做最终判别。
 
 说明：
@@ -47,18 +46,25 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 11. `data.intent_trace.scores`
 12. `data.intent_trace.final_intent`
 13. `data.intent_trace.confidence`
-14. `data.exposed_fields.dual_perspective`
-15. `data.exposed_fields.hr_breakdown`
-16. `data.exposed_fields.arithmetic_checks`
-17. `data.exposed_fields.intent_trace`
-18. `bridge_meta.skill_contract_version`
-19. `bridge_meta.protocol_version`
-20. `bridge_meta.capabilities`
-21. `bridge_meta.skill_appendix_relative_path`
-22. `bridge_meta.skill_appendix_path`
-23. `bridge_meta.skill_appendix_exists`
+14. `data.query_pipeline`
+15. `data.source_plan`
+16. `data.fact_sets`
+17. `data.source_note`
+18. `data.source_documents`
+19. `data.primary_source_tables`
+20. `data.supporting_source_documents`
+21. `data.exposed_fields.intent_trace`
+22. `data.tax_inclusion`
+23. `data.tax_inclusion_note`
+24. `bridge_meta.skill_contract_version`
+25. `bridge_meta.protocol_version`
+26. `bridge_meta.capabilities`
+27. `bridge_meta.skill_appendix_relative_path`
+28. `bridge_meta.skill_appendix_path`
+29. `bridge_meta.skill_appendix_exists`
 
 说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
+补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序。
 
 ## 3. 宿主运行接口（按需）
 
@@ -69,7 +75,31 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 2. `finance-host-data`
    - 当 `finance-query` 不能稳定直答时，提供 `llm_payload`
 3. `finance-upload`
-   - 单文件导入财务报表
+   - 单文件导入财务报表或合同台账 Excel
+
+导入落库约定（强制）：
+
+1. PostgreSQL 导入目标表固定为 `fin_*` 实表，不依赖兼容 view。
+2. 余额表导入到 `fin_balance_detail` 时，`opening_period` 必须写“会计期间第一个月份（期初月）”，`period` 写“会计期间第二个月份（期末月）”。
+3. 序时账导入到 `fin_journal` 时，`period` 必须由 `voucher_date` 自动归一为 `YYYY-MM`，不允许空值。
+4. 合同类 Excel 识别后写入：
+   - `fin_contracts`
+   - `fin_cost_settlements`
+   - `fin_fund_income`
+   - 客户合同的结算额/开票额/回款额统一落到 `fin_fund_income`
+   - `fin_contracts` 保存合同主信息：`customer_name`、`contract_content`、`contract_start_date`、`contract_end_date`、`settlement_cycle`
+   - `fin_cost_settlements` 保存成本侧行项目字段：`quantity`、`settlement_amount`、`invoice_amount`、`paid_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
+   - `fin_fund_income` 保存收入/回款侧行项目字段：`quantity`、`settlement_amount`、`received_amount`、`invoice_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
+   - 两张行项目表额外保存 `source_report_type`、`source_sheet_name`，作为来源分区键；合同 Excel 做全量重传时，只覆盖相同来源分区，不整表清空
+   - 除 `year_month` 会按规则推断外，其他扩展字段默认保留源 Excel 原值；源单元格为空时，数据库也保持为空，不做硬补
+   - 合同月度结算表的 `year_month` 必须动态推断：先按每行合同开始/终止日期匹配月份年份；若行内日期缺失，再按同 sheet 同月份的多数年份或 sheet 年份补齐
+   - 合并单元格产生的空客户名不能直接跳过，要继承上一条非空客户名
+   - 资金到账表要兼容任意 `xx年Qn收入明细` sheet，不允许只支持固定季度名称
+   - `fin_revenue_settlements` 已废弃，仅保留历史兼容，不再作为查询来源
+5. 每张业务表都应把“来源 Excel / sheet / 报表类型”写进表注释：
+   - 注释格式统一为结构化 `financeqa_source`
+   - 查询收口阶段统一从表注释提取 `source_note/source_documents`
+   - 历史遗留的纯文本注释会在 bootstrap/query/import 时自动升级
 
 补充：
 
@@ -119,19 +149,33 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 7. 经营分析：查账龄、健康度、差异原因分析。
 8. 兜底查询：处理供应商数量、人力成本、整体支出、项目收入成本、某主体金额等问题。
 9. 精确余额查询：查货币资金、银行存款、指定科目期末余额。
+10. 合同维度查询：查客户合同结算/到账/开票，或供应商合同成本/实际付款。
 
 补充规则：
 
 1. 意图识别必须先按功能模块分流，再决定口径，不允许把“季度/半年/全年/累计”的区间问题误当成单月问题。
-2. 总量型核心指标问题（收入/成本/利润/销售额）默认先返回现金收付，再补经营确认结果。
-3. 如果问题里带有明确的真实主体，优先回答这个主体的金额或状态，不强行改成整月汇总。
-4. 当直接规则无法稳定回答时，自动降级输出 `llm_payload` 给上层 Agent 继续判断。
+2. 总量型核心指标问题（收入/成本/利润/销售额）先尝试合同/项目汇总口径：`fin_contracts + fin_fund_income + fin_cost_settlements`；只有合同汇总答不全时，才回退到现金收付 + 经营确认。
+3. `利润` 与 `净利润` 必须分开：
+   - `利润` 默认按 `收入 - 成本及费用 + 营业外收入 - 营业外支出`
+   - `净利润` 单独回答，不得和“利润”混说
+4. 序时账汇总结果必须带“是否含税”说明；默认解释为按凭证入账金额统计、不主动剔税，若税额未单独拆分通常视为含税口径。
+5. 如果问题里带有明确的真实主体，优先回答这个主体的金额或状态，不强行改成整月汇总。
+6. 当直接规则无法稳定回答时，自动降级输出 `llm_payload` 给上层 Agent 继续判断。
+7. 如果响应里出现 `query_pipeline=orchestrator`，宿主应视为后端已经完成多源聚合，不要再自行重排主口径。
+
+当前已接入多源编排器的主查询族：
+
+1. `core_metric`：收入 / 成本 / 利润 / 销售额，支持“合同/项目汇总优先，失败后回退到现金+经营/财务”。
+2. `arap`：应收 / 应付，优先官方余额，再补开放项证据。
+3. `supplier_payments`：按期间统计外部供应商付款名单与金额。
+4. `contract_dimension`：客户合同与供应商合同，默认先现金后财务台账。
+5. `readiness`：某主体 / 项目数据是否已出。
 
 ## 6. 已支持问题能力清单（老板问法）
 
 以下问题当前都已支持，且会返回中间过程：
 
-1. 月度收入/成本/利润（默认先给现金口径，再补经营口径，并保留差异桥字段）。
+1. 月度收入/成本/利润（老板问汇总时先尝试合同/项目汇总；答不全时再回退现金口径 + 经营口径，并保留差异桥字段）。
 2. 某客户/供应商/主体在某期间金额（穿透审计）。
 3. 这个月整体支出。
 4. 人力成本。
@@ -141,7 +185,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 8. 某项目某月成本。
 9. 某月销项税额。
 10. 某月进项税额。
-11. 某月总成本（默认先给现金支出，再补经营成本；必要时解释预提/冲回影响）。
+11. 某月总成本（老板问汇总时先尝试合同成本；答不全时再回退现金支出 + 经营成本，必要时解释预提/冲回影响）。
 12. 某月应收账款（余额表口径）。
 13. 某月应付账款（余额表口径）。
 14. 某项目应收/应付（项目净流入口径）。
@@ -149,6 +193,8 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 16. 某期间最大流入对手方/大额流水查询。
 17. 某科目期末余额精确查询（如“货币资金余额是多少”）。
 18. 账龄与健康度分析（应收/应付账龄桶与健康评分）。
+19. 某客户合同在某年/某月结算多少、其中某月到账多少。
+20. 某供应商合同在某年/某月成本多少、实际付款多少。
 
 ## 7. 意图识别与功能模块分流
 
@@ -167,14 +213,25 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 5. 如果命中明确真实主体：
    - 优先走主体审计/往来模块
    - 不要把主体问题改写成整公司汇总
+6. 如果同时命中 `合同` + `结算/到账/付款/成本/开票`：
+   - 优先走合同维度模块
+   - `项目` 视为合同同义词；若识别到真实主体，也按合同维度处理
+   - 客户合同先回答现金口径到账，再补财务口径合同结算/开票
+   - 供应商合同先回答现金口径实际付款，再补财务口径合同成本
+   - 混合合同也必须先现金、再财务
+   - 合同优先关键词、来源表映射应视为可配置规则，不假设写死在代码中
 
 ## 8. 核心指标返回规则
 
-当问题涉及总量型 `收入/成本/利润/销售额` 时，默认返回双视角，顺序先现金、再经营：
+当问题涉及总量型 `收入/成本/利润/销售额` 时，默认按以下优先级返回：
 
-1. 先使用银行流水 / 现金收付组织第一层回答，返回 `money_view` / `cash_flow`。
-2. 再补利润表 / 财务确认结果，返回 `account_view` / `metrics`。
-3. 当问题继续追问差异原因，或问题本身就是多指标汇总时，可继续展开 `difference_bridge` / `profit_cash_bridge`。
+1. 先尝试合同/项目汇总：`fin_contracts + fin_fund_income + fin_cost_settlements`。
+2. 合同汇总能回答时，优先输出老板口径的合同营收、合同成本、合同利润，并可补充合同回款/开票。
+3. 只有合同汇总答不全时，才回退到双视角：先现金，再经营/财务。
+4. 如果回答的是 `利润`，经营口径默认解释为：`收入 - 成本及费用 + 营业外收入 - 营业外支出`。
+5. 如果老板明确问 `净利润`，要单独返回净利润，不得把“利润”字段直接冒充净利润。
+6. 如果经营口径来自序时账汇总，必须同步输出含税说明。
+7. 银行流水 / 实际到账 / 实际支出 / 净增加 / 回款问题，不强行先走合同汇总。
 
 兼容字段：
 
@@ -188,7 +245,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 说明：
 
-1. 核心指标默认就回答“银行卡上看 + 经营口径”，不要只落单口径。
+1. 核心指标不是一律“银行卡上看 + 经营口径”；老板问汇总时先看合同/项目汇总，只有答不全才回退双视角。
 2. `季度/半年/全年/累计` 这类区间问题，经营口径必须按区间汇总，不允许直接拿最后一个月的 `current_amount` 充当区间结果。
 3. 如果问题继续追问 `差异原因`、`为什么不一样`、`回款和利润差异`，再把利润桥、税项时差和预提/冲回影响讲透。
 4. 如果问题明确在问某个客户、供应商、员工或项目，优先返回主体审计结果，不强制改成双视角汇总。
@@ -198,8 +255,9 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 输出结果前，必须做下面这些交叉验证；校验失败时要保留校验结果，并明确提示“需复核”：
 
 1. 单月核心指标：
-   - 校验 `收入 - 成本及费用 ≈ 利润`
+   - 校验 `收入 - 成本及费用 + 营业外收入 - 营业外支出 ≈ 利润`
    - 校验 `现金流入 - 现金流出 = 净现金流`
+   - 如果问题明确问 `净利润`，再校验 `利润 - 所得税 ≈ 净利润`
 2. 区间核心指标：
    - 优先使用 `SUM(current_amount)` 做区间汇总
    - 如果 `income_statement` 存在 `cumulative_amount`，必须再做一次 `累计差分` 交叉验证
@@ -210,6 +268,9 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 4. 应收 / 应付问题：
    - 必须优先使用余额/配对逻辑
    - 不能因为同月一借一贷就直接完成冲销判断
+5. 多源编排问题：
+   - `message`、`source_plan`、`fact_sets` 三者必须一致
+   - 不允许宿主忽略后端已给出的主口径，再自行取某个分源字段回答老板
 
 ## 10. 上层 Agent 兜底接口
 
@@ -229,8 +290,11 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 6. `financial_tables.balance_detail`
 7. `financial_tables.journal`
 8. `financial_tables.bank_statement`
-9. `trace.intent`
-10. `trace.strategy`
+9. `financial_tables.fin_contracts`
+10. `financial_tables.fin_cost_settlements`
+11. `financial_tables.fin_fund_income`
+12. `trace.intent`
+13. `trace.strategy`
 
 ## 11. 宿主封装注意事项
 
@@ -252,6 +316,11 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 再看 `success` 和 `answer_method`
    - 若拿不到结构化结果，再调用 `finance-host-data` 兜底
 6. 若人类明确要求高级维护能力，再通过直接 CLI / shell 工具调用，不要默认把这些能力说明注入老板问答上下文。
+7. 若响应里带有 `data.tax_inclusion` / `data.tax_inclusion_note`：
+   - 宿主摘要时必须保留这条税口径提示
+   - 不得把序时账汇总金额擅自改写成“不含税”“税后利润”或“已剔税”
+   - 如果要对老板做一段自然语言总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
+8. `bridge_meta.capabilities.tax_disclosure=true` 时，表示 bridge 已显式暴露税口径提示；宿主应优先消费结构化字段，不要回退到正则抽取自然语言。
 
 ## 12. Agent 返回规范（必须透出中间过程）
 
@@ -264,7 +333,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ```json
 {
-  "answer": "先说结果：2月公司账上确认收入约165万、确认成本约130万、账面利润约35万。若你要继续核对银行卡实际收付或解释利润和现金差异，我会再把到账、付款和历史回款拆开给你看。建议本周先盯大额回款对应的结算单，再把跨月成本拆开看。",
+  "answer": "先说结果：2月公司先看现金口径，再看经营口径。经营口径下利润按收入减成本及费用并加回营业外收支计算；若当前结果来自序时账汇总，还会同步提示该金额默认未剔税、通常应按含税口径理解。若你要继续核对银行卡实际收付或解释利润和现金差异，我会再把到账、付款和历史回款拆开给你看。",
   "method": "sql",
   "trace": {
     "executed_sql": ["..."],
@@ -283,9 +352,34 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 禁止只返回一个数字，必须按以下结构输出：
 
 1. 一句话结论：先回答老板最关心的结果（金额 + 时间）。
-2. 业务解释：核心指标默认先说明“银行卡上看/实际收付”，再补经营确认；继续追问差异时再展开利润桥、税项时差和预提/冲回影响。
-3. 管理动作：给 1-2 条可执行建议（催收、控费、回款跟进、税务检查等）。
-4. 过程可追溯：接口里保留 `executed_sql` / `calculation_logs`，但对老板默认折叠展示。
+2. 业务解释：老板问汇总时先说明“合同/项目汇总口径”；只有合同汇总答不全时，再切到“银行卡上看/实际收付 + 经营确认”；继续追问差异时再展开利润桥、税项时差和预提/冲回影响。
+3. 如果经营口径来自序时账汇总，必须补一句含税说明；不要把序时账金额默认为不含税。
+4. 管理动作：给 1-2 条可执行建议（催收、控费、回款跟进、税务检查等）。
+5. 过程可追溯：接口里保留 `executed_sql` / `calculation_logs`，但对老板默认折叠展示。
+
+## 12.2 宿主消费 `tax_inclusion` 规则
+
+宿主在解析 `finance-query` 返回时，对税口径字段必须按下面顺序处理：
+
+1. 先读 `data.tax_inclusion`
+2. 再读 `data.tax_inclusion_note`
+3. 再看 `data.exposed_fields.tax_inclusion` / `data.exposed_fields.tax_inclusion_note`
+4. 最后才退回 `message` 或 `boss_reply["原因"]` 里的自然语言提示
+
+当前已定义语义：
+
+1. `journal_entry_gross_amount_default`
+   - 表示经营口径来自序时账汇总
+   - 默认按凭证入账金额统计
+   - 不主动剔税
+   - 若税额未单独拆分，通常按含税口径理解
+
+宿主禁止动作：
+
+1. 看到 `account_value` 就直接说“不含税利润”
+2. 因为 `metric=利润` 就默认它是税后结果
+3. 丢掉 `tax_inclusion_note` 后只保留金额
+4. 用自己总结的话覆盖 `tax_inclusion_note` 原意
 
 额外强制要求：
 
@@ -331,6 +425,9 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 ```bash
 # 查询
 ./financeqa query --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
+
+# 合同维度查询
+./financeqa query --company "南京优集数据科技有限公司" "辽宁金程信息科技有限公司2025年合同结算多少？其中10月到账多少？"
 
 # 主动获取上层 Agent 数据包
 ./financeqa host-data --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
@@ -397,7 +494,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 1. 不要把”收入”直接等同”银行到账”。
 2. 不要把”成本”直接等同”银行支出”。
-3. 涉及核心指标，默认先给现金收付，再补经营确认；涉及明确主体时优先返回主体审计结果，不强行改成整月双视角。
+3. 涉及核心指标，老板问汇总时先查合同/项目汇总，答不全再给现金收付 + 经营确认；涉及明确主体时优先返回主体审计结果，不强行改成整月双视角。
 4. 缺数据时必须返回 `llm_payload` 或明确缺口，不可编造。
 5. 供应商相关回答要返回具体名单（`data.suppliers`），不能只给总数。
 6. 问”今年/本月/上个月”时，账期按数据库最新凭证日期自动锚定，不按自然月盲算。

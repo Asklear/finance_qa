@@ -16,8 +16,8 @@ import (
 
 func runCLI(args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
-	// use go run to execute the main package
-	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa/main.go"}, args...)...)
+	// Run the package directory so multi-file command entrypoints resolve correctly.
+	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa"}, args...)...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -34,7 +34,7 @@ func runCLI(args ...string) (int, string, string) {
 
 func runCLIWithEnv(env map[string]string, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa/main.go"}, args...)...)
+	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa"}, args...)...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Env = os.Environ()

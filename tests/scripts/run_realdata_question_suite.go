@@ -128,7 +128,7 @@ func main() {
 	now := time.Now().Format("2006-01-02 15:04:05")
 	fmt.Fprintf(f, "# %s\n\n", *title)
 	fmt.Fprintf(f, "- 生成时间: %s\n", now)
-	fmt.Fprintf(f, "- 数据库: `%s`\n", dbLabel)
+	fmt.Fprintf(f, "- 数据库: `%s`\n", redactDBTarget(dbLabel))
 	fmt.Fprintf(f, "- 题库: `%s`\n", suitePath)
 	fmt.Fprintf(f, "- 公司: `%s`\n", *company)
 	fmt.Fprintf(f, "- 结果概览: %d/%d 成功\n\n", passCount, len(rows))
@@ -179,6 +179,35 @@ func resolveConfiguredDBTarget() (string, error) {
 func looksLikeDSN(v string) bool {
 	s := strings.ToLower(strings.TrimSpace(v))
 	return strings.Contains(s, "host=") && strings.Contains(s, "dbname=")
+}
+
+func redactDBTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return target
+	}
+	if !looksLikeDSN(target) {
+		return target
+	}
+	parts := strings.Fields(target)
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		lower := strings.ToLower(part)
+		switch {
+		case strings.HasPrefix(lower, "host="):
+			kept = append(kept, part)
+		case strings.HasPrefix(lower, "port="):
+			kept = append(kept, part)
+		case strings.HasPrefix(lower, "dbname="):
+			kept = append(kept, part)
+		case strings.HasPrefix(lower, "search_path="):
+			kept = append(kept, part)
+		}
+	}
+	if len(kept) == 0 {
+		return "<redacted dsn>"
+	}
+	return strings.Join(kept, " ")
 }
 
 func boolMark(v bool) string {

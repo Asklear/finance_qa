@@ -109,3 +109,110 @@ func TestBootstrapSeedsIdempotencyPolicies(t *testing.T) {
 		t.Fatalf("balance_detail update_mode=%s, want incremental_latest", mode)
 	}
 }
+
+func TestBootstrapAddsContractExtensionColumnsToLegacySQLiteTables(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "bootstrap-contract-extensions.sqlite")
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	legacyDDL := []string{
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT NOT NULL,
+			contract_content TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE fin_cost_settlements (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT NOT NULL,
+			year_month TEXT NOT NULL,
+			quantity TEXT,
+			settlement_amount DECIMAL(18,2) NOT NULL,
+			is_invoiced TEXT,
+			account_code TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT NOT NULL,
+			year_month TEXT NOT NULL,
+			settlement_amount DECIMAL(18,2),
+			received_amount DECIMAL(18,2),
+			is_invoiced TEXT,
+			invoice_amount DECIMAL(18,2),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+	}
+	for _, ddl := range legacyDDL {
+		if _, err := sqlDB.Exec(ddl); err != nil {
+			t.Fatalf("seed legacy ddl failed: %v", err)
+		}
+	}
+
+	if err := db.Bootstrap(context.Background(), dbPath); err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+
+	assertSQLiteColumnsExist(t, sqlDB, "fin_contracts",
+		"contract_start_date",
+		"contract_end_date",
+		"settlement_cycle",
+	)
+	assertSQLiteColumnsExist(t, sqlDB, "fin_cost_settlements",
+		"source_report_type",
+		"source_sheet_name",
+		"contract_start_date",
+		"contract_end_date",
+		"settlement_cycle",
+		"settlement_unit_price",
+		"invoice_amount",
+		"paid_amount",
+	)
+	assertSQLiteColumnsExist(t, sqlDB, "fin_fund_income",
+		"source_report_type",
+		"source_sheet_name",
+		"quantity",
+		"contract_start_date",
+		"contract_end_date",
+		"settlement_cycle",
+		"settlement_unit_price",
+	)
+}
+
+func assertSQLiteColumnsExist(t *testing.T, db *sql.DB, table string, columns ...string) {
+	t.Helper()
+
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		t.Fatalf("inspect table %s: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name string
+		var typ string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan table info %s: %v", table, err)
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate table info %s: %v", table, err)
+	}
+
+	for _, column := range columns {
+		if !existing[column] {
+			t.Fatalf("column %s.%s should exist after bootstrap", table, column)
+		}
+	}
+}

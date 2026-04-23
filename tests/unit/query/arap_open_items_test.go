@@ -1,10 +1,12 @@
 package query_test
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"financeqa/internal/query"
 
@@ -278,6 +280,60 @@ func TestTaxQuestionsRenderCombinedAndNetMessages(t *testing.T) {
 	}
 }
 
+func TestTaxQuestionsAccumulate222101And222102InputTax(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "tax-input-prefixes.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE journal (
+			company TEXT,
+			period TEXT,
+			voucher_date TEXT,
+			voucher_no TEXT,
+			account_code TEXT,
+			account_name TEXT,
+			summary TEXT,
+			direction TEXT,
+			amount REAL,
+			debit_amount REAL,
+			credit_amount REAL,
+			counterparty TEXT
+		)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-25', 'V-TAX-1', '22210106', '销项税额', '销项税', '贷', 100, 0, 100, '')`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-26', 'V-TAX-2', '22210101', '进项税额', '进项税', '借', 70, 70, 0, '')`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-27', 'V-TAX-3', '22210201', '待认证进项税额', '待认证进项', '借', 30, 30, 0, '')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月进项税额是多少？")
+	if !res.Success {
+		t.Fatalf("input tax query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "应计 100.00 元") {
+		t.Fatalf("expected 222101 and 222102 both included, got: %s", res.Message)
+	}
+	if got, ok := res.Data["total_input"].(float64); !ok || got != 100 {
+		t.Fatalf("total_input = %v, want 100", res.Data["total_input"])
+	}
+}
+
 func TestPayableOpenItemsTreatNegativeCreditAsReduction(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ap-negative-credit.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -415,4 +471,127 @@ func TestGeneralARAPUsesBalanceSheetAsOfficialTotal(t *testing.T) {
 	if !strings.Contains(res.Message, "期末余额 1200.00 元") {
 		t.Fatalf("unexpected message: %s", res.Message)
 	}
+}
+
+func TestARAPSourceAdapterReturnsOfficialAndOpenItemFacts(t *testing.T) {
+	dbPath := buildARAPOfficialPriorityDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	adapter := query.NewARAPSourceAdapter(engine)
+	spec := query.BuildQuerySpec("2026年3月应付账款情况", time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC))
+
+	factSet, err := adapter.Fetch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	assertARAPFactValue(t, factSet, "official_arap_total", 1200)
+	assertARAPFactValue(t, factSet, "official_arap_opening_balance", 1000)
+	assertARAPFactValue(t, factSet, "openitem_closing_total", 200)
+	assertARAPFactValue(t, factSet, "openitem_historical_settlement", 0)
+}
+
+func TestARAPQueryExposesSourceBackedFactSets(t *testing.T) {
+	dbPath := buildARAPOfficialPriorityDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月应付账款情况")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	factSets, ok := res.Data["fact_sets"].([]query.FactSet)
+	if !ok || len(factSets) == 0 {
+		t.Fatalf("fact_sets missing or empty: %#v", res.Data["fact_sets"])
+	}
+	if factSets[0].Source != "arap" {
+		t.Fatalf("fact set source = %s, want arap", factSets[0].Source)
+	}
+	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
+	}
+}
+
+func buildARAPOfficialPriorityDB(t *testing.T) string {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "arap-official-priority.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE journal (
+			company TEXT,
+			period TEXT,
+			voucher_date TEXT,
+			voucher_no TEXT,
+			account_code TEXT,
+			account_name TEXT,
+			summary TEXT,
+			direction TEXT,
+			amount REAL,
+			debit_amount REAL,
+			credit_amount REAL,
+			counterparty TEXT
+		)`,
+		`CREATE TABLE balance_sheet (
+			company TEXT,
+			period TEXT,
+			account_name TEXT,
+			account_code TEXT,
+			opening_balance REAL,
+			closing_balance REAL
+		)`,
+		`CREATE TABLE balance_detail (
+			company TEXT,
+			year INTEGER,
+			period TEXT,
+			account_code TEXT,
+			account_name TEXT,
+			opening_debit REAL,
+			opening_credit REAL,
+			current_debit REAL,
+			current_credit REAL,
+			closing_debit REAL,
+			closing_credit REAL
+		)`,
+		`INSERT INTO balance_sheet(company, period, account_name, account_code, opening_balance, closing_balance)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '应付账款', '2202', 1000, 1200)`,
+		`INSERT INTO balance_detail(company, year, period, account_code, account_name, opening_debit, opening_credit, current_debit, current_credit, closing_debit, closing_credit)
+		 VALUES ('南京优集数据科技有限公司', 2026, '2026-03', '2202', '应付账款', 0, 1000, 300, 500, 0, 1200)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-20', 'V-AP-BOOK-1', '220201', '单位', '收到供应商A发票_供应商A_2026.03.20', '贷', 500, 0, 500, '')`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-25', 'V-AP-BOOK-2', '220201', '单位', '转账供应商A_供应商A_2026.03.25', '借', 300, 300, 0, '')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+	return dbPath
+}
+
+func assertARAPFactValue(t *testing.T, factSet query.FactSet, metricKey string, want float64) {
+	t.Helper()
+	for _, fact := range factSet.Facts {
+		if fact.MetricKey == metricKey {
+			if fact.Value != want {
+				t.Fatalf("%s value = %v, want %v", metricKey, fact.Value, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("metricKey %s not found in facts: %+v", metricKey, factSet.Facts)
 }

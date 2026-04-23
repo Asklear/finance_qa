@@ -15,6 +15,7 @@ type ProfitCashBridge struct {
 	Period                        string  `json:"period"`
 	NetProfit                     float64 `json:"net_profit"`
 	Depreciation                  float64 `json:"depreciation"`
+	FixedAssetPurchasePrincipal   float64 `json:"fixed_asset_purchase_principal"`
 	ARIncrease                    float64 `json:"ar_increase"`
 	PrepaymentIncrease            float64 `json:"prepayment_increase"`
 	OtherReceivableIncrease       float64 `json:"other_receivable_increase"`
@@ -68,6 +69,10 @@ func AnalyzeProfitCashBridgeWithDB(ctx context.Context, db *sql.DB, company, per
 	if err != nil {
 		return bridge, err
 	}
+	fixedAssetPurchasePrincipal, err := loadPeriodDelta(ctx, db, company, period, "1601", "固定资产", debitNormal)
+	if err != nil {
+		return bridge, err
+	}
 	arIncrease, err := loadPeriodDelta(ctx, db, company, period, "1122", "应收账款", debitNormal)
 	if err != nil {
 		return bridge, err
@@ -116,6 +121,7 @@ func AnalyzeProfitCashBridgeWithDB(ctx context.Context, db *sql.DB, company, per
 	estimated := netProfit + depreciation - arIncrease - prepaymentIncrease - otherPayableIncrease + apIncrease + advanceReceiptIncrease + payrollIncrease
 	bridge.NetProfit = round2(netProfit)
 	bridge.Depreciation = round2(depreciation)
+	bridge.FixedAssetPurchasePrincipal = round2(fixedAssetPurchasePrincipal)
 	bridge.ARIncrease = round2(arIncrease)
 	bridge.PrepaymentIncrease = round2(prepaymentIncrease)
 	bridge.OtherReceivableIncrease = round2(otherReceivableIncrease)

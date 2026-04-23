@@ -45,8 +45,97 @@ func TestQueryRealEntityQuestionStillUsesCounterpartyPath(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "[飞未]") {
+	if !strings.Contains(res.Message, "[飞未]") && !strings.Contains(res.Message, "[飞未云科]") && !strings.Contains(res.Message, "[飞未云科(") {
 		t.Fatalf("expected counterparty style response, got: %s", res.Message)
+	}
+}
+
+func TestMarchCounterpartyRevenueQuestionDoesNotFallBackToMonthlySummary(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-25', '记-0099', '6001', '主营业务收入', '贷', 900, '3月飞未收入确认', '飞未云科', 0, 900)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-26', '飞未云科', '3月回款', 0, 900)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert march seed data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("飞未云科2026年3月收入多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "月度经营分析") {
+		t.Fatalf("counterparty revenue question should not route to monthly summary: %s", res.Message)
+	}
+	if strings.Contains(res.Message, "语义模糊") {
+		t.Fatalf("counterparty revenue question should not fall back to ambiguity: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "[飞未云科]") && !strings.Contains(res.Message, "[飞未云科(") {
+		t.Fatalf("expected counterparty style response, got: %s", res.Message)
+	}
+	if spec, ok := res.Data["query_spec"].(map[string]any); ok {
+		if got := spec["entity"]; got == "" {
+			t.Fatalf("query_spec.entity should not be empty: %+v", spec)
+		}
+	}
+}
+
+func TestReadinessQuestionKeepsResolvedEntityAndAvoidsAmbiguity(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-31', '记-0100', '6401', '主营业务成本', '林悦3月成本确认', '借', 500, '南京林悦智能科技有限公司', 500, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-20', '南京林悦智能科技有限公司', '合同款', 500, 0)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert readiness seed data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("南京林悦智能科技有限公司3月数据出来了吗？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "语义模糊") {
+		t.Fatalf("readiness question should not fall back to ambiguity: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "南京林悦智能科技有限公司") || !strings.Contains(res.Message, "2026-03") {
+		t.Fatalf("expected resolved entity and period in readiness answer, got: %s", res.Message)
+	}
+	if spec, ok := res.Data["query_spec"].(map[string]any); ok {
+		if got := spec["entity"]; got != "南京林悦智能科技有限公司" {
+			t.Fatalf("query_spec.entity = %v, want 南京林悦智能科技有限公司", got)
+		}
 	}
 }
 
@@ -107,6 +196,9 @@ func TestProfitQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	if got, ok := res.Data["account_value"].(float64); !ok || got != 500 {
 		t.Fatalf("account_value = %v, want 500", res.Data["account_value"])
 	}
+	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
+	}
 }
 
 func TestRevenueQuestionUsesCashFirstDualAnswer(t *testing.T) {
@@ -132,6 +224,65 @@ func TestRevenueQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	}
 	if got, ok := res.Data["account_value"].(float64); !ok || got != 800 {
 		t.Fatalf("account_value = %v, want 800", res.Data["account_value"])
+	}
+}
+
+func TestQueryInjectsIntentTraceQuerySpecAndProcessEnvelope(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月收入是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	intentTrace, ok := res.Data["intent_trace"].(map[string]any)
+	if !ok {
+		t.Fatalf("intent_trace missing: %+v", res.Data)
+	}
+	for _, key := range []string{"router_version", "matched", "scores", "final_intent", "confidence"} {
+		if _, exists := intentTrace[key]; !exists {
+			t.Fatalf("intent_trace missing key=%s", key)
+		}
+	}
+
+	querySpec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := querySpec["query_family"]; got == nil || got.(query.QueryFamily) != query.QueryFamilyCoreMetric {
+		t.Fatalf("query_spec.query_family = %v, want core_metric", got)
+	}
+	if got := querySpec["perspective_policy"]; got == nil || got.(query.PerspectivePolicy) != query.PerspectiveCashThenAccrual {
+		t.Fatalf("query_spec.perspective_policy = %v, want cash_then_accrual", got)
+	}
+	if got := querySpec["period_from"]; got != "2026-02" {
+		t.Fatalf("query_spec.period_from = %v, want 2026-02", got)
+	}
+	if got := querySpec["period_to"]; got != "2026-02" {
+		t.Fatalf("query_spec.period_to = %v, want 2026-02", got)
+	}
+
+	trace, ok := res.Data["trace"].(map[string]any)
+	if !ok {
+		t.Fatalf("trace missing: %+v", res.Data)
+	}
+	process, ok := res.Data["process"].(map[string]any)
+	if !ok {
+		t.Fatalf("process missing: %+v", res.Data)
+	}
+	if trace["answer_method"] != "sql" || process["answer_method"] != "sql" {
+		t.Fatalf("trace/process answer_method not injected correctly: trace=%v process=%v", trace["answer_method"], process["answer_method"])
+	}
+	if _, ok := res.Data["executed_sql"].([]string); !ok {
+		t.Fatalf("data.executed_sql missing or wrong type: %#v", res.Data["executed_sql"])
+	}
+	if _, ok := res.Data["calculation_logs"].([]string); !ok {
+		t.Fatalf("data.calculation_logs missing or wrong type: %#v", res.Data["calculation_logs"])
 	}
 }
 
@@ -219,6 +370,51 @@ func TestMultiMetricQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	}
 	if metrics["收入"] != float64(800) || metrics["成本"] != float64(300) || metrics["利润"] != float64(500) {
 		t.Fatalf("unexpected metrics payload: %+v", metrics)
+	}
+}
+
+func TestCoreMetricQueryExposesSourceBackedFactSets(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月收入是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	factSets, ok := res.Data["fact_sets"].([]query.FactSet)
+	if !ok || len(factSets) == 0 {
+		t.Fatalf("fact_sets missing or empty: %#v", res.Data["fact_sets"])
+	}
+	var coreFactSet *query.FactSet
+	for i := range factSets {
+		if factSets[i].Source == "core_metrics" {
+			coreFactSet = &factSets[i]
+			break
+		}
+	}
+	if coreFactSet == nil {
+		t.Fatalf("core_metrics fact set missing: %#v", factSets)
+	}
+	foundCash := false
+	foundAccrual := false
+	for _, fact := range coreFactSet.Facts {
+		switch fact.MetricKey {
+		case "cash_receipts":
+			foundCash = true
+		case "accrual_revenue":
+			foundAccrual = true
+		}
+	}
+	if !foundCash || !foundAccrual {
+		t.Fatalf("core metric facts missing cash/accrual revenue: %+v", coreFactSet.Facts)
+	}
+	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
 	}
 }
 
@@ -332,6 +528,9 @@ func TestSupplierPaymentQuestionUsesPeriodScopedExternalSuppliers(t *testing.T) 
 	}
 	if strings.Contains(res.Message, "36 个") || strings.Contains(res.Message, "净流出") {
 		t.Fatalf("supplier payment answer should not use legacy supplier-count wording: %s", res.Message)
+	}
+	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
 	}
 }
 
@@ -832,6 +1031,9 @@ func TestEntityARAPQuestionUsesCounterpartyOpenItems(t *testing.T) {
 	if !strings.Contains(res.Message, "应收 0.00 元") || !strings.Contains(res.Message, "应付 494000.00 元") {
 		t.Fatalf("unexpected entity AR/AP message: %s", res.Message)
 	}
+	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
+	}
 }
 
 func TestCounterpartyReceiptsQuestionIncludesCurrentMonthBreakdown(t *testing.T) {
@@ -872,6 +1074,70 @@ func TestCounterpartyReceiptsQuestionIncludesCurrentMonthBreakdown(t *testing.T)
 	}
 	if !strings.Contains(res.Message, "2100.00") {
 		t.Fatalf("message should include month receipt amount, got: %s", res.Message)
+	}
+}
+
+func TestLargeTransactionQuestionUsesDedicatedBankFlowQuery(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月最大的单笔流入对手方是谁，金额多少")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["counterparty"]; got != "飞未云科" {
+		t.Fatalf("counterparty = %v, want 飞未云科", got)
+	}
+	if got := res.Data["amount"]; got != float64(904) {
+		t.Fatalf("amount = %v, want 904", got)
+	}
+	if !strings.Contains(res.Message, "最大流入对手方") {
+		t.Fatalf("unexpected message: %s", res.Message)
+	}
+}
+
+func TestLargeOutflowQuestionUsesDedicatedBankFlowQuery(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02-20', '供应商A有限公司', '大额付款', 200000, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02-21', '供应商B有限公司', '普通付款', 700, 0)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert outflow seed data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月单笔最大流出来自谁？金额多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["counterparty"]; got != "供应商A有限公司" {
+		t.Fatalf("counterparty = %v, want 供应商A有限公司", got)
+	}
+	if got := res.Data["amount"]; got != float64(200000) {
+		t.Fatalf("amount = %v, want 200000", got)
+	}
+	if !strings.Contains(res.Message, "最大流出对手方") {
+		t.Fatalf("unexpected message: %s", res.Message)
 	}
 }
 

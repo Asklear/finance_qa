@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -293,6 +294,8 @@ func parseBalanceSheetRows(rows [][]string, meta FileMetadata) []Record {
 func parseBalanceDetailRows(rows [][]string, meta FileMetadata) []Record {
 	company := extractCompanyFromRows(rows, meta.Company)
 	out := []Record{}
+	openingPeriod := detectBalanceOpeningPeriod(rows, meta.PeriodStart)
+	defaultYear, defaultMonth := parsePeriodYYYYMM(meta.PeriodEnd)
 	// Row 0 is header; data starts from row 1.
 	// Excel columns: 会计年度(0), 会计期间(1), 科目编码(2), 科目名称(3), 外币名称(4),
 	//                期初借方(5), 期初贷方(6), 本期借方(7), 本期贷方(8), 期末借方(9), 期末贷方(10)
@@ -306,17 +309,17 @@ func parseBalanceDetailRows(rows [][]string, meta FileMetadata) []Record {
 		monthStr := strings.TrimSpace(cell(row, 1))
 		month, err := strconv.Atoi(monthStr)
 		if err != nil {
-			// Handle range format like "月份：2026.01-2026.02"
-			if strings.Contains(monthStr, "-") {
-				parts := strings.Split(monthStr, "-")
-				lastPart := parts[len(parts)-1]
-				if dotIdx := strings.LastIndex(lastPart, "."); dotIdx != -1 {
-					month, _ = strconv.Atoi(lastPart[dotIdx+1:])
-				}
-			}
+			_, end := parsePeriodRangeText(monthStr)
+			_, month = parsePeriodYYYYMM(end)
+		}
+		if year == 0 {
+			year = defaultYear
 		}
 		if month == 0 {
-			month = 2 // Fallback to Feb for this specific dataset if parsing still fails
+			month = defaultMonth
+		}
+		if year == 0 || month == 0 {
+			continue
 		}
 		code := strings.TrimSpace(cell(row, 2))
 		name := strings.TrimSpace(cell(row, 3))
@@ -332,6 +335,7 @@ func parseBalanceDetailRows(rows [][]string, meta FileMetadata) []Record {
 			"company":        company,
 			"year":           year,
 			"period":         fmt.Sprintf("%d-%02d", year, month),
+			"opening_period": openingPeriod,
 			"account_code":   code,
 			"account_name":   name,
 			"account_level":  level,
@@ -343,7 +347,97 @@ func parseBalanceDetailRows(rows [][]string, meta FileMetadata) []Record {
 			"closing_credit": parseFloat(cell(row, 10)),
 		})
 	}
+	if openingPeriod == "" {
+		openingPeriod = minPeriodFromBalanceRows(out)
+		for idx := range out {
+			out[idx]["opening_period"] = openingPeriod
+		}
+	}
 	return out
+}
+
+var balancePeriodRangePattern = regexp.MustCompile(`(?i)(\d{4})[.\-/年](\d{1,2})\s*[-~至]\s*(\d{4})?[.\-/年]?(\d{1,2})`)
+
+func detectBalanceOpeningPeriod(rows [][]string, periodStart string) string {
+	if p := normalizePeriod(periodStart); p != "" {
+		return p
+	}
+	for _, row := range rows {
+		candidate := strings.TrimSpace(cell(row, 1))
+		if candidate == "" {
+			continue
+		}
+		start, _ := parsePeriodRangeText(candidate)
+		if start != "" {
+			return start
+		}
+	}
+	return ""
+}
+
+func parsePeriodRangeText(v string) (string, string) {
+	m := balancePeriodRangePattern.FindStringSubmatch(strings.TrimSpace(v))
+	if len(m) != 5 {
+		return "", ""
+	}
+	startYear, _ := strconv.Atoi(m[1])
+	startMonth, _ := strconv.Atoi(m[2])
+	endYear := startYear
+	if strings.TrimSpace(m[3]) != "" {
+		endYear, _ = strconv.Atoi(m[3])
+	}
+	endMonth, _ := strconv.Atoi(m[4])
+	if startYear == 0 || startMonth == 0 || endYear == 0 || endMonth == 0 {
+		return "", ""
+	}
+	return fmt.Sprintf("%04d-%02d", startYear, startMonth), fmt.Sprintf("%04d-%02d", endYear, endMonth)
+}
+
+func parsePeriodYYYYMM(v string) (int, int) {
+	n := normalizePeriod(v)
+	if n == "" {
+		return 0, 0
+	}
+	parts := strings.Split(n, "-")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	year, _ := strconv.Atoi(parts[0])
+	month, _ := strconv.Atoi(parts[1])
+	return year, month
+}
+
+func normalizePeriod(v string) string {
+	s := strings.TrimSpace(v)
+	s = strings.ReplaceAll(s, ".", "-")
+	s = strings.ReplaceAll(s, "/", "-")
+	if len(s) == 6 && strings.IndexByte(s, '-') == -1 {
+		return s[:4] + "-" + s[4:]
+	}
+	parts := strings.Split(s, "-")
+	if len(parts) != 2 {
+		return ""
+	}
+	year, err1 := strconv.Atoi(parts[0])
+	month, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil || year <= 0 || month < 1 || month > 12 {
+		return ""
+	}
+	return fmt.Sprintf("%04d-%02d", year, month)
+}
+
+func minPeriodFromBalanceRows(rows []Record) string {
+	minPeriod := ""
+	for _, row := range rows {
+		p := normalizePeriod(fmt.Sprintf("%v", row["period"]))
+		if p == "" {
+			continue
+		}
+		if minPeriod == "" || p < minPeriod {
+			minPeriod = p
+		}
+	}
+	return minPeriod
 }
 
 func parseJournalRows(rows [][]string, meta FileMetadata) []Record {
@@ -362,6 +456,7 @@ func parseJournalRows(rows [][]string, meta FileMetadata) []Record {
 		if date == "" || code == "" || name == "" {
 			continue
 		}
+		period := periodFromDate(date)
 		amount := parseFloat(cell(row, 8))
 		direction := strings.TrimSpace(cell(row, 5))
 		var debitAmt, creditAmt float64
@@ -378,6 +473,7 @@ func parseJournalRows(rows [][]string, meta FileMetadata) []Record {
 		out = append(out, Record{
 			"company":       company,
 			"date":          date,
+			"period":        period,
 			"voucher_no":    cell(row, 1),
 			"account_code":  code,
 			"account_name":  name,
@@ -389,6 +485,19 @@ func parseJournalRows(rows [][]string, meta FileMetadata) []Record {
 		})
 	}
 	return out
+}
+
+func periodFromDate(v string) string {
+	s := strings.TrimSpace(v)
+	s = strings.ReplaceAll(s, ".", "-")
+	s = strings.ReplaceAll(s, "/", "-")
+	if len(s) >= 7 {
+		candidate := normalizePeriod(s[:7])
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func extractCompanyFromRows(rows [][]string, fallback string) string {

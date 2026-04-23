@@ -17,6 +17,22 @@ func NewProcessor(dim *dimensions.Manager) *Processor {
 }
 
 func (p *Processor) ProcessFile(path string) (ImportSummary, error) {
+	if kind, ok, err := detectContractWorkbookKind(path); err != nil {
+		return ImportSummary{}, err
+	} else if ok {
+		bundle, err := parseContractWorkbook(path, kind)
+		if err != nil {
+			return ImportSummary{}, err
+		}
+		return ImportSummary{
+			FilePath:    path,
+			ReportType:  string(kind),
+			PeriodStart: bundle.PeriodStart,
+			PeriodEnd:   bundle.PeriodEnd,
+			RecordCount: bundle.TotalRecordCount,
+		}, nil
+	}
+
 	result, err := p.importer.ParseFile(path)
 	if err != nil {
 		return ImportSummary{}, err

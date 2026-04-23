@@ -53,6 +53,12 @@ func (i *Importer) ImportFile(ctx context.Context, dbPath, filePath string, incr
 }
 
 func (i *Importer) ImportFileWithOptions(ctx context.Context, dbPath, filePath string, opts ImportOptions) (ImportSummary, error) {
+	if kind, ok, err := detectContractWorkbookKind(filePath); err != nil {
+		return ImportSummary{}, err
+	} else if ok {
+		return i.importContractWorkbook(ctx, dbPath, filePath, kind, opts)
+	}
+
 	// Compatibility mode for merged "财报" files:
 	// try importing both balance_sheet(sheet1) and income_statement(sheet2)
 	// while keeping legacy separate-file imports unchanged.
@@ -67,10 +73,17 @@ func (i *Importer) ImportFileWithOptions(ctx context.Context, dbPath, filePath s
 	if err := i.ImportParsedWithOptions(ctx, dbPath, result, opts); err != nil {
 		return ImportSummary{}, err
 	}
+	if err := annotateImportedReportSource(ctx, dbPath, result.Metadata.ReportType, filePath); err != nil {
+		return ImportSummary{}, err
+	}
+	company := result.Metadata.Company
+	if strings.TrimSpace(opts.CompanyOverride) != "" {
+		company = strings.TrimSpace(opts.CompanyOverride)
+	}
 	return ImportSummary{
 		FilePath:    filePath,
 		ReportType:  result.Metadata.ReportType,
-		Company:     result.Metadata.Company,
+		Company:     company,
 		PeriodStart: result.Metadata.PeriodStart,
 		PeriodEnd:   result.Metadata.PeriodEnd,
 		RecordCount: len(result.Data),
@@ -95,6 +108,9 @@ func (i *Importer) importMergedFinancialReport(ctx context.Context, dbPath, file
 			continue
 		}
 		if err := i.ImportParsedWithOptions(ctx, dbPath, result, opts); err != nil {
+			return ImportSummary{}, err
+		}
+		if err := annotateImportedReportSource(ctx, dbPath, result.Metadata.ReportType, filePath); err != nil {
 			return ImportSummary{}, err
 		}
 		totalRecords += len(result.Data)
@@ -152,6 +168,10 @@ func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, r
 		return err
 	}
 	result.Metadata.Company = resolvedCompany
+	targetTable, err := resolvePhysicalTableName(ctx, tx, result.Metadata.ReportType)
+	if err != nil {
+		return err
+	}
 
 	policy, hasPolicy, err := loadIdempotencyPolicy(ctx, tx, result.Metadata.ReportType)
 	if err != nil {
@@ -163,7 +183,7 @@ func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, r
 	}
 
 	if shouldClear {
-		if err := clearExisting(ctx, tx, result); err != nil {
+		if err := clearExisting(ctx, tx, targetTable, result); err != nil {
 			return err
 		}
 	}
@@ -171,7 +191,7 @@ func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, r
 	existingKeys := map[string]struct{}{}
 	fingerprintColumns := recordFingerprintColumns(result.Metadata.ReportType)
 	if hasPolicy && policy.Enabled {
-		existingKeys, err = loadExistingNormalizedKeys(ctx, tx, result, fingerprintColumns, shouldClear)
+		existingKeys, err = loadExistingNormalizedKeys(ctx, tx, targetTable, result, fingerprintColumns, shouldClear)
 		if err != nil {
 			return fmt.Errorf("load existing dedupe keys: %w", err)
 		}
@@ -207,13 +227,13 @@ func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, r
 			}
 		}
 
-		if err := insertRecord(ctx, tx, result.Metadata.ReportType, row); err != nil {
+		if err := insertRecord(ctx, tx, targetTable, row); err != nil {
 			return err
 		}
 	}
 
 	if hasPolicy && policy.Enabled {
-		if err := dedupeKeepLatest(ctx, tx, result.Metadata.ReportType, policy.DedupeKeyColumns); err != nil {
+		if err := dedupeKeepLatest(ctx, tx, targetTable, policy.DedupeKeyColumns); err != nil {
 			return fmt.Errorf("dedupe keep latest: %w", err)
 		}
 	}
@@ -225,13 +245,17 @@ func (i *Importer) ImportParsedWithOptions(ctx context.Context, dbPath string, r
 }
 
 func loadIdempotencyPolicy(ctx context.Context, tx *sql.Tx, tableName string) (idempotencyPolicy, bool, error) {
+	policyTable, err := resolvePolicyTableName(ctx, tx)
+	if err != nil {
+		return idempotencyPolicy{}, false, err
+	}
 	var mode, keys string
 	var enabled int
-	err := tx.QueryRowContext(ctx, `
+	err = tx.QueryRowContext(ctx, fmt.Sprintf(`
 SELECT update_mode, dedupe_key_columns, enabled
-FROM table_idempotency_policies
+FROM %s
 WHERE table_name = ? AND enabled = 1
-`, tableName).Scan(&mode, &keys, &enabled)
+`, policyTable), tableName).Scan(&mode, &keys, &enabled)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return idempotencyPolicy{}, false, nil
@@ -291,7 +315,7 @@ func recordFingerprintColumns(tableName string) []string {
 	case "balance_sheet":
 		return []string{"company", "period", "account_code", "account_name", "opening_balance", "closing_balance"}
 	case "balance_detail":
-		return []string{"company", "year", "period", "account_code", "account_name", "account_level", "opening_debit", "opening_credit", "current_debit", "current_credit", "closing_debit", "closing_credit"}
+		return []string{"company", "year", "period", "opening_period", "account_code", "account_name", "account_level", "opening_debit", "opening_credit", "current_debit", "current_credit", "closing_debit", "closing_credit"}
 	default:
 		return defaultDedupeColumns(tableName)
 	}
@@ -331,6 +355,7 @@ func sanitizeColumns(cols []string) []string {
 		"company":              {},
 		"year":                 {},
 		"period":               {},
+		"opening_period":       {},
 		"account_name":         {},
 		"account_code":         {},
 		"account_level":        {},
@@ -380,7 +405,7 @@ func sanitizeColumns(cols []string) []string {
 	return out
 }
 
-func loadExistingNormalizedKeys(ctx context.Context, tx *sql.Tx, result parser.ParseResult, keyColumns []string, shouldClear bool) (map[string]struct{}, error) {
+func loadExistingNormalizedKeys(ctx context.Context, tx *sql.Tx, tableName string, result parser.ParseResult, keyColumns []string, shouldClear bool) (map[string]struct{}, error) {
 	keys := map[string]struct{}{}
 	if shouldClear {
 		return keys, nil
@@ -392,7 +417,7 @@ func loadExistingNormalizedKeys(ctx context.Context, tx *sql.Tx, result parser.P
 	}
 
 	whereSQL, args := existingKeyScope(result)
-	query := fmt.Sprintf("SELECT %s FROM %s %s", strings.Join(cols, ", "), result.Metadata.ReportType, whereSQL)
+	query := fmt.Sprintf("SELECT %s FROM %s %s", strings.Join(cols, ", "), tableName, whereSQL)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -597,16 +622,37 @@ func inferSingleKnownCompany(ctx context.Context, tx *sql.Tx) (string, error) {
 }
 
 func listKnownCompanies(ctx context.Context, tx *sql.Tx) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `
+	bankTable, err := resolvePhysicalTableName(ctx, tx, "bank_statement")
+	if err != nil {
+		return nil, err
+	}
+	journalTable, err := resolvePhysicalTableName(ctx, tx, "journal")
+	if err != nil {
+		return nil, err
+	}
+	balanceSheetTable, err := resolvePhysicalTableName(ctx, tx, "balance_sheet")
+	if err != nil {
+		return nil, err
+	}
+	incomeTable, err := resolvePhysicalTableName(ctx, tx, "income_statement")
+	if err != nil {
+		return nil, err
+	}
+	balanceDetailTable, err := resolvePhysicalTableName(ctx, tx, "balance_detail")
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 SELECT DISTINCT company FROM (
-  SELECT company FROM bank_statement
-  UNION ALL SELECT company FROM journal
-  UNION ALL SELECT company FROM balance_sheet
-  UNION ALL SELECT company FROM income_statement
-  UNION ALL SELECT company FROM balance_detail
+  SELECT company FROM %s
+  UNION ALL SELECT company FROM %s
+  UNION ALL SELECT company FROM %s
+  UNION ALL SELECT company FROM %s
+  UNION ALL SELECT company FROM %s
 )
 WHERE company IS NOT NULL AND TRIM(company) <> ''
-`)
+`, bankTable, journalTable, balanceSheetTable, incomeTable, balanceDetailTable))
 	if err != nil {
 		return nil, err
 	}
@@ -633,76 +679,76 @@ WHERE company IS NOT NULL AND TRIM(company) <> ''
 	return out, rows.Err()
 }
 
-func clearExisting(ctx context.Context, tx *sql.Tx, result parser.ParseResult) error {
+func clearExisting(ctx context.Context, tx *sql.Tx, tableName string, result parser.ParseResult) error {
 	company := result.Metadata.Company
 	period := result.Metadata.PeriodEnd
 
 	switch result.Metadata.ReportType {
 	case "bank_statement":
-		_, err := tx.ExecContext(ctx, `DELETE FROM bank_statement WHERE company = ?`, company)
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE company = ?`, tableName), company)
 		return err
 	case "income_statement":
 		// Clear all data for this company + period to avoid duplicates
-		_, err := tx.ExecContext(ctx, `DELETE FROM income_statement WHERE company = ? AND period = ?`, company, period)
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE company = ? AND period = ?`, tableName), company, period)
 		return err
 	case "balance_sheet":
-		_, err := tx.ExecContext(ctx, `DELETE FROM balance_sheet WHERE company = ? AND period = ?`, company, period)
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE company = ? AND period = ?`, tableName), company, period)
 		return err
 	case "balance_detail":
 		// Clear ALL balance_detail for this company (余额表是全量替换)
-		_, err := tx.ExecContext(ctx, `DELETE FROM balance_detail WHERE company = ?`, company)
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE company = ?`, tableName), company)
 		return err
 	case "journal":
-		_, err := tx.ExecContext(ctx, `DELETE FROM journal WHERE company = ?`, company)
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE company = ?`, tableName), company)
 		return err
 	default:
 		return nil
 	}
 }
 
-func insertRecord(ctx context.Context, tx *sql.Tx, reportType string, row parser.Record) error {
-	switch reportType {
-	case "bank_statement":
+func insertRecord(ctx context.Context, tx *sql.Tx, tableName string, row parser.Record) error {
+	switch {
+	case strings.HasSuffix(tableName, "bank_statement"):
 		_, err := tx.ExecContext(ctx, `
-INSERT INTO bank_statement
+INSERT INTO `+tableName+`
   (company, account_no, account_name, currency, transaction_date, transaction_time, transaction_type, debit_amount, credit_amount, balance, summary, counterparty_name, counterparty_account)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, row["company"], row["account_no"], row["account_name"], row["currency"], row["transaction_date"], row["transaction_time"], row["transaction_type"], row["debit_amount"], row["credit_amount"], row["balance"], row["summary"], row["counterparty_name"], row["counterparty_account"])
-		return wrapInsertErr(reportType, err)
-	case "income_statement":
+		return wrapInsertErr(tableName, err)
+	case strings.HasSuffix(tableName, "income_statement"):
 		_, err := tx.ExecContext(ctx, `
-INSERT OR REPLACE INTO income_statement
+INSERT OR REPLACE INTO `+tableName+`
   (company, period, item_name, current_amount, cumulative_amount)
 VALUES (?, ?, ?, ?, ?)
 `, row["company"], row["period"], row["item_name"], row["current_amount"], row["cumulative_amount"])
-		return wrapInsertErr(reportType, err)
-	case "balance_sheet":
+		return wrapInsertErr(tableName, err)
+	case strings.HasSuffix(tableName, "balance_sheet"):
 		_, err := tx.ExecContext(ctx, `
-INSERT OR REPLACE INTO balance_sheet
+INSERT OR REPLACE INTO `+tableName+`
   (company, period, account_code, account_name, opening_balance, closing_balance)
 VALUES (?, ?, ?, ?, ?, ?)
 `, row["company"], row["period"], row["account_code"], row["account_name"], row["opening_balance"], row["closing_balance"])
-		return wrapInsertErr(reportType, err)
-	case "balance_detail":
+		return wrapInsertErr(tableName, err)
+	case strings.HasSuffix(tableName, "balance_detail"):
 		_, err := tx.ExecContext(ctx, `
-INSERT OR REPLACE INTO balance_detail
-  (company, year, period, account_code, account_name, account_level, opening_debit, opening_credit, current_debit, current_credit, closing_debit, closing_credit)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, row["company"], row["year"], row["period"], row["account_code"], row["account_name"], row["account_level"], row["opening_debit"], row["opening_credit"], row["current_debit"], row["current_credit"], row["closing_debit"], row["closing_credit"])
-		return wrapInsertErr(reportType, err)
-	case "journal":
+INSERT OR REPLACE INTO `+tableName+`
+  (company, year, period, opening_period, account_code, account_name, account_level, opening_debit, opening_credit, current_debit, current_credit, closing_debit, closing_credit)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, row["company"], row["year"], row["period"], row["opening_period"], row["account_code"], row["account_name"], row["account_level"], row["opening_debit"], row["opening_credit"], row["current_debit"], row["current_credit"], row["closing_debit"], row["closing_credit"])
+		return wrapInsertErr(tableName, err)
+	case strings.HasSuffix(tableName, "journal"):
 		voucherDate := row["voucher_date"]
 		if voucherDate == nil {
 			voucherDate = row["date"]
 		}
 		_, err := tx.ExecContext(ctx, `
-INSERT OR REPLACE INTO journal
+INSERT OR REPLACE INTO `+tableName+`
   (company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, row["company"], row["period"], voucherDate, row["voucher_no"], row["account_code"], row["account_name"], row["summary"], row["direction"], row["amount"], row["debit_amount"], row["credit_amount"], row["counterparty"])
-		return wrapInsertErr(reportType, err)
+		return wrapInsertErr(tableName, err)
 	default:
-		return fmt.Errorf("unsupported report type %q", reportType)
+		return fmt.Errorf("unsupported report table %q", tableName)
 	}
 }
 
@@ -711,4 +757,55 @@ func wrapInsertErr(reportType string, err error) error {
 		return nil
 	}
 	return fmt.Errorf("insert %s row: %w", reportType, err)
+}
+
+func resolvePolicyTableName(ctx context.Context, tx *sql.Tx) (string, error) {
+	return resolveTableNameWithFallback(ctx, tx, "fin_table_idempotency_policies", "table_idempotency_policies")
+}
+
+func resolvePhysicalTableName(ctx context.Context, tx *sql.Tx, logical string) (string, error) {
+	return resolveTableNameWithFallback(ctx, tx, "fin_"+logical, logical)
+}
+
+func resolveTableNameWithFallback(ctx context.Context, tx *sql.Tx, primary, fallback string) (string, error) {
+	ok, err := tableExists(ctx, tx, primary)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return primary, nil
+	}
+	ok, err = tableExists(ctx, tx, fallback)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("table not found: %s or %s", primary, fallback)
+}
+
+func tableExists(ctx context.Context, tx *sql.Tx, tableName string) (bool, error) {
+	var name string
+	err := tx.QueryRowContext(ctx, `
+SELECT table_name
+FROM information_schema.tables
+WHERE table_name = ?
+LIMIT 1
+`, tableName).Scan(&name)
+	if err == nil {
+		return true, nil
+	}
+	if err != sql.ErrNoRows {
+		// sqlite fallback
+		sqliteErr := tx.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&name)
+		if sqliteErr == nil {
+			return true, nil
+		}
+		if sqliteErr == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, sqliteErr
+	}
+	return false, nil
 }

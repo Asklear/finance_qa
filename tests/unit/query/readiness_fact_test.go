@@ -1,0 +1,95 @@
+package query_test
+
+import (
+	"context"
+	"database/sql"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"financeqa/internal/query"
+
+	_ "modernc.org/sqlite"
+)
+
+func TestReadinessSourceAdapterReturnsReadinessFacts(t *testing.T) {
+	dbPath := buildReadinessFactDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	adapter := query.NewReadinessSourceAdapter(engine)
+	spec := query.BuildQuerySpec("飞未3月数据出来了吗？", readinessAnchor())
+
+	factSet, err := adapter.Fetch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	if factSet.Source != "data_readiness" {
+		t.Fatalf("source = %s, want data_readiness", factSet.Source)
+	}
+	assertFactValue(t, factSet, "readiness_has_data", 1)
+	assertFactValue(t, factSet, "readiness_row_count", 2)
+	assertFactValue(t, factSet, "readiness_journal_rows", 1)
+	assertFactValue(t, factSet, "readiness_bank_rows", 1)
+}
+
+func TestReadinessQueryExposesSourceBackedFactSets(t *testing.T) {
+	dbPath := buildReadinessFactDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("飞未3月数据出来了吗？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	factSets, ok := res.Data["fact_sets"].([]query.FactSet)
+	if !ok || len(factSets) == 0 {
+		t.Fatalf("fact_sets missing or empty: %#v", res.Data["fact_sets"])
+	}
+	if factSets[0].Source != "data_readiness" {
+		t.Fatalf("fact set source = %s, want data_readiness", factSets[0].Source)
+	}
+	assertFactValue(t, factSets[0], "readiness_row_count", 2)
+	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
+	}
+}
+
+func buildReadinessFactDB(t *testing.T) string {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "readiness-facts.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE journal (company TEXT, period TEXT, voucher_date TEXT, voucher_no TEXT, account_code TEXT, account_name TEXT, summary TEXT, direction TEXT, amount REAL, debit_amount REAL, credit_amount REAL, counterparty TEXT)`,
+		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, counterparty_name TEXT, summary TEXT, debit_amount REAL, credit_amount REAL)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty)
+		 VALUES ('南京优集数据科技有限公司', '2026-03', '2026-03-05', 'V-RDY-1', '600101', '技术服务费', '为飞未云科提供服务', '贷', 1000, 0, 1000, '飞未云科')`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-03-08', '飞未云科(深圳)技术有限公司', '结算款', 0, 800)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert readiness seed data failed: %v", err)
+		}
+	}
+
+	return dbPath
+}
+
+func readinessAnchor() time.Time {
+	return time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+}

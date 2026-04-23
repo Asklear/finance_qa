@@ -51,6 +51,18 @@ func (i *Importer) SyncDirectoryWithOptions(ctx context.Context, dbPath, dir str
 		Skipped:   []string{},
 	}
 	for _, file := range files {
+		if _, ok, err := detectContractWorkbookKind(file); err != nil {
+			summary.Skipped = append(summary.Skipped, file)
+			continue
+		} else if ok {
+			imported, err := i.ImportFileWithOptions(ctx, dbPath, file, opts)
+			if err != nil {
+				return summary, err
+			}
+			summary.Processed = append(summary.Processed, imported)
+			continue
+		}
+
 		if _, err := parser.ParseFile(file); err != nil {
 			summary.Skipped = append(summary.Skipped, file)
 			continue

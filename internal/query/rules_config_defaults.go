@@ -1,0 +1,148 @@
+package query
+
+func defaultRuleConfig() RuleConfig {
+	cfg := RuleConfig{
+		GenericMetricStopwords: []string{
+			"收入", "营收", "销售额",
+			"成本", "总成本", "人力成本", "工资成本", "薪酬成本",
+			"工资", "社保", "公积金",
+			"利润", "毛利", "净利",
+			"季度", "第一季度", "第二季度", "第三季度", "第四季度",
+			"上半年", "下半年", "全年", "全年度", "整年", "年度",
+			"今年", "本年", "累计", "年内",
+			"支出", "费用", "整体支出", "总支出", "全部支出",
+			"销项税", "销项税额", "进项税", "进项税额", "税额",
+			"应收", "应付", "应收账款", "应付账款",
+			"现金流", "流水", "回款", "到账", "收款", "付款",
+			"经营状况", "指标", "核心指标", "月度经营",
+		},
+		IntentARAPKeywords: []string{
+			"应收", "应付", "账款", "往来款",
+		},
+		IntentHRCostKeywords: []string{
+			"人力成本", "工资成本", "薪酬成本", "应付职工薪酬",
+		},
+		IntentTaxKeywords: []string{
+			"税", "销项", "进项", "增值税",
+		},
+		IntentHealthKeywords: []string{
+			"健康度", "健康", "怎么样",
+		},
+		IntentFallbackKeywords: []string{
+			"健康度", "健康", "怎么样",
+			"供应商多少", "多少供应商", "供应商有多少",
+			"人力成本", "工资成本", "薪酬成本", "应付职工薪酬",
+			"整体支出", "总支出", "全部支出",
+		},
+		IntentAnalysisKeywords: []string{
+			"分析", "评分", "评价", "风险", "分析下",
+		},
+		IntentHostPayloadKeywords: []string{
+			"宿主llm", "hostllm", "原始数据", "全量财报", "财报原始", "llm数据包",
+		},
+		IntentMonthlySummaryKeywords: []string{
+			"概括", "总结", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额",
+		},
+		FallbackMonthlyExpenseKeywords: []string{
+			"整体支出", "总支出", "全部支出", "支出汇总",
+		},
+		HighPriorityPhrases: map[string][]string{
+			string(IntentARAPQuery): {"预收款", "预付款", "应收账款", "应付账款"},
+		},
+		IntentPriority: map[string]int{
+			string(IntentHostPayload):           120,
+			string(IntentLargeTransactionQuery): 110,
+			string(IntentIdentityQuery):         105,
+			string(IntentARAPQuery):             100,
+			string(IntentTaxQuery):              90,
+			string(IntentMonthlySummary):        70,
+			string(IntentAnalysis):              50,
+			string(IntentFallback):              40,
+			string(IntentPrecise):               20,
+			string(IntentGeneral):               10,
+		},
+		IntentConflicts: map[string][]string{
+			string(IntentARAPQuery):      {string(IntentFallback), string(IntentGeneral)},
+			string(IntentTaxQuery):       {string(IntentFallback), string(IntentGeneral)},
+			string(IntentMonthlySummary): {string(IntentGeneral)},
+		},
+		IntentMinConfidence: map[string]float64{
+			string(IntentARAPQuery):      0.6,
+			string(IntentTaxQuery):       0.55,
+			string(IntentMonthlySummary): 0.5,
+			string(IntentAnalysis):       0.5,
+			string(IntentFallback):       0.45,
+		},
+		RoleMixedMinRatio:         0.45,
+		RoleMixedMinPositiveScore: 1.0,
+		RoleMixedMinPositiveRoles: 2,
+		RoleMinPrimaryScore:       0.5,
+		RoleMinConfidence:         0.0,
+		ContractPriorityKeywordLexicon: []string{
+			"内容", "结算", "到账", "回款", "收款", "付款", "支付", "成本", "收入", "营收", "销售额", "利润", "支出", "开票", "执行",
+		},
+		ContractSourceTableLexicon: map[string][]string{
+			"default":           {"tenant_uhub.fin_contracts", "tenant_uhub.fin_fund_income"},
+			"aggregate_summary": {"tenant_uhub.fin_contracts", "tenant_uhub.fin_fund_income", "tenant_uhub.fin_cost_settlements"},
+			"supplier_contract": {"tenant_uhub.fin_contracts", "tenant_uhub.fin_cost_settlements", "tenant_uhub.fin_bank_statement"},
+			"mixed_contract":    {"tenant_uhub.fin_contracts", "tenant_uhub.fin_fund_income", "tenant_uhub.fin_cost_settlements", "tenant_uhub.fin_bank_statement"},
+			"contract_content":  {"tenant_uhub.fin_contracts"},
+		},
+		ContractSummaryKeywordLexicon: []string{
+			"收入", "营收", "销售额", "成本", "利润",
+		},
+		ContractCashFallbackLexicon: []string{
+			"银行", "银行卡", "流水", "现金流", "净现金流", "净增加", "净流入", "净流出",
+			"实际到账", "实际支出", "到账", "回款", "收款", "付款", "支付", "现金口径",
+		},
+		IncomeStatementItemLexicon: map[string][]string{
+			"revenue":               {"营业收入", "主营业务收入", "营业总收入"},
+			"cost":                  {"营业成本", "主营业务成本"},
+			"admin_expense":         {"管理费用"},
+			"selling_expense":       {"销售费用"},
+			"finance_expense":       {"财务费用"},
+			"tax_surcharge":         {"税金及附加", "营业税金及附加"},
+			"non_operating_income":  {"营业外收入"},
+			"non_operating_expense": {"营业外支出"},
+			"operating_profit":      {"营业利润"},
+			"profit_total":          {"利润总额"},
+			"net_profit":            {"净利润"},
+			"income_tax":            {"所得税费用"},
+		},
+		IntentKeywordLexicon: map[string][]string{
+			string(IntentARAPQuery):             {"应收", "应付", "账款", "往来款"},
+			routerGroupHRCost:                   {"人力成本", "工资成本", "薪酬成本", "应付职工薪酬"},
+			string(IntentTaxQuery):              {"税", "销项", "进项", "增值税"},
+			routerGroupHealth:                   {"健康度", "健康", "怎么样"},
+			string(IntentFallback):              {"健康度", "健康", "怎么样", "供应商多少", "多少供应商", "供应商有多少", "人力成本", "工资成本", "薪酬成本", "应付职工薪酬", "整体支出", "总支出", "全部支出"},
+			string(IntentAnalysis):              {"分析", "评分", "评价", "风险", "分析下"},
+			string(IntentHostPayload):           {"宿主llm", "hostllm", "原始数据", "全量财报", "财报原始", "llm数据包"},
+			string(IntentMonthlySummary):        {"概括", "总结", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额"},
+			string(IntentLargeTransactionQuery): {"最大", "单笔", "流入对手方", "流出对手方"},
+			string(IntentIdentityQuery):         {"是谁", "身份", "干嘛的", "哪里的", "谁是"},
+			string(IntentPrecise):               {"期末", "余额", "是多少", "查询余额", "还有多少"},
+		},
+		MetricKeywordLexicon: map[string][]string{
+			metricKeyRevenue: {"收入", "营收", "销售额"},
+			metricKeyCost:    {"成本"},
+			metricKeyProfit:  {"利润"},
+		},
+		HRBreakdownKeywordLexicon:                 []string{"工资", "社保", "公积金", "分别", "拆分", "拆开", "明细", "构成"},
+		SupplierPaymentExcludeNameLexicon:         []string{"暂收款", "暂付款", "汇划收入", "中间业务收入", "手续费", "利息收入", "利息"},
+		CounterpartyClassificationQuestionLexicon: []string{"成本还是收入", "是成本还是收入", "供应商付款还是预收款", "客户还是供应商"},
+		ProfitSingleViewBlockKeywordLexicon:       []string{"现金流", "回款", "到账", "银行卡", "差异", "为什么"},
+		CounterpartyRoleLexicon: map[string][]string{
+			string(CounterpartyCustomer): {"应收", "回款", "收款", "结算款", "销售", "收入", "主营业务收入", "营业收入", "预收", "合同资产", "客户", "1122", "1121"},
+			string(CounterpartySupplier): {"应付", "付款", "采购", "成本", "材料", "供应商", "外包", "2202", "预付账款", "1123", "112301"},
+			string(CounterpartyEmployee): {"工资", "薪酬", "社保", "公积金", "报销", "差旅", "福利", "餐补", "伙食", "应付职工薪酬", "2211"},
+		},
+		CounterpartyTaxLexicon: map[string][]string{
+			string(TaxSideOutput): {"销项税", "222101", "销项"},
+			string(TaxSideInput):  {"进项税", "222102", "进项"},
+		},
+		InternalPartyOrgSuffixLexicon:             []string{"分公司", "子公司", "事业部", "办事处", "分部", "总部", "总公司"},
+		InternalPartyAccountContextKeywordLexicon: []string{"应付职工薪酬", "其他应收款", "其他应付款", "内部往来"},
+	}
+	cfg.finalize()
+	return cfg
+}

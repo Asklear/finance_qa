@@ -2,12 +2,11 @@ package integration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"financeqa/internal/query"
-	"financeqa/internal/support"
+	"time"
 )
 
 type realdataQuestion struct {
@@ -16,18 +15,7 @@ type realdataQuestion struct {
 }
 
 func TestRealdataQuestionSuites(t *testing.T) {
-	if os.Getenv("FINANCEQA_RUN_LIVE_DB_TESTS") != "1" {
-		t.Skip("set FINANCEQA_RUN_LIVE_DB_TESTS=1 to run live database suites")
-	}
-
-	cwd, _ := os.Getwd()
-	root := filepath.Join(cwd, "..", "..")
-	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
-	_ = support.LoadDotEnv("/root/finance_qa/.env")
-	dbPath := support.DefaultDBPath(root)
-	if dbPath == "" {
-		t.Skip("database is not configured; skipping real-data suite")
-	}
+	root, _ := requireLiveDBConfig(t)
 
 	suites := []string{
 		filepath.Join(root, "tests/testdata/top20_questions_2026-04-14.json"),
@@ -35,11 +23,7 @@ func TestRealdataQuestionSuites(t *testing.T) {
 		filepath.Join(root, "tests/testdata/user15_questions_2026-04-20.json"),
 	}
 
-	engine, err := query.NewEngine(dbPath, "南京优集数据科技有限公司")
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
+	engine := requireLiveDBEngine(t, "南京优集数据科技有限公司")
 
 	for _, suitePath := range suites {
 		raw, err := os.ReadFile(suitePath)
@@ -54,14 +38,23 @@ func TestRealdataQuestionSuites(t *testing.T) {
 			t.Fatalf("suite %s is empty", suitePath)
 		}
 
-		for _, item := range questions {
-			res := engine.Query(item.Question)
-			if !res.Success {
-				t.Fatalf("suite=%s qid=%d question=%q failed: %s", filepath.Base(suitePath), item.ID, item.Question, res.Message)
+		suiteName := filepath.Base(suitePath)
+		t.Run(suiteName, func(t *testing.T) {
+			for _, item := range questions {
+				item := item
+				t.Run(fmt.Sprintf("qid_%02d", item.ID), func(t *testing.T) {
+					start := time.Now()
+					res := engine.Query(item.Question)
+					elapsed := time.Since(start)
+					t.Logf("question=%q elapsed=%s success=%v sql=%d logs=%d", item.Question, elapsed.Round(time.Millisecond), res.Success, len(res.ExecutedSQL), len(res.CalculationLogs))
+					if !res.Success {
+						t.Fatalf("suite=%s qid=%d question=%q failed: %s", suiteName, item.ID, item.Question, res.Message)
+					}
+					if len(res.ExecutedSQL) == 0 || len(res.CalculationLogs) == 0 {
+						t.Fatalf("suite=%s qid=%d missing trace: sql=%d logs=%d", suiteName, item.ID, len(res.ExecutedSQL), len(res.CalculationLogs))
+					}
+				})
 			}
-			if len(res.ExecutedSQL) == 0 || len(res.CalculationLogs) == 0 {
-				t.Fatalf("suite=%s qid=%d missing trace: sql=%d logs=%d", filepath.Base(suitePath), item.ID, len(res.ExecutedSQL), len(res.CalculationLogs))
-			}
-		}
+		})
 	}
 }

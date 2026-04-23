@@ -108,6 +108,17 @@ func (s *rewriteStmt) QueryContext(ctx context.Context, args []driver.NamedValue
 var ifNullRe = regexp.MustCompile(`(?i)\bIFNULL\s*\(`)
 var insertOrIgnoreRe = regexp.MustCompile(`(?is)^\s*INSERT\s+OR\s+IGNORE\s+INTO\s+`)
 var insertOrReplaceRe = regexp.MustCompile(`(?is)^\s*INSERT\s+OR\s+REPLACE\s+INTO\s+`)
+var logicalTableNames = map[string]string{
+	"journal":                    "fin_journal",
+	"bank_statement":             "fin_bank_statement",
+	"balance_sheet":              "fin_balance_sheet",
+	"income_statement":           "fin_income_statement",
+	"balance_detail":             "fin_balance_detail",
+	"table_idempotency_policies": "fin_table_idempotency_policies",
+	"dimensions":                 "fin_dimensions",
+	"dimension_members":          "fin_dimension_members",
+	"mapping_rules":              "fin_mapping_rules",
+}
 
 func rewriteSQL(query string) string {
 	q := strings.TrimSpace(query)
@@ -115,6 +126,7 @@ func rewriteSQL(query string) string {
 		return query
 	}
 	q = ifNullRe.ReplaceAllString(q, "COALESCE(")
+	q = rewriteLogicalTableNamesOutsideQuotes(q)
 	if insertOrIgnoreRe.MatchString(q) {
 		q = insertOrIgnoreRe.ReplaceAllString(q, "INSERT INTO ")
 		if !strings.Contains(strings.ToUpper(q), "ON CONFLICT") {
@@ -130,6 +142,62 @@ func rewriteSQL(query string) string {
 	}
 	q = rebindQuestionToDollar(q)
 	return q
+}
+
+func rewriteLogicalTableNamesOutsideQuotes(query string) string {
+	var b strings.Builder
+	b.Grow(len(query) + 32)
+
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(query); {
+		ch := query[i]
+		switch ch {
+		case '\'':
+			if !inDouble {
+				if inSingle && i+1 < len(query) && query[i+1] == '\'' {
+					b.WriteByte(ch)
+					b.WriteByte(query[i+1])
+					i += 2
+					continue
+				}
+				inSingle = !inSingle
+			}
+			b.WriteByte(ch)
+			i++
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+			b.WriteByte(ch)
+			i++
+		default:
+			if inSingle || inDouble || !isIdentifierByte(ch) {
+				b.WriteByte(ch)
+				i++
+				continue
+			}
+
+			start := i
+			for i < len(query) && isIdentifierByte(query[i]) {
+				i++
+			}
+			token := query[start:i]
+			if replacement, ok := logicalTableNames[strings.ToLower(token)]; ok {
+				b.WriteString(replacement)
+				continue
+			}
+			b.WriteString(token)
+		}
+	}
+	return b.String()
+}
+
+func isIdentifierByte(ch byte) bool {
+	return ch == '_' ||
+		(ch >= 'a' && ch <= 'z') ||
+		(ch >= 'A' && ch <= 'Z') ||
+		(ch >= '0' && ch <= '9')
 }
 
 func rebindQuestionToDollar(query string) string {

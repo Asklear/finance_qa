@@ -1,9 +1,11 @@
 package query_test
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"financeqa/internal/query"
 
@@ -11,6 +13,127 @@ import (
 )
 
 func TestProfitQueryExposesProfitCashBridge(t *testing.T) {
+	dbPath := buildProfitBridgeQueryDB(t)
+
+	engine, err := query.NewEngine(dbPath, "模拟财务")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月利润是多少")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	bridge, ok := res.Data["profit_cash_bridge"].(map[string]any)
+	if !ok {
+		t.Fatalf("profit_cash_bridge missing: %+v", res.Data)
+	}
+	if got := bridge["estimated_operating_cash"]; got != float64(300) {
+		t.Fatalf("estimated_operating_cash = %v, want 300", got)
+	}
+	if got := bridge["bank_net_cash"]; got != float64(-300) {
+		t.Fatalf("bank_net_cash = %v, want -300", got)
+	}
+	if got := bridge["advance_receipt_increase"]; got != float64(20) {
+		t.Fatalf("advance_receipt_increase = %v, want 20", got)
+	}
+	if got := bridge["other_receivable_increase"]; got != float64(40) {
+		t.Fatalf("other_receivable_increase = %v, want 40", got)
+	}
+	if got := bridge["tax_balance_increase"]; got != float64(5) {
+		t.Fatalf("tax_balance_increase = %v, want 5", got)
+	}
+	if got := bridge["tax_timing_adjustment"]; got != float64(5) {
+		t.Fatalf("tax_timing_adjustment = %v, want 5", got)
+	}
+	if got := bridge["adjusted_operating_cash_estimate"]; got != float64(305) {
+		t.Fatalf("adjusted_operating_cash_estimate = %v, want 305", got)
+	}
+	if got := bridge["non_operating_cash_delta"]; got != float64(-240) {
+		t.Fatalf("non_operating_cash_delta = %v, want -240", got)
+	}
+	if got := bridge["adjusted_operating_cash_gap"]; got != float64(-245) {
+		t.Fatalf("adjusted_operating_cash_gap = %v, want -245", got)
+	}
+	if got := bridge["operating_cash_net"]; got != float64(60) {
+		t.Fatalf("operating_cash_net = %v, want 60", got)
+	}
+	if got := bridge["non_operating_cash_out"]; got != float64(70) {
+		t.Fatalf("non_operating_cash_out = %v, want 70", got)
+	}
+}
+
+func TestCoreMetricsSourceAdapterReturnsRevenueFacts(t *testing.T) {
+	dbPath := buildProfitBridgeQueryDB(t)
+	engine, err := query.NewEngine(dbPath, "模拟财务")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	adapter := query.NewCoreMetricsSourceAdapter(engine)
+	spec := query.BuildQuerySpec("2026年3月收入是多少？", pathAnchor())
+
+	factSet, err := adapter.Fetch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	if factSet.Source != "core_metrics" {
+		t.Fatalf("source = %s, want core_metrics", factSet.Source)
+	}
+	assertFactValue(t, factSet, "cash_receipts", 500)
+	assertFactValue(t, factSet, "accrual_revenue", 1000)
+}
+
+func TestCoreMetricsSourceAdapterReturnsProfitAndBridgeFacts(t *testing.T) {
+	dbPath := buildProfitBridgeQueryDB(t)
+	engine, err := query.NewEngine(dbPath, "模拟财务")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	adapter := query.NewCoreMetricsSourceAdapter(engine)
+	spec := query.BuildQuerySpec("2026年3月利润是多少？", pathAnchor())
+
+	factSet, err := adapter.Fetch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	assertFactValue(t, factSet, "accrual_profit", 100)
+	assertFactValue(t, factSet, "cash_bridge_adjusted_operating_cash", 305)
+	assertFactValue(t, factSet, "cash_bridge_bank_net_cash", -300)
+}
+
+func TestCoreMetricsSourceAdapterAggregatesQuarterRangeFacts(t *testing.T) {
+	dbPath := buildProfitBridgeRangeDB(t)
+	engine, err := query.NewEngine(dbPath, "模拟财务")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	adapter := query.NewCoreMetricsSourceAdapter(engine)
+	spec := query.BuildQuerySpec("2026年第一季度营收", pathAnchor())
+
+	factSet, err := adapter.Fetch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	assertFactValue(t, factSet, "accrual_revenue", 3000)
+	if factSet.Facts[0].PeriodFrom != "2026-01" || factSet.Facts[0].PeriodTo != "2026-03" {
+		t.Fatalf("fact period = %s~%s, want 2026-01~2026-03", factSet.Facts[0].PeriodFrom, factSet.Facts[0].PeriodTo)
+	}
+}
+
+func buildProfitBridgeQueryDB(t *testing.T) string {
+	t.Helper()
+
 	dbPath := filepath.Join(t.TempDir(), "profit-bridge-query.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -65,53 +188,58 @@ func TestProfitQueryExposesProfitCashBridge(t *testing.T) {
 			t.Fatalf("exec stmt failed: %v", err)
 		}
 	}
+	return dbPath
+}
 
-	engine, err := query.NewEngine(dbPath, "模拟财务")
+func buildProfitBridgeRangeDB(t *testing.T) string {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "profit-range-query.db")
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		t.Fatalf("new engine: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
-	defer engine.Close()
+	defer db.Close()
 
-	res := engine.Query("2026年3月利润是多少")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
+	stmts := []string{
+		`CREATE TABLE income_statement (company TEXT, period TEXT, item_name TEXT, current_amount REAL, cumulative_amount REAL)`,
+		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, debit_amount REAL, credit_amount REAL, counterparty_name TEXT, summary TEXT)`,
+		`CREATE TABLE journal (company TEXT, period TEXT, voucher_date TEXT, voucher_no TEXT, account_code TEXT, account_name TEXT, summary TEXT, direction TEXT, amount REAL, debit_amount REAL, credit_amount REAL, counterparty TEXT)`,
+		`CREATE TABLE balance_detail (company TEXT, year INTEGER, period TEXT, opening_period TEXT, account_code TEXT, account_name TEXT, opening_debit REAL, opening_credit REAL, current_debit REAL, current_credit REAL, closing_debit REAL, closing_credit REAL)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-01','营业收入',1000,1000)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-01','营业成本',300,300)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-01','净利润',700,700)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','营业收入',800,1800)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','营业成本',200,500)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','净利润',600,1300)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-03','营业收入',1200,3000)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-03','营业成本',400,900)`,
+		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-03','净利润',800,2100)`,
+		`INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-01-10',1000,300,'客户A','收付')`,
+		`INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-10',800,200,'客户A','收付')`,
+		`INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-03-10',1200,400,'客户A','收付')`,
 	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+	return dbPath
+}
 
-	bridge, ok := res.Data["profit_cash_bridge"].(map[string]any)
-	if !ok {
-		t.Fatalf("profit_cash_bridge missing: %+v", res.Data)
+func pathAnchor() time.Time {
+	return time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+}
+
+func assertFactValue(t *testing.T, factSet query.FactSet, metricKey string, want float64) {
+	t.Helper()
+	for _, fact := range factSet.Facts {
+		if fact.MetricKey == metricKey {
+			if fact.Value != want {
+				t.Fatalf("%s value = %v, want %v", metricKey, fact.Value, want)
+			}
+			return
+		}
 	}
-	if got := bridge["estimated_operating_cash"]; got != float64(300) {
-		t.Fatalf("estimated_operating_cash = %v, want 300", got)
-	}
-	if got := bridge["bank_net_cash"]; got != float64(-300) {
-		t.Fatalf("bank_net_cash = %v, want -300", got)
-	}
-	if got := bridge["advance_receipt_increase"]; got != float64(20) {
-		t.Fatalf("advance_receipt_increase = %v, want 20", got)
-	}
-	if got := bridge["other_receivable_increase"]; got != float64(40) {
-		t.Fatalf("other_receivable_increase = %v, want 40", got)
-	}
-	if got := bridge["tax_balance_increase"]; got != float64(5) {
-		t.Fatalf("tax_balance_increase = %v, want 5", got)
-	}
-	if got := bridge["tax_timing_adjustment"]; got != float64(5) {
-		t.Fatalf("tax_timing_adjustment = %v, want 5", got)
-	}
-	if got := bridge["adjusted_operating_cash_estimate"]; got != float64(305) {
-		t.Fatalf("adjusted_operating_cash_estimate = %v, want 305", got)
-	}
-	if got := bridge["non_operating_cash_delta"]; got != float64(-240) {
-		t.Fatalf("non_operating_cash_delta = %v, want -240", got)
-	}
-	if got := bridge["adjusted_operating_cash_gap"]; got != float64(-245) {
-		t.Fatalf("adjusted_operating_cash_gap = %v, want -245", got)
-	}
-	if got := bridge["operating_cash_net"]; got != float64(60) {
-		t.Fatalf("operating_cash_net = %v, want 60", got)
-	}
-	if got := bridge["non_operating_cash_out"]; got != float64(70) {
-		t.Fatalf("non_operating_cash_out = %v, want 70", got)
-	}
+	t.Fatalf("metricKey %s not found in facts: %+v", metricKey, factSet.Facts)
 }

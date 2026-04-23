@@ -1,0 +1,134 @@
+[
+  {
+    "id": "feedback_01_feb_profit_includes_non_operating_income",
+    "query": "2026年2月收入、成本、利润分别是多少",
+    "must_contain": [
+      "营业外收入 0.19 元"
+    ],
+    "expect_floats": {
+      "data.dual_perspective.accrual.营业外收入": 0.19,
+      "data.dual_perspective.accrual.净利润": -2756.97
+    }
+  },
+  {
+    "id": "feedback_02_feb_cash_bridge_discloses_ap_increase",
+    "query": "2026年2月收入、成本、利润分别是多少",
+    "must_contain": [
+      "应付账款净增加 4854717.07"
+    ],
+    "expect_floats": {
+      "data.difference_bridge.经营现金净额估算": 2987727.92
+    }
+  },
+  {
+    "id": "feedback_03_mar_profit_includes_non_operating_income",
+    "query": "2026年3月收入、成本、利润分别是多少",
+    "must_contain": [
+      "营业外收入 0.12 元"
+    ],
+    "expect_floats": {
+      "data.dual_perspective.accrual.营业外收入": 0.12,
+      "data.dual_perspective.accrual.净利润": 291291.55
+    }
+  },
+  {
+    "id": "feedback_04_mar_cash_bridge_lists_capex_and_rollforward_buckets",
+    "query": "2026年3月收入、成本、利润分别是多少",
+    "must_contain": [
+      "固定资产购置本金",
+      "应付职工薪酬净增加 31754.22",
+      "应收净增加 -252444.13",
+      "预付净增加 -126310.27"
+    ]
+  },
+  {
+    "id": "feedback_05_q1_range_totals_match_expert_authority",
+    "query": "2026年第一季度收入、成本、利润分别是多少",
+    "expect_floats": {
+      "data.account_view.营业成本及费用": 10522743.20,
+      "data.dual_perspective.accrual.净利润": 312220.72,
+      "data.account_view.账面利润": 312220.72
+    },
+    "must_not_contain": [
+      "序时账汇总"
+    ]
+  },
+  {
+    "id": "feedback_06_flywei_sales_distinguish_tax_basis",
+    "query": "飞未云科2026年累计销售额多少？",
+    "must_contain": [
+      "3396981.13",
+      "3600800.00",
+      "增值税"
+    ],
+    "must_not_contain": [
+      "3150700.00",
+      "历史应收回款相关"
+    ],
+    "expect_floats": {
+      "data.amount": 3396981.13,
+      "data.bank_in": 3600800.00
+    }
+  },
+  {
+    "id": "feedback_07_jincheng_receipts_explicitly_label_tax_basis",
+    "query": "金程今年回款多少？其中3月到账多少？",
+    "must_contain": [
+      "含税",
+      "6647398.33",
+      "2130771.59"
+    ],
+    "expect_floats": {
+      "data.amount": 6647398.33,
+      "data.sub_period_receipts": 2130771.59
+    }
+  },
+  {
+    "id": "feedback_08_flywei_bank_aliases_roll_up_to_full_cumulative_inflow",
+    "query": "飞未云科2026年累计销售额多少？",
+    "expect_floats": {
+      "data.bank_in": 3600800.00
+    }
+  },
+  {
+    "id": "feedback_09_linyue_ap_uses_official_rollforward",
+    "query": "南京林悦智能科技有限公司3月应付账款多少？",
+    "must_contain": [
+      "2530000.00",
+      "4435815.00",
+      "10100.19",
+      "1915915.19"
+    ],
+    "must_not_contain": [
+      "应付 0.00 元"
+    ],
+    "expect_floats": {
+      "data.fact_sets[0].Facts[0].Value": 2530000.00
+    }
+  },
+  {
+    "id": "feedback_10_zhongwen_ap_keeps_paid_50000_in_rollforward",
+    "query": "北京市中闻（南京）律师事务所3月应付账款多少？",
+    "must_contain": [
+      "12000.00",
+      "50000.00"
+    ],
+    "must_not_contain": [
+      "应付 0.00 元"
+    ],
+    "expect_floats": {
+      "data.fact_sets[0].Facts[0].Value": 12000.00
+    }
+  },
+  {
+    "id": "feedback_10b_zhongxin_paid_item_should_close_out",
+    "query": "南京众信数通智能科技有限公司3月应付账款多少？",
+    "must_contain": [
+      "0.00",
+      "32902.07"
+    ],
+    "expect_floats": {
+      "data.fact_sets[0].Facts[0].Value": 0.00
+    }
+  }
+]

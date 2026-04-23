@@ -255,3 +255,88 @@ func TestRuleLexiconAccessors(t *testing.T) {
 		t.Fatalf("internal party context keyword accessor = %v", got)
 	}
 }
+
+func TestCurrentRuleConfigReloadsWhenRulesPathChanges(t *testing.T) {
+	rulesPathA := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "router": {
+    "intents": {
+      "large_transaction": {"keywords": ["峰值来款A"]}
+    }
+  }
+}`)
+	rulesPathB := filepath.Join(t.TempDir(), "rules-b.json")
+	if err := os.WriteFile(rulesPathB, []byte(`{
+  "schema_version": 2,
+  "router": {
+    "intents": {
+      "large_transaction": {"keywords": ["峰值来款B"]}
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("write rules file B: %v", err)
+	}
+
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPathA)
+	cfgA := query.CurrentRuleConfig()
+	if got := cfgA.IntentKeywords(query.IntentLargeTransactionQuery); len(got) != 1 || got[0] != "峰值来款A" {
+		t.Fatalf("cfgA large_transaction keywords = %v", got)
+	}
+
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPathB)
+	cfgB := query.CurrentRuleConfig()
+	if got := cfgB.IntentKeywords(query.IntentLargeTransactionQuery); len(got) != 1 || got[0] != "峰值来款B" {
+		t.Fatalf("cfgB large_transaction keywords = %v", got)
+	}
+}
+
+func TestContractRulesAndIncomeStatementPatternsLoadFromNestedConfig(t *testing.T) {
+	rulesPath := writeRulesConfigFile(t, `{
+  "schema_version": 2,
+  "contract": {
+    "priority_keywords": ["履约", "合同毛利"],
+    "summary_keywords": ["老板口径营收", "老板口径利润"],
+    "cash_fallback_keywords": ["银行流水", "实际到账"],
+    "source_tables": {
+      "supplier_contract": ["tenant_uhub.fin_contracts", "tenant_uhub.fin_cost_settlements"],
+      "aggregate_summary": ["tenant_uhub.fin_contracts", "tenant_uhub.fin_fund_income", "tenant_uhub.fin_cost_settlements"],
+      "contract_content": ["tenant_uhub.fin_contracts", "tenant_uhub.fin_contract_files"]
+    }
+  },
+  "accounting": {
+    "income_statement_items": {
+      "non_operating_income": ["营业外净收入", "其他非经营收入"],
+      "non_operating_expense": ["营业外净支出"],
+      "profit_total": ["利润总额", "经营利润总额"]
+    }
+  }
+}`)
+
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	cfg := query.CurrentRuleConfig()
+	if got := cfg.ContractPriorityKeywords(); len(got) != 2 || got[0] != "履约" || got[1] != "合同毛利" {
+		t.Fatalf("contract priority keywords not loaded, got=%v", got)
+	}
+	if got := cfg.ContractSummaryKeywords(); len(got) != 2 || got[0] != "老板口径营收" {
+		t.Fatalf("contract summary keywords not loaded, got=%v", got)
+	}
+	if got := cfg.ContractCashFallbackKeywords(); len(got) != 2 || got[1] != "实际到账" {
+		t.Fatalf("contract cash fallback keywords not loaded, got=%v", got)
+	}
+	if got := cfg.ContractSourceTables("supplier_contract"); len(got) != 2 || got[1] != "tenant_uhub.fin_cost_settlements" {
+		t.Fatalf("contract source tables not loaded, got=%v", got)
+	}
+	if got := cfg.ContractSourceTables("aggregate_summary"); len(got) != 3 || got[2] != "tenant_uhub.fin_cost_settlements" {
+		t.Fatalf("aggregate_summary source tables not loaded, got=%v", got)
+	}
+	if got := cfg.ContractSourceTables("contract_content"); len(got) != 2 || got[1] != "tenant_uhub.fin_contract_files" {
+		t.Fatalf("contract content source tables not loaded, got=%v", got)
+	}
+	if got := cfg.IncomeStatementPatterns("non_operating_income"); len(got) != 2 || got[0] != "营业外净收入" {
+		t.Fatalf("income statement non_operating_income patterns not loaded, got=%v", got)
+	}
+	if got := cfg.IncomeStatementPatterns("profit_total"); len(got) != 2 || got[1] != "经营利润总额" {
+		t.Fatalf("income statement profit_total patterns not loaded, got=%v", got)
+	}
+}

@@ -26,6 +26,30 @@ func (cfg RuleConfig) ProfitSingleViewBlockKeywords() []string {
 	return copyStringSlice(cfg.ProfitSingleViewBlockKeywordLexicon)
 }
 
+func (cfg RuleConfig) ContractPriorityKeywords() []string {
+	return copyStringSlice(cfg.ContractPriorityKeywordLexicon)
+}
+
+func (cfg RuleConfig) ContractSummaryKeywords() []string {
+	return copyStringSlice(cfg.ContractSummaryKeywordLexicon)
+}
+
+func (cfg RuleConfig) ContractCashFallbackKeywords() []string {
+	return copyStringSlice(cfg.ContractCashFallbackLexicon)
+}
+
+func (cfg RuleConfig) ContractSourceTables(role string) []string {
+	tables := cfg.ContractSourceTableLexicon[strings.TrimSpace(role)]
+	if len(tables) == 0 {
+		tables = cfg.ContractSourceTableLexicon[contractRoleDefault]
+	}
+	return copyStringSlice(tables)
+}
+
+func (cfg RuleConfig) IncomeStatementPatterns(key string) []string {
+	return copyStringSlice(cfg.IncomeStatementItemLexicon[strings.TrimSpace(key)])
+}
+
 func (cfg RuleConfig) CounterpartyRoleKeywords(role CounterpartyRole) []string {
 	return copyStringSlice(cfg.CounterpartyRoleLexicon[string(role)])
 }

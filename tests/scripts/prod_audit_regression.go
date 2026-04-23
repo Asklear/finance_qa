@@ -72,7 +72,7 @@ func main() {
 	}
 
 	fmt.Println("# 🚀 南京优集生产数据：全量回归审计报告 (Strict)")
-	fmt.Printf("> 生成时间: %s | 锚定账期: %s | 数据库: %s\n\n", time.Now().Format("2006-01-02 15:04:05"), latestPeriod, dbPath)
+	fmt.Printf("> 生成时间: %s | 锚定账期: %s | 数据库: %s\n\n", time.Now().Format("2006-01-02 15:04:05"), latestPeriod, redactDBTarget(dbPath))
 	fmt.Println("| ID | 审计提问 | 状态 | 关键原因 | 耗时 |")
 	fmt.Println("|:---|:---|:---:|:---|---:|")
 
@@ -115,7 +115,7 @@ func main() {
 
 func runQuery(dbPath, company, question string) (QueryResult, error, string, string) {
 	goBin := resolveGoBin()
-	cmd := exec.Command(goBin, "run", "cmd/financeqa/main.go", "query", "--db", dbPath, "--company", company, question)
+	cmd := exec.Command(goBin, "run", "./cmd/financeqa", "query", "--db", dbPath, "--company", company, question)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -126,6 +126,32 @@ func runQuery(dbPath, company, question string) (QueryResult, error, string, str
 	var res QueryResult
 	err := json.Unmarshal([]byte(raw), &res)
 	return res, err, raw, rawErr
+}
+
+func redactDBTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	if strings.Contains(strings.ToLower(target), "host=") && strings.Contains(strings.ToLower(target), "dbname=") {
+		parts := strings.Fields(target)
+		kept := make([]string, 0, len(parts))
+		for _, part := range parts {
+			lower := strings.ToLower(part)
+			switch {
+			case strings.HasPrefix(lower, "host="):
+				kept = append(kept, part)
+			case strings.HasPrefix(lower, "port="):
+				kept = append(kept, part)
+			case strings.HasPrefix(lower, "dbname="):
+				kept = append(kept, part)
+			case strings.HasPrefix(lower, "search_path="):
+				kept = append(kept, part)
+			}
+		}
+		return strings.Join(kept, " ")
+	}
+	return target
 }
 
 func resolveGoBin() string {

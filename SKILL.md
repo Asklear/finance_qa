@@ -9,7 +9,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 0. 契约版本
 
-1. `skill_contract_version`: `2026-04-21.2`
+1. `skill_contract_version`: `2026-04-23.2`
 2. `bridge_protocol_version`: `v2`
 3. 按需附录：`docs/SKILL_APPENDIX_FULL.md`
 
@@ -44,7 +44,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 ```
 
 3. `finance-upload`
-   - 单文件导入财务报表时使用
+   - 单文件导入财务报表或合同台账 Excel 时使用
    - 参数：
 ```json
 {"filePath":"/abs/path/report.xlsx"}
@@ -72,10 +72,26 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `calculation_logs`
    - `data.trace`
    - `data.intent_trace`
+   - `data.query_pipeline`
+   - `data.source_plan`
+   - `data.fact_sets`
+   - `data.source_note`
+   - `data.source_documents`
+   - `data.primary_source_tables`
+   - `data.supporting_source_documents`
+   - `data.tax_inclusion`
+   - `data.tax_inclusion_note`
    - `bridge_meta`
-6. 若 `success=false` 或 `answer_method=llm_payload`：
+6. 若存在 `data.source_note`：
+   - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
+   - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
+7. 若 `success=false` 或 `answer_method=llm_payload`：
    - 立即调用 `finance-host-data`
    - 让宿主 LLM 基于 `data.llm_payload` 继续判断
+8. 若存在 `data.tax_inclusion` / `data.tax_inclusion_note`：
+   - 宿主摘要时必须保留这条口径提示
+   - 不能把序时账汇总金额改写成“不含税”或“默认税后”
+   - 若给老板做一句话总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
 
 ## 4. 宿主不能自己改写的结构化约束
 
@@ -93,8 +109,12 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 ## 5. 老板问答规则
 
 1. 核心经营指标：
-   - 收入 / 成本 / 利润 / 销售额默认先给现金收付，再补经营确认
-   - 回答顺序保持“先现金、再经营”
+   - 如果老板在问整公司或区间汇总的 `收入 / 营收 / 成本 / 利润 / 销售额`，先尝试 `fin_contracts + fin_fund_income + fin_cost_settlements`
+   - 合同/项目汇总能回答时，优先按老板口径返回合同营收、合同成本、合同利润；可补充合同回款/开票
+   - 只有合同/项目汇总表答不全时，才回退到“先现金、再经营/财务”
+   - 银行流水 / 实际到账 / 实际支出 / 净增加 / 回款 这类现金问题，不要强行先走合同汇总
+   - `利润` 默认按 `收入 - 成本及费用 + 营业外收入 - 营业外支出`
+   - 如果老板明确问 `净利润`，再单独按净利润回答，不要和“利润”混说
 2. 差异原因：
    - 只有在用户追问“为什么不一样/差额是什么造成”时，再展开利润调现金桥、回款时点和成本确认时差
 3. 明确主体问题：
@@ -111,10 +131,24 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 季度 / 半年 / 全年 / 累计必须按区间聚合
    - 不能把最后一个月的 `current_amount` 当整个区间答案
    - 要做 `current_amount` 和 `cumulative_amount` 的合理性交叉验证
-7. 证据不足：
+7. 合同维度问题：
+   - 如果问题同时出现 `合同` + `结算/到账/回款/付款/成本/开票`，优先走合同台账模块
+   - `项目` 视为老板语境下的合同同义词；若识别到真实主体，也应优先走合同台账模块
+   - 客户合同默认先答“现金口径：到账/回款”，再答“财务口径：合同台账结算/开票”
+   - 供应商合同默认先答“现金口径：实际付款”，再答“财务口径：合同成本”
+   - 混合合同也要先现金、再财务，不能把两个口径揉成一段
+   - 合同优先关键词、合同来源表映射都应视为可配置规则，不要假设是写死常量
+8. 证据不足：
    - 直接说“目前库里还不能硬判”
    - 说明缺什么字段
    - 告诉老板下一步该查什么
+9. 多源编排结果：
+   - 如果返回 `query_pipeline=orchestrator`，说明结果已经过后端多源编排
+   - 宿主优先使用 `message` 或 `boss_reply`
+   - 如需解释来源，再参考 `source_plan` 与 `fact_sets`，不要自己二次拼口径
+10. 序时账汇总结果：
+   - 只要结果来自 `journal` / 序时账汇总，必须附带“是否含税”的说明
+   - 默认解释为：按凭证入账金额统计，不主动剔税；若税额未单独拆分，通常视为含税口径
 
 ## 6. 绝对红线
 
@@ -127,6 +161,9 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 7. 不能无视 `host_summary_contract`，自行从日志或证据里重算金额
 8. 不能把 `sub_period_receipts` 改写成累计回款
 9. 不能把季度 / 半年 / 全年问题偷换成最后一个月结果
+10. 不能把“利润”和“净利润”混成同一个字段解释
+11. 不能对序时账汇总结果省略含税/未剔税提示
+12. 不能忽略 `data.tax_inclusion` / `data.tax_inclusion_note` 后自行改写税口径
 
 ## 7. 最小调用示例
 
@@ -147,6 +184,33 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 ```bash
 ./financeqa import --company "南京优集数据科技有限公司" /abs/path/report.xlsx
 ```
+
+### 7.4 数据上传落库约定
+
+1. PostgreSQL 导入必须写入 `fin_*` 实表（如 `fin_balance_detail`、`fin_journal`、`fin_income_statement`、`fin_balance_sheet`、`fin_bank_statement`），不要依赖兼容 view。
+2. 余额表（`fin_balance_detail`）字段语义：
+   - `opening_period` = 会计期间第一个月份（期初月）
+   - `period` = 会计期间第二个月份（期末月）
+   - `current_debit/current_credit` = 该会计期间发生额
+3. 序时账（`fin_journal`）导入时必须填 `period`，规则为 `voucher_date` 对应的 `YYYY-MM`，不允许留空。
+4. 合同类 Excel 也走同一个 `financeqa import` 入口，识别后写入：
+   - `fin_contracts`
+   - `fin_cost_settlements`
+   - `fin_fund_income`
+   - 其中客户合同的结算/开票/回款统一归到 `fin_fund_income`
+   - `fin_contracts` 保存合同主信息：`customer_name`、`contract_content`，以及可归一化的 `contract_start_date`、`contract_end_date`、`settlement_cycle`
+   - `fin_cost_settlements` 保存供应商/成本侧行项目字段：`quantity`、`settlement_amount`、`invoice_amount`、`paid_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
+   - `fin_fund_income` 保存客户/收入侧行项目字段：`quantity`、`settlement_amount`、`received_amount`、`invoice_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
+   - 两张行项目表都会附带 `source_report_type`、`source_sheet_name`，用于按来源分区做全量覆盖，避免一个合同 Excel 的重传把另一来源的数据整表冲掉
+   - 除 `year_month` 会按规则推断外，其他合同扩展字段默认以源 Excel 原值为准；源单元格为空时，库中也保持为空，不做人为硬补
+   - 合同月度结算表的 `year_month` 不能写死年份；要优先按每行合同开始/终止日期推断月份所属年份，缺失时再结合 sheet 年份 / 同 sheet 同月份多数年份推断
+   - 合并单元格导致的空客户名，要沿用上一条非空客户名，避免漏导合同
+   - 资金到账表要支持任意 `xx年Qn收入明细` sheet，不要只写死 `25年Q4` / `26年Q1`
+   - `fin_revenue_settlements` 已废弃，仅保留历史兼容，不再作为导入或查询主表
+5. 每次导入后，目标表的表注释都会写入结构化来源元数据：
+   - 主要从 Excel 文件名和 sheet 名生成
+   - 查询时统一从表注释提取 `source_note/source_documents`
+   - 旧纯文本表注释会在 bootstrap/query/import 时自动升级成结构化 `financeqa_source`
 
 ## 8. 附录说明
 

@@ -159,3 +159,131 @@ func TestIntentRouterConfigurablePreciseKeywords(t *testing.T) {
 		t.Fatalf("ClassifyIntentV2 with configurable precise keywords = %s, want %s", intent, query.IntentPrecise)
 	}
 }
+
+func TestBuildQuerySpecCapturesSubPeriodAndCashFirstPolicy(t *testing.T) {
+	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+
+	spec := query.BuildQuerySpec("金程今年回款多少？其中3月到账多少？", now)
+
+	if spec.QueryFamily != query.QueryFamilyCounterparty {
+		t.Fatalf("QueryFamily = %s, want %s", spec.QueryFamily, query.QueryFamilyCounterparty)
+	}
+	if spec.PeriodFrom != "2026-01" || spec.PeriodTo != "2026-04" {
+		t.Fatalf("period = %s~%s, want 2026-01~2026-04", spec.PeriodFrom, spec.PeriodTo)
+	}
+	if spec.SubPeriod != "2026-03" {
+		t.Fatalf("SubPeriod = %s, want 2026-03", spec.SubPeriod)
+	}
+	if spec.TimeScope != query.TimeScopeYearToDate {
+		t.Fatalf("TimeScope = %s, want %s", spec.TimeScope, query.TimeScopeYearToDate)
+	}
+	if spec.PerspectivePolicy != query.PerspectiveCashThenAccrual {
+		t.Fatalf("PerspectivePolicy = %s, want %s", spec.PerspectivePolicy, query.PerspectiveCashThenAccrual)
+	}
+	if spec.Entity == "" {
+		t.Fatalf("expected entity to be extracted")
+	}
+	if spec.LexiconProfile == "" {
+		t.Fatalf("expected non-empty lexicon profile")
+	}
+}
+
+func TestBuildQuerySpecCapturesReadinessAndOpeningSemantics(t *testing.T) {
+	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+
+	readiness := query.BuildQuerySpec("飞未3月数据出来了吗？", now)
+	if readiness.QueryFamily != query.QueryFamilyReadiness {
+		t.Fatalf("readiness QueryFamily = %s, want %s", readiness.QueryFamily, query.QueryFamilyReadiness)
+	}
+	if !readiness.ReadinessCheckRequired {
+		t.Fatalf("expected ReadinessCheckRequired=true")
+	}
+	if readiness.PeriodFrom != "2026-03" || readiness.PeriodTo != "2026-03" {
+		t.Fatalf("readiness period = %s~%s, want 2026-03~2026-03", readiness.PeriodFrom, readiness.PeriodTo)
+	}
+
+	arap := query.BuildQuerySpec("2026年3月应付账款多少（已收发票未付款）？", now)
+	if arap.QueryFamily != query.QueryFamilyARAP {
+		t.Fatalf("ARAP QueryFamily = %s, want %s", arap.QueryFamily, query.QueryFamilyARAP)
+	}
+	if !arap.OpeningPeriodAware {
+		t.Fatalf("expected OpeningPeriodAware=true")
+	}
+	if !arap.AuthoritativeSourceRequired {
+		t.Fatalf("expected AuthoritativeSourceRequired=true")
+	}
+	if arap.PerspectivePolicy != query.PerspectiveOfficialThenEvidence {
+		t.Fatalf("PerspectivePolicy = %s, want %s", arap.PerspectivePolicy, query.PerspectiveOfficialThenEvidence)
+	}
+}
+
+func TestBuildQuerySpecCapturesContractDimension(t *testing.T) {
+	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+
+	spec := query.BuildQuerySpec("飞未合同2026年回款多少？其中3月到账多少？", now)
+
+	if spec.QueryFamily != query.QueryFamilyContractDimension {
+		t.Fatalf("QueryFamily = %s, want %s", spec.QueryFamily, query.QueryFamilyContractDimension)
+	}
+	if !spec.NeedsContractDimension {
+		t.Fatalf("expected NeedsContractDimension=true")
+	}
+	if spec.SubPeriod != "2026-03" {
+		t.Fatalf("SubPeriod = %s, want 2026-03", spec.SubPeriod)
+	}
+	if spec.PerspectivePolicy != query.PerspectiveCashThenAccrual {
+		t.Fatalf("PerspectivePolicy = %s, want %s", spec.PerspectivePolicy, query.PerspectiveCashThenAccrual)
+	}
+}
+
+func TestPlanQuerySpecUsesMetricSpecificSourceStrategies(t *testing.T) {
+	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+
+	revenuePlan := query.PlanQuerySpec(query.BuildQuerySpec("2026年3月收入是多少？", now))
+	if revenuePlan.QueryFamily != query.QueryFamilyCoreMetric {
+		t.Fatalf("revenue QueryFamily = %s, want %s", revenuePlan.QueryFamily, query.QueryFamilyCoreMetric)
+	}
+	if !revenuePlan.Requires(query.SourceCapabilityContractLedger) || !revenuePlan.Requires(query.SourceCapabilityCashReceipts) || !revenuePlan.Requires(query.SourceCapabilityAccrualRevenue) {
+		t.Fatalf("revenue plan capabilities = %+v, want contract ledger + cash receipts + accrual revenue", revenuePlan.Capabilities)
+	}
+
+	arapPlan := query.PlanQuerySpec(query.BuildQuerySpec("2026年3月应收账款多少？", now))
+	if !arapPlan.Requires(query.SourceCapabilityOfficialARAP) || !arapPlan.Requires(query.SourceCapabilityOpenItemEvidence) {
+		t.Fatalf("AR/AP plan capabilities = %+v, want official balance + open-item evidence", arapPlan.Capabilities)
+	}
+
+	readinessPlan := query.PlanQuerySpec(query.BuildQuerySpec("飞未3月数据出来了吗？", now))
+	if !readinessPlan.Requires(query.SourceCapabilityDataReadiness) {
+		t.Fatalf("readiness plan capabilities = %+v, want data readiness", readinessPlan.Capabilities)
+	}
+
+	contractPlan := query.PlanQuerySpec(query.BuildQuerySpec("飞未合同2026年回款多少？", now))
+	if !contractPlan.Requires(query.SourceCapabilityContractLedger) || !contractPlan.Requires(query.SourceCapabilityBankCashReceipts) {
+		t.Fatalf("contract plan capabilities = %+v, want contract ledger + bank cash receipts", contractPlan.Capabilities)
+	}
+}
+
+func TestBuildQuerySpecMarksBossAggregateContractPriority(t *testing.T) {
+	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+
+	spec := query.BuildQuerySpec("2026年第一季度收入、成本、利润分别是多少？", now)
+	if spec.QueryFamily != query.QueryFamilyCoreMetric {
+		t.Fatalf("QueryFamily = %s, want %s", spec.QueryFamily, query.QueryFamilyCoreMetric)
+	}
+	if !spec.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want true")
+	}
+	if spec.NeedsContractDimension {
+		t.Fatalf("NeedsContractDimension = true, want false")
+	}
+
+	cashSpec := query.BuildQuerySpec("2026年3月银行卡上实际到账、实际支出、净增加分别是多少？", now)
+	if cashSpec.PreferContractAggregate {
+		t.Fatalf("cash flow question should not prefer contract aggregate")
+	}
+
+	receiptsSpec := query.BuildQuerySpec("金程今年回款多少？其中3月到账多少？", now)
+	if receiptsSpec.PreferContractAggregate {
+		t.Fatalf("receipts question should not prefer contract aggregate")
+	}
+}

@@ -35,35 +35,48 @@ type OpenItem struct {
 }
 
 type CounterpartySummary struct {
-	Counterparty         string               `json:"counterparty"`
-	OpeningBalance       float64              `json:"opening_balance"`
-	CurrentIncrease      float64              `json:"current_increase"`
-	CurrentDecrease      float64              `json:"current_decrease"`
-	HistoricalSettlement float64              `json:"historical_settlement"`
-	CurrentSettlement    float64              `json:"current_period_settlement"`
-	SettlementConfidence SettlementConfidence `json:"settlement_confidence"`
-	ClosingBalance       float64              `json:"closing_balance"`
-	OpenItems            []OpenItem           `json:"open_items"`
+	Counterparty            string               `json:"counterparty"`
+	OpeningBalance          float64              `json:"opening_balance"`
+	CurrentIncrease         float64              `json:"current_increase"`
+	CurrentDecrease         float64              `json:"current_decrease"`
+	OfficialOpeningBalance  float64              `json:"official_opening_balance"`
+	OfficialCurrentIncrease float64              `json:"official_current_increase"`
+	OfficialCurrentDecrease float64              `json:"official_current_decrease"`
+	OfficialClosingBalance  float64              `json:"official_closing_balance"`
+	OpenItemOpeningBalance  float64              `json:"open_item_opening_balance"`
+	OpenItemClosingBalance  float64              `json:"open_item_closing_balance"`
+	HistoricalSettlement    float64              `json:"historical_settlement"`
+	CurrentSettlement       float64              `json:"current_period_settlement"`
+	SettlementConfidence    SettlementConfidence `json:"settlement_confidence"`
+	ClosingBalance          float64              `json:"closing_balance"`
+	OpenItems               []OpenItem           `json:"open_items"`
 }
 
 type Summary struct {
-	Company               string                `json:"company"`
-	Period                string                `json:"period"`
-	AccountCodePrefix     string                `json:"account_code_prefix"`
-	Kind                  AccountKind           `json:"kind"`
-	OpeningBalance        float64               `json:"opening_balance"`
-	CurrentIncrease       float64               `json:"current_increase"`
-	CurrentDecrease       float64               `json:"current_decrease"`
-	HistoricalSettlement  float64               `json:"historical_settlement"`
-	CurrentSettlement     float64               `json:"current_period_settlement"`
-	SettlementConfidence  SettlementConfidence  `json:"settlement_confidence"`
-	ClosingBalance        float64               `json:"closing_balance"`
-	CounterpartySummaries []CounterpartySummary `json:"counterparties"`
-	OpenItems             []OpenItem            `json:"open_items"`
-	HasData               bool                  `json:"has_data"`
+	Company                 string                `json:"company"`
+	Period                  string                `json:"period"`
+	AccountCodePrefix       string                `json:"account_code_prefix"`
+	Kind                    AccountKind           `json:"kind"`
+	OpeningBalance          float64               `json:"opening_balance"`
+	CurrentIncrease         float64               `json:"current_increase"`
+	CurrentDecrease         float64               `json:"current_decrease"`
+	OfficialOpeningBalance  float64               `json:"official_opening_balance"`
+	OfficialCurrentIncrease float64               `json:"official_current_increase"`
+	OfficialCurrentDecrease float64               `json:"official_current_decrease"`
+	OfficialClosingBalance  float64               `json:"official_closing_balance"`
+	OpenItemOpeningBalance  float64               `json:"open_item_opening_balance"`
+	OpenItemClosingBalance  float64               `json:"open_item_closing_balance"`
+	HistoricalSettlement    float64               `json:"historical_settlement"`
+	CurrentSettlement       float64               `json:"current_period_settlement"`
+	SettlementConfidence    SettlementConfidence  `json:"settlement_confidence"`
+	ClosingBalance          float64               `json:"closing_balance"`
+	CounterpartySummaries   []CounterpartySummary `json:"counterparties"`
+	OpenItems               []OpenItem            `json:"open_items"`
+	HasData                 bool                  `json:"has_data"`
 }
 
 type journalRow struct {
+	Period             string
 	VoucherDate        string
 	AccountCode        string
 	VoucherNo          string
@@ -86,9 +99,12 @@ type openLayer struct {
 }
 
 type counterpartyState struct {
-	name    string
-	queue   []openLayer
-	summary CounterpartySummary
+	name               string
+	queue              []openLayer
+	summary            CounterpartySummary
+	officialOpeningNet float64
+	periodDebitTotal   float64
+	periodCreditTotal  float64
 }
 
 func BuildSummary(ctx context.Context, db *sql.DB, opts Options) (Summary, error) {
@@ -116,10 +132,13 @@ func BuildSummary(ctx context.Context, db *sql.DB, opts Options) (Summary, error
 	for _, row := range rows {
 		state := ensureState(states, row.Counterparty)
 		if row.Date.Before(startDate) {
+			state.officialOpeningNet = round2(state.officialOpeningNet + officialSignedDelta(opts.Kind, row.Debit, row.Credit))
 			applyHistory(state, row, opts.Kind)
 		}
 	}
 	for _, state := range states {
+		state.summary.OfficialOpeningBalance = round2(state.officialOpeningNet)
+		state.summary.OpenItemOpeningBalance = round2(queueBalance(state.queue))
 		state.summary.OpeningBalance = round2(queueBalance(state.queue))
 	}
 
@@ -128,12 +147,19 @@ func BuildSummary(ctx context.Context, db *sql.DB, opts Options) (Summary, error
 			continue
 		}
 		state := ensureState(states, row.Counterparty)
+		state.periodDebitTotal = round2(state.periodDebitTotal + row.Debit)
+		state.periodCreditTotal = round2(state.periodCreditTotal + row.Credit)
 		applyCurrentPeriod(state, row, opts.Kind, startDate)
 	}
 
 	counterparties := make([]CounterpartySummary, 0, len(states))
 	openItems := make([]OpenItem, 0)
 	for _, state := range states {
+		officialIncrease, officialDecrease := officialRollforwardSides(opts.Kind, state.periodDebitTotal, state.periodCreditTotal)
+		state.summary.OfficialCurrentIncrease = officialIncrease
+		state.summary.OfficialCurrentDecrease = officialDecrease
+		state.summary.OfficialClosingBalance = round2(state.summary.OfficialOpeningBalance + officialIncrease - officialDecrease)
+		state.summary.OpenItemClosingBalance = round2(queueBalance(state.queue))
 		state.summary.ClosingBalance = round2(queueBalance(state.queue))
 		state.summary.HistoricalSettlement = round2(state.summary.HistoricalSettlement)
 		state.summary.CurrentSettlement = round2(state.summary.CurrentSettlement)
@@ -147,6 +173,12 @@ func BuildSummary(ctx context.Context, db *sql.DB, opts Options) (Summary, error
 		}
 		counterparties = append(counterparties, state.summary)
 		openItems = append(openItems, state.summary.OpenItems...)
+		summary.OfficialOpeningBalance += state.summary.OfficialOpeningBalance
+		summary.OfficialCurrentIncrease += state.summary.OfficialCurrentIncrease
+		summary.OfficialCurrentDecrease += state.summary.OfficialCurrentDecrease
+		summary.OfficialClosingBalance += state.summary.OfficialClosingBalance
+		summary.OpenItemOpeningBalance += state.summary.OpenItemOpeningBalance
+		summary.OpenItemClosingBalance += state.summary.OpenItemClosingBalance
 		summary.OpeningBalance += state.summary.OpeningBalance
 		summary.CurrentIncrease += state.summary.CurrentIncrease
 		summary.CurrentDecrease += state.summary.CurrentDecrease
@@ -174,6 +206,12 @@ func BuildSummary(ctx context.Context, db *sql.DB, opts Options) (Summary, error
 
 	summary.CounterpartySummaries = counterparties
 	summary.OpenItems = openItems
+	summary.OfficialOpeningBalance = round2(summary.OfficialOpeningBalance)
+	summary.OfficialCurrentIncrease = round2(summary.OfficialCurrentIncrease)
+	summary.OfficialCurrentDecrease = round2(summary.OfficialCurrentDecrease)
+	summary.OfficialClosingBalance = round2(summary.OfficialClosingBalance)
+	summary.OpenItemOpeningBalance = round2(summary.OpenItemOpeningBalance)
+	summary.OpenItemClosingBalance = round2(summary.OpenItemClosingBalance)
 	summary.OpeningBalance = round2(summary.OpeningBalance)
 	summary.CurrentIncrease = round2(summary.CurrentIncrease)
 	summary.CurrentDecrease = round2(summary.CurrentDecrease)
@@ -345,6 +383,30 @@ func buildOpenItems(counterparty string, queue []openLayer, endDate time.Time) [
 	return out
 }
 
+func officialSignedDelta(kind AccountKind, debit, credit float64) float64 {
+	if kind == Payable {
+		return round2(credit - debit)
+	}
+	return round2(debit - credit)
+}
+
+func officialRollforwardSides(kind AccountKind, debitTotal, creditTotal float64) (float64, float64) {
+	debitNet := round2(debitTotal)
+	creditNet := round2(creditTotal)
+	if debitNet < 0 {
+		creditNet = round2(creditNet + math.Abs(debitNet))
+		debitNet = 0
+	}
+	if creditNet < 0 {
+		debitNet = round2(debitNet + math.Abs(creditNet))
+		creditNet = 0
+	}
+	if kind == Payable {
+		return creditNet, debitNet
+	}
+	return debitNet, creditNet
+}
+
 func queueBalance(queue []openLayer) float64 {
 	total := 0.0
 	for _, layer := range queue {
@@ -360,6 +422,7 @@ func loadJournalRows(ctx context.Context, db *sql.DB, company, prefix, counterpa
 	}
 	query := fmt.Sprintf(`
 SELECT
+  %s AS period,
   voucher_date,
   account_code,
   %s AS voucher_no,
@@ -373,7 +436,7 @@ WHERE (? LIKE '%%' || company || '%%' OR company LIKE '%%' || ? || '%%')
   AND account_code LIKE ?
   AND DATE(voucher_date) <= DATE(?)
 ORDER BY %s
-`, textExpr(cols, "voucher_no"), textExpr(cols, "account_name"), textExpr(cols, "summary"), textExpr(cols, "counterparty"), numberExpr(cols, "debit_amount"), numberExpr(cols, "credit_amount"), openItemsJournalOrderByClause())
+`, textExpr(cols, "period"), textExpr(cols, "voucher_no"), textExpr(cols, "account_name"), textExpr(cols, "summary"), textExpr(cols, "counterparty"), numberExpr(cols, "debit_amount"), numberExpr(cols, "credit_amount"), openItemsJournalOrderByClause())
 
 	rows, err := db.QueryContext(ctx, query, company, company, prefix+"%", endDate.Format("2006-01-02"))
 	if err != nil {
@@ -382,23 +445,116 @@ ORDER BY %s
 	defer rows.Close()
 
 	out := make([]journalRow, 0)
+	contexts := make(map[string]journalRow)
 	for rows.Next() {
 		var row journalRow
-		if err := rows.Scan(&row.VoucherDate, &row.AccountCode, &row.VoucherNo, &row.AccountName, &row.Summary, &row.Counterparty, &row.Debit, &row.Credit); err != nil {
+		if err := rows.Scan(&row.Period, &row.VoucherDate, &row.AccountCode, &row.VoucherNo, &row.AccountName, &row.Summary, &row.Counterparty, &row.Debit, &row.Credit); err != nil {
 			return nil, fmt.Errorf("scan journal open item row: %w", err)
 		}
 		row.Counterparty, row.CounterpartySource = normalizeCounterparty(row.Counterparty, row.AccountName, row.Summary)
 		row.IsExplicitOffset = isExplicitOffsetRow(row.Summary, row.Debit, row.Credit)
-		if counterparty != "" && !sameCounterparty(row.Counterparty, counterparty) {
-			continue
-		}
 		row.Date = mustParseDate(row.VoucherDate)
 		out = append(out, row)
+		if row.CounterpartySource == CounterpartyEvidenceUnknown && row.Period != "" && row.VoucherDate != "" && row.VoucherNo != "" {
+			contexts[voucherContextKey(row.Period, row.VoucherDate, row.VoucherNo)] = row
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate journal open item rows: %w", err)
 	}
-	return out, nil
+	if len(contexts) > 0 {
+		batch := make([]journalRow, 0, len(contexts))
+		for _, row := range contexts {
+			batch = append(batch, row)
+		}
+		hints, hintErr := loadVoucherCounterpartyHints(ctx, db, company, batch)
+		if hintErr == nil {
+			for idx := range out {
+				if out[idx].CounterpartySource != CounterpartyEvidenceUnknown {
+					continue
+				}
+				hint := hints[voucherContextKey(out[idx].Period, out[idx].VoucherDate, out[idx].VoucherNo)]
+				if hint == "" {
+					continue
+				}
+				out[idx].Counterparty = hint
+				out[idx].CounterpartySource = CounterpartyEvidenceSummary
+			}
+		}
+	}
+	if counterparty == "" {
+		return out, nil
+	}
+	filtered := make([]journalRow, 0, len(out))
+	for _, row := range out {
+		if sameCounterparty(row.Counterparty, counterparty) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered, nil
+}
+
+func voucherContextKey(period, voucherDate, voucherNo string) string {
+	return strings.Join([]string{
+		strings.TrimSpace(period),
+		strings.TrimSpace(voucherDate),
+		strings.TrimSpace(voucherNo),
+	}, "\x1f")
+}
+
+func loadVoucherCounterpartyHints(ctx context.Context, db *sql.DB, company string, contexts []journalRow) (map[string]string, error) {
+	if len(contexts) == 0 {
+		return map[string]string{}, nil
+	}
+
+	const chunkSize = 80
+	hints := map[string]string{}
+	for start := 0; start < len(contexts); start += chunkSize {
+		end := start + chunkSize
+		if end > len(contexts) {
+			end = len(contexts)
+		}
+		chunk := contexts[start:end]
+
+		var clause strings.Builder
+		args := make([]any, 0, 2+len(chunk)*3)
+		args = append(args, company, company)
+		clause.WriteString(`
+SELECT IFNULL(period, ''), voucher_date, IFNULL(voucher_no, ''), IFNULL(TRIM(counterparty), ''), IFNULL(TRIM(account_name), ''), IFNULL(TRIM(summary), '')
+FROM journal
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND (
+`)
+		for i, row := range chunk {
+			if i > 0 {
+				clause.WriteString(" OR ")
+			}
+			clause.WriteString("(IFNULL(period, '') = ? AND voucher_date = ? AND IFNULL(voucher_no, '') = ?)")
+			args = append(args, row.Period, row.VoucherDate, row.VoucherNo)
+		}
+		clause.WriteString(")")
+
+		rows, err := db.QueryContext(ctx, clause.String(), args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var period, voucherDate, voucherNo, rawCounterparty, accountName, summary string
+			if scanErr := rows.Scan(&period, &voucherDate, &voucherNo, &rawCounterparty, &accountName, &summary); scanErr != nil {
+				continue
+			}
+			hint, _ := normalizeCounterparty(rawCounterparty, accountName, summary)
+			if hint == "" || hint == "未识别往来单位" {
+				continue
+			}
+			key := voucherContextKey(period, voucherDate, voucherNo)
+			if _, exists := hints[key]; !exists {
+				hints[key] = hint
+			}
+		}
+		_ = rows.Close()
+	}
+	return hints, nil
 }
 
 func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
@@ -497,8 +653,10 @@ func extractCompanyName(summary string) string {
 	if text == "" {
 		return ""
 	}
-	if matched := companyNamePattern.FindString(trimEntityNoise(text)); matched != "" {
-		return matched
+	candidates := make([]string, 0, 8)
+	trimmed := trimEntityNoise(text)
+	for _, matched := range companyNamePattern.FindAllString(trimmed, -1) {
+		candidates = append(candidates, matched)
 	}
 	separators := []string{"_", "-", "－", "—", ":", "：", "/", "／", "(", ")", "（", "）"}
 	for _, sep := range separators {
@@ -511,10 +669,26 @@ func extractCompanyName(summary string) string {
 			continue
 		}
 		if strings.Contains(part, "公司") || strings.Contains(part, "中心") || strings.Contains(part, "事务所") {
-			return part
+			candidates = append(candidates, part)
 		}
 	}
-	return ""
+	best := ""
+	bestLen := 0
+	for _, candidate := range candidates {
+		candidate = cleanEntity(candidate)
+		if candidate == "" {
+			continue
+		}
+		candidateLen := len([]rune(normalizedKey(candidate)))
+		if candidateLen < 6 {
+			continue
+		}
+		if best == "" || candidateLen < bestLen {
+			best = candidate
+			bestLen = candidateLen
+		}
+	}
+	return best
 }
 
 func isExplicitOffsetRow(summary string, debit, credit float64) bool {
@@ -551,15 +725,15 @@ func cleanEntity(name string) string {
 		return ""
 	}
 	if matched := companyNamePattern.FindString(name); matched != "" {
-		name = matched
+		name = trimEntityNoise(strings.TrimSpace(matched))
 	}
 	return name
 }
 
 func normalizedKey(name string) string {
 	name = cleanEntity(name)
-	name = strings.ReplaceAll(name, " ", "")
-	return strings.ToLower(name)
+	replacer := strings.NewReplacer(" ", "", "\t", "", "\n", "", "（", "", "）", "", "(", "", ")", "", "-", "", "_", "", ",", "", "，", "", ".", "", "。", "")
+	return strings.ToLower(replacer.Replace(strings.TrimSpace(name)))
 }
 
 func mustParseDate(v string) time.Time {
@@ -596,7 +770,7 @@ var meaninglessEntityPattern = regexp.MustCompile(`^(?:单位|客户|供应商|�
 
 func trimEntityNoise(name string) string {
 	name = strings.TrimSpace(name)
-	prefixes := []string{"收到", "转账", "支付", "付款", "付", "为", "向", "给", "预提成本", "冲销", "冲回", "结转"}
+	prefixes := []string{"收到", "转账", "支付", "付款", "付", "为", "向", "给", "预提成本", "冲销", "冲回", "结转", "购买", "采购", "购入", "购买了", "采购了", "代付", "代收"}
 	suffixes := []string{"发票", "服务", "服务费", "转账", "结算款", "款"}
 	changed := true
 	for changed {

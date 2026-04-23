@@ -211,6 +211,8 @@ def normalize_exposed_fields(data):
         "hr_breakdown": data.get("hr_breakdown"),
         "arithmetic_checks": data.get("arithmetic_checks"),
         "intent_trace": data.get("intent_trace"),
+        "tax_inclusion": data.get("tax_inclusion"),
+        "tax_inclusion_note": data.get("tax_inclusion_note"),
     }
     data["exposed_fields"] = exposed
     return data
@@ -259,6 +261,59 @@ def build_host_summary_contract(payload, query):
     if payload.get("answer_method") == "llm_payload" or not payload.get("success"):
         return None
 
+    query_spec = data.get("query_spec") or {}
+    query_family = str(query_spec.get("query_family") or "").strip()
+    asked_topic = str(data.get("asked_topic") or "").strip()
+    if query_family == "contract_dimension":
+        entity = str(
+            data.get("entity")
+            or data.get("counterparty")
+            or data.get("name")
+            or ""
+        ).strip()
+        contract = {
+            "kind": "contract_dimension",
+            "entity": entity,
+            "role": data.get("role"),
+            "period": data.get("period"),
+            "asked_topic": asked_topic or "generic",
+            "contracts": data.get("contracts") or [],
+            "cash_view": data.get("cash_view") or data.get("money_view") or {},
+            "book_view": data.get("book_view") or data.get("account_view") or {},
+            "source_tables": data.get("source_tables") or [],
+            "source_note": data.get("source_note") or "",
+            "source_documents": data.get("source_documents") or [],
+            "safe_to_quote_message": True,
+        }
+        if "sub_period" in data:
+            contract["sub_period"] = data.get("sub_period")
+        if "sub_period_receipts" in data:
+            contract["sub_period_receipts"] = data.get("sub_period_receipts")
+        return contract
+
+    if query_family == "core_metric" and str(data.get("source_priority") or "").strip() == "contract_first":
+        requested_metrics = data.get("requested_metrics") or []
+        if isinstance(requested_metrics, tuple):
+            requested_metrics = list(requested_metrics)
+        if not isinstance(requested_metrics, list):
+            requested_metrics = []
+        contract_summary = data.get("contract_summary") or {}
+        contract = {
+            "kind": "contract_aggregate",
+            "entity": str(contract_summary.get("entity") or data.get("entity") or "").strip(),
+            "period": data.get("period"),
+            "metric": data.get("metric"),
+            "requested_metrics": requested_metrics,
+            "cash_view": data.get("money_view") or {},
+            "book_view": data.get("account_view") or {},
+            "contract_summary": contract_summary,
+            "source_tables": data.get("source_tables") or [],
+            "source_note": data.get("source_note") or "",
+            "source_documents": data.get("source_documents") or [],
+            "safe_to_quote_message": True,
+        }
+        return contract
+
     total_amount = first_float(
         data.get("amount"),
         data.get("total"),
@@ -298,6 +353,30 @@ def build_boss_reply(payload, query):
     data = payload.get("data") or {}
     msg = payload.get("message") or ""
     summary_contract = build_host_summary_contract(payload, query)
+    tax_inclusion = str(data.get("tax_inclusion") or "").strip()
+    tax_inclusion_note = str(data.get("tax_inclusion_note") or "").strip()
+    source_note = str(data.get("source_note") or "").strip()
+
+    def append_tax_note(reason):
+        reason = str(reason or "").strip()
+        if not tax_inclusion_note:
+            return reason
+        if tax_inclusion_note in reason:
+            return reason
+        if not reason:
+            return tax_inclusion_note
+        return f"{reason} {tax_inclusion_note}"
+
+    def append_source_note(reason, source_hint=None):
+        reason = str(reason or "").strip()
+        note = str(source_hint or source_note or "").strip()
+        if not note:
+            return reason
+        if note in reason:
+            return reason
+        if not reason:
+            return note
+        return f"{reason} {note}"
 
     requested_metrics = data.get("requested_metrics") or []
     if isinstance(requested_metrics, tuple):
@@ -323,6 +402,163 @@ def build_boss_reply(payload, query):
             "建议": "如果还要继续判断这些回款对应哪些月份收入，请再追问应收配对或历史回款归属。",
         }
 
+    if summary_contract and summary_contract.get("kind") == "contract_dimension":
+        entity = summary_contract.get("entity") or "该合同主体"
+        period = summary_contract.get("period") or "当前期间"
+        asked_topic = summary_contract.get("asked_topic") or "generic"
+        role = summary_contract.get("role") or ""
+        cash_view = summary_contract.get("cash_view") or {}
+        book_view = summary_contract.get("book_view") or {}
+        contracts = summary_contract.get("contracts") or []
+        source_tables = summary_contract.get("source_tables") or []
+
+        def source_reason(default_reason):
+            if summary_contract.get("source_note"):
+                return append_source_note(default_reason, summary_contract.get("source_note"))
+            if not source_tables:
+                return append_source_note(default_reason)
+            joined = " + ".join(str(item) for item in source_tables if item)
+            if not joined:
+                return append_source_note(default_reason)
+            return append_source_note(f"{default_reason} 本次口径来自 {joined}。")
+
+        if asked_topic == "content":
+            contents = []
+            seen = set()
+            for item in contracts:
+                content = str((item or {}).get("contract_content") or "").strip()
+                if not content or content in seen:
+                    continue
+                seen.add(content)
+                contents.append(content)
+            joined = "；".join(contents) if contents else "暂无明确合同内容"
+            return {
+                "结论": f"{entity}匹配到的合同内容：{joined}。",
+                "原因": source_reason("这是直接从合同台账命中的合同内容，不再通过普通往来或流水摘要二次猜测。"),
+                "建议": "如果还要看某一份合同的营收、回款或成本，再补充年份或月份即可。",
+            }
+
+        if asked_topic == "profit":
+            if role == "mixed_contract":
+                received = float(first_float(cash_view.get("received_amount"), 0) or 0)
+                paid = float(first_float(cash_view.get("cash_paid_amount"), 0) or 0)
+                revenue = float(first_float(book_view.get("revenue_settlement"), 0) or 0)
+                cost = float(first_float(book_view.get("cost_settlement"), 0) or 0)
+                return {
+                    "结论": f"{entity}{period}先看现金口径：净回款 {received - paid:.2f} 元；再看经营口径：合同利润 {revenue - cost:.2f} 元。",
+                    "原因": source_reason("合同利润和净回款都直接来自合同维度结果，优先使用 fin_fund_income 与 fin_cost_settlements，不退回普通往来口径。"),
+                    "建议": "如果要继续拆利润差异，可以再追问具体是哪些合同或哪几个月形成的成本。",
+                }
+            received = float(first_float(cash_view.get("received_amount"), 0) or 0)
+            settlement = float(first_float(book_view.get("settlement_amount"), 0) or 0)
+            invoice = float(first_float(book_view.get("invoice_amount"), 0) or 0)
+            if role == "customer_contract":
+                return {
+                    "结论": f"{entity}{period}当前合同台账只匹配到收入/回款，暂不能直接给完整合同利润；现金口径到账 {received:.2f} 元，经营口径结算 {settlement:.2f} 元、开票 {invoice:.2f} 元。",
+                    "原因": source_reason("老板口径下，合同利润必须优先基于 fin_fund_income + fin_cost_settlements；当前未匹配到合同成本时，宿主不能擅自用普通利润口径替代。"),
+                    "建议": "如果要形成完整合同利润，请继续补该主体对应的合同成本或供应商合同匹配。",
+                }
+            paid = float(first_float(cash_view.get("cash_paid_amount"), 0) or 0)
+            contract_cost = float(first_float(book_view.get("contract_cost"), 0) or 0)
+            return {
+                "结论": f"{entity}{period}这是供应商合同，只有成本没有营收；现金口径付款 {paid:.2f} 元，经营口径合同成本 {contract_cost:.2f} 元。",
+                "原因": source_reason("供应商合同不应被宿主误总结成营收或利润。"),
+                "建议": "如需完整利润，请改查对应客户合同或混合合同主体。",
+            }
+
+        if asked_topic in ("revenue", "receipts", "generic"):
+            received = float(first_float(cash_view.get("received_amount"), 0) or 0)
+            settlement = float(first_float(book_view.get("settlement_amount"), book_view.get("revenue_settlement"), 0) or 0)
+            invoice = float(first_float(book_view.get("invoice_amount"), 0) or 0)
+            if summary_contract.get("sub_period") and summary_contract.get("sub_period_receipts") is not None:
+                return {
+                    "结论": f"{entity}{period}累计合同回款 {received:.2f} 元，其中 {summary_contract.get('sub_period')} 到账 {float(summary_contract.get('sub_period_receipts') or 0):.2f} 元；经营口径合同结算 {settlement:.2f} 元，开票 {invoice:.2f} 元。",
+                    "原因": source_reason("合同回款与子期间到账都直接引用合同维度拆分结果，不再混回普通往来累计口径。"),
+                    "建议": "如果还要看对应合同内容或未回款部分，可以继续追问具体合同和月份。",
+                }
+            return {
+                "结论": f"{entity}{period}先看现金口径：合同到账 {received:.2f} 元；再看经营口径：合同结算 {settlement:.2f} 元，开票 {invoice:.2f} 元。",
+                "原因": source_reason("合同营收优先引用 fin_fund_income，不再退回普通往来收款或总账收入口径。"),
+                "建议": "如果你还要看合同利润或合同成本，可以直接继续追问。",
+            }
+
+        if asked_topic in ("cost", "payments"):
+            paid = float(first_float(cash_view.get("cash_paid_amount"), 0) or 0)
+            contract_cost = float(first_float(book_view.get("contract_cost"), book_view.get("cost_settlement"), 0) or 0)
+            return {
+                "结论": f"{entity}{period}先看现金口径：合同付款 {paid:.2f} 元；再看经营口径：合同成本 {contract_cost:.2f} 元。",
+                "原因": source_reason("合同成本优先引用 fin_cost_settlements，不再退回普通供应商付款统计。"),
+                "建议": "如果还要判断是否已经开票或是否形成应付，请继续追问合同应付或发票状态。",
+            }
+
+    if summary_contract and summary_contract.get("kind") == "contract_aggregate":
+        period = summary_contract.get("period") or "当前期间"
+        requested = summary_contract.get("requested_metrics") or []
+        if isinstance(requested, tuple):
+            requested = list(requested)
+        if not isinstance(requested, list):
+            requested = []
+        metric = str(summary_contract.get("metric") or "").strip()
+        cash_view = summary_contract.get("cash_view") or {}
+        book_view = summary_contract.get("book_view") or {}
+        source_tables = summary_contract.get("source_tables") or []
+
+        def source_reason(default_reason):
+            if summary_contract.get("source_note"):
+                return append_source_note(default_reason, summary_contract.get("source_note"))
+            if not source_tables:
+                return append_source_note(default_reason)
+            joined = " + ".join(str(item) for item in source_tables if item)
+            if not joined:
+                return append_source_note(default_reason)
+            return append_source_note(f"{default_reason} 本次口径来自 {joined}。")
+
+        requested_set = {str(item).strip() for item in requested if str(item).strip()}
+        if not requested_set and metric:
+            requested_set.add(metric)
+
+        if requested_set == {"收入"}:
+            received = float(first_float(cash_view.get("到账"), cash_view.get("回款"), 0) or 0)
+            revenue = float(first_float(book_view.get("营收"), 0) or 0)
+            invoice = float(first_float(book_view.get("已开票"), 0) or 0)
+            return {
+                "结论": f"{period}先看合同现金口径：合同到账 {received:.2f} 元；再看合同经营口径：合同营收 {revenue:.2f} 元，已开票 {invoice:.2f} 元。",
+                "原因": source_reason("老板汇总问题已优先走合同收入汇总，不回退普通收入表或银行流水汇总。"),
+                "建议": "如果要继续看合同利润或未回款部分，可以继续追问利润、应收或具体客户/项目。",
+            }
+
+        if requested_set == {"成本"}:
+            paid = float(first_float(cash_view.get("付款"), 0) or 0)
+            cost = float(first_float(book_view.get("合同成本"), 0) or 0)
+            return {
+                "结论": f"{period}先看合同现金口径：合同付款 {paid:.2f} 元；再看合同经营口径：合同成本 {cost:.2f} 元。",
+                "原因": source_reason("老板汇总问题已优先走合同成本汇总，不回退普通供应商付款统计。"),
+                "建议": "如果还要核对应付、发票或供应商分布，可以继续追问成本构成或合同应付。",
+            }
+
+        if requested_set == {"利润"}:
+            cash_net = float(first_float(cash_view.get("净现金"), 0) or 0)
+            received = float(first_float(cash_view.get("回款"), 0) or 0)
+            paid = float(first_float(cash_view.get("付款"), 0) or 0)
+            profit = float(first_float(book_view.get("利润"), 0) or 0)
+            return {
+                "结论": f"{period}先看合同现金口径：净现金 {cash_net:.2f} 元（回款 {received:.2f} 元，付款 {paid:.2f} 元）；再看合同经营口径：合同利润 {profit:.2f} 元。",
+                "原因": source_reason("老板汇总问题已优先走合同收入+成本汇总，利润不再退回普通利润表口径。"),
+                "建议": "如果要继续拆利润差异，可以再追问回款、付款或具体合同清单。",
+            }
+
+        received = float(first_float(cash_view.get("回款"), cash_view.get("到账"), 0) or 0)
+        paid = float(first_float(cash_view.get("付款"), 0) or 0)
+        cash_net = float(first_float(cash_view.get("净现金"), received - paid) or 0)
+        revenue = float(first_float(book_view.get("营收"), 0) or 0)
+        cost = float(first_float(book_view.get("合同成本"), 0) or 0)
+        profit = float(first_float(book_view.get("利润"), 0) or 0)
+        return {
+            "结论": f"{period}先看合同现金口径：回款 {received:.2f} 元、付款 {paid:.2f} 元、净现金 {cash_net:.2f} 元；再看合同经营口径：营收 {revenue:.2f} 元、合同成本 {cost:.2f} 元、利润 {profit:.2f} 元。",
+            "原因": source_reason("老板汇总问题已优先走合同汇总表，不回退普通核心指标口径。"),
+            "建议": "如果还要继续拆客户、项目或月份，请继续追问更细的合同维度问题。",
+        }
+
     metric = data.get("metric")
     period = data.get("period") or "当前期间"
     if len(requested_metrics) > 1 and "money_view" in data and "account_view" in data:
@@ -336,19 +572,23 @@ def build_boss_reply(payload, query):
         profit = float(account_view.get("账面利润", 0))
         return {
             "结论": f"{period}先看现金口径：实际到账 {cash_in:.2f} 元、实际支出 {cash_out:.2f} 元、净增加 {cash_net:.2f} 元；再看经营口径：收入 {revenue:.2f} 元、成本及费用 {cost:.2f} 元、利润 {profit:.2f} 元。",
-            "原因": "默认先展示现金收付，再补经营确认结果，避免把到账/付款和经营利润混成一个口径。",
+            "原因": append_tax_note("默认先展示现金收付，再补经营确认结果，避免把到账/付款和经营利润混成一个口径。"),
             "建议": "如果要继续追差异，请直接问利润和现金流为什么不一致。",
         }
     if metric and "money_value" in data and "account_value" in data:
         return {
             "结论": f"{period}{metric}：现金口径 {float(data.get('money_value', 0)):.2f} 元，经营口径 {float(data.get('account_value', 0)):.2f} 元。",
-            "原因": "两边差异通常来自确认时点、预提和冲回。",
+            "原因": append_source_note(append_tax_note("两边差异通常来自确认时点、预提和冲回。")),
             "建议": "优先盯回款与大额支出节奏，避免下月利润波动。",
         }
     if metric and "account_value" in data:
+        if tax_inclusion == "journal_entry_gross_amount_default":
+            reason = "当前结果只落在经营口径，且经营口径来自序时账汇总。"
+        else:
+            reason = "当前结果只落在经营口径；若该问题走双视角，会先展示现金口径，再补经营口径。"
         return {
             "结论": f"{period}{metric}约 {float(data.get('account_value', 0)):.2f} 元。",
-            "原因": "当前结果只落在经营口径；若该问题走双视角，会先展示现金口径，再补经营口径。",
+            "原因": append_source_note(append_tax_note(reason)),
             "建议": "如果要继续核对现金收付，请直接追问到账、付款或现金流。",
         }
 
@@ -358,20 +598,20 @@ def build_boss_reply(payload, query):
         top_amount = float(suppliers[0].get("out_amount", 0)) if suppliers else 0
         return {
             "结论": f"{period}外部供应商付款共 {data.get('count', 0)} 家，合计 {float(data.get('total', 0)):.2f} 元。",
-            "原因": f"已按期间内银行实际付款统计，并剔除员工、内部往来、税费和手续费等非供应商项；付款额最高的是 {top} {top_amount:.2f} 元。",
+            "原因": append_source_note(f"已按期间内银行实际付款统计，并剔除员工、内部往来、税费和手续费等非供应商项；付款额最高的是 {top} {top_amount:.2f} 元。"),
             "建议": "优先核对前五大供应商付款、发票和应付冲销是否一致。",
         }
 
     if "total" in data and "period" in data:
         return {
             "结论": f"{data.get('period')} 核心金额约 {float(data.get('total', 0)):.2f} 元。",
-            "原因": msg,
+            "原因": append_source_note(msg),
             "建议": "建议结合回款、应收应付和税额一起看，不单看一个数字。",
         }
 
     return {
         "结论": msg,
-        "原因": "本次结果来自财务引擎规则计算。",
+        "原因": append_source_note("本次结果来自财务引擎规则计算。"),
         "建议": "如需更细，请指定对象 + 月份 + 指标。",
     }
 
@@ -397,11 +637,14 @@ def build_structured_response(payload, query):
             "trace": True,
             "answer_method": True,
             "llm_fallback": True,
+            "tax_disclosure": True,
             "exposed_fields": [
                 "dual_perspective",
                 "hr_breakdown",
                 "arithmetic_checks",
                 "intent_trace",
+                "tax_inclusion",
+                "tax_inclusion_note",
             ],
         },
     }

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS balance_detail (
     company TEXT,
     year INTEGER,
     period TEXT,
+    opening_period TEXT,
     account_code TEXT,
     account_name TEXT,
     account_level INTEGER DEFAULT 1,
@@ -78,6 +79,60 @@ CREATE TABLE IF NOT EXISTS bank_statement (
     file_version INTEGER DEFAULT 1,
     imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS fin_contracts (
+    contract_id TEXT PRIMARY KEY,
+    customer_name TEXT NOT NULL,
+    contract_content TEXT,
+    contract_start_date TEXT,
+    contract_end_date TEXT,
+    settlement_cycle TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS fin_revenue_settlements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    quantity DECIMAL(18,2),
+    settlement_amount DECIMAL(18,2) NOT NULL,
+    is_invoiced TEXT,
+    invoice_amount DECIMAL(18,2),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS fin_cost_settlements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    source_report_type TEXT,
+    source_sheet_name TEXT,
+    quantity TEXT,
+    settlement_amount DECIMAL(18,2) NOT NULL,
+    is_invoiced TEXT,
+    invoice_amount DECIMAL(18,2),
+    paid_amount DECIMAL(18,2),
+    account_code TEXT,
+    contract_start_date TEXT,
+    contract_end_date TEXT,
+    settlement_cycle TEXT,
+    settlement_unit_price TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS fin_fund_income (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    source_report_type TEXT,
+    source_sheet_name TEXT,
+    quantity TEXT,
+    settlement_amount DECIMAL(18,2),
+    received_amount DECIMAL(18,2),
+    is_invoiced TEXT,
+    invoice_amount DECIMAL(18,2),
+    contract_start_date TEXT,
+    contract_end_date TEXT,
+    settlement_cycle TEXT,
+    settlement_unit_price TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS table_idempotency_policies (
     table_name TEXT PRIMARY KEY,
     update_mode TEXT NOT NULL CHECK (update_mode IN ('full_replace', 'incremental_latest')),
@@ -85,12 +140,29 @@ CREATE TABLE IF NOT EXISTS table_idempotency_policies (
     enabled INTEGER NOT NULL DEFAULT 1,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS meta_table_comments (
+    table_name TEXT PRIMARY KEY,
+    comment TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS meta_column_comments (
+    table_name TEXT NOT NULL,
+    column_name TEXT NOT NULL,
+    comment TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (table_name, column_name)
+);
 CREATE INDEX IF NOT EXISTS idx_balance_sheet_period ON balance_sheet(company, period);
 CREATE INDEX IF NOT EXISTS idx_balance_sheet_account ON balance_sheet(company, period, account_name);
 CREATE INDEX IF NOT EXISTS idx_income_statement_period ON income_statement(company, period);
 CREATE INDEX IF NOT EXISTS idx_balance_detail_period ON balance_detail(company, period);
 CREATE INDEX IF NOT EXISTS idx_journal_date ON journal(company, voucher_date);
 CREATE INDEX IF NOT EXISTS idx_bank_statement_date ON bank_statement(company, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_bank_statement_company_date_credit ON bank_statement(company, transaction_date, credit_amount);
+CREATE INDEX IF NOT EXISTS idx_fin_contracts_name ON fin_contracts(customer_name, contract_content);
+CREATE INDEX IF NOT EXISTS idx_fin_revenue_settlements_contract_period ON fin_revenue_settlements(contract_id, year_month);
+CREATE INDEX IF NOT EXISTS idx_fin_cost_settlements_contract_period ON fin_cost_settlements(contract_id, year_month);
+CREATE INDEX IF NOT EXISTS idx_fin_fund_income_contract_period ON fin_fund_income(contract_id, year_month);
 CREATE INDEX IF NOT EXISTS idx_table_idempotency_enabled ON table_idempotency_policies(enabled);
 CREATE TABLE IF NOT EXISTS dimensions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
