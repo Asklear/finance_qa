@@ -281,6 +281,7 @@ def build_host_summary_contract(payload, query):
             "cash_view": data.get("cash_view") or data.get("money_view") or {},
             "book_view": data.get("book_view") or data.get("account_view") or {},
             "source_tables": data.get("source_tables") or [],
+            "source_summary": data.get("source_summary") or "",
             "source_note": data.get("source_note") or "",
             "source_documents": data.get("source_documents") or [],
             "safe_to_quote_message": True,
@@ -308,6 +309,7 @@ def build_host_summary_contract(payload, query):
             "book_view": data.get("account_view") or {},
             "contract_summary": contract_summary,
             "source_tables": data.get("source_tables") or [],
+            "source_summary": data.get("source_summary") or "",
             "source_note": data.get("source_note") or "",
             "source_documents": data.get("source_documents") or [],
             "safe_to_quote_message": True,
@@ -355,7 +357,7 @@ def build_boss_reply(payload, query):
     summary_contract = build_host_summary_contract(payload, query)
     tax_inclusion = str(data.get("tax_inclusion") or "").strip()
     tax_inclusion_note = str(data.get("tax_inclusion_note") or "").strip()
-    source_note = str(data.get("source_note") or "").strip()
+    source_note = str(data.get("source_summary") or data.get("source_note") or "").strip()
 
     def append_tax_note(reason):
         reason = str(reason or "").strip()
@@ -413,8 +415,8 @@ def build_boss_reply(payload, query):
         source_tables = summary_contract.get("source_tables") or []
 
         def source_reason(default_reason):
-            if summary_contract.get("source_note"):
-                return append_source_note(default_reason, summary_contract.get("source_note"))
+            if summary_contract.get("source_summary") or summary_contract.get("source_note"):
+                return append_source_note(default_reason, summary_contract.get("source_summary") or summary_contract.get("source_note"))
             if not source_tables:
                 return append_source_note(default_reason)
             joined = " + ".join(str(item) for item in source_tables if item)
@@ -504,8 +506,8 @@ def build_boss_reply(payload, query):
         source_tables = summary_contract.get("source_tables") or []
 
         def source_reason(default_reason):
-            if summary_contract.get("source_note"):
-                return append_source_note(default_reason, summary_contract.get("source_note"))
+            if summary_contract.get("source_summary") or summary_contract.get("source_note"):
+                return append_source_note(default_reason, summary_contract.get("source_summary") or summary_contract.get("source_note"))
             if not source_tables:
                 return append_source_note(default_reason)
             joined = " + ".join(str(item) for item in source_tables if item)

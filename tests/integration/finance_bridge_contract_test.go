@@ -469,7 +469,7 @@ cmd="${1:-}"
 shift || true
 if [[ "$cmd" == "query" ]]; then
   cat <<'JSON'
-{"success":true,"message":"2026-01~2026-03 老板口径先看合同/项目汇总：营收 12976135.11 元。补充合同现金到账 8031718.17 元，已开票 8165893.84 元。","answer_method":"sql","data":{"period":"2026-01~2026-03","metric":"收入","requested_metrics":["收入"],"source_priority":"contract_first","source_tables":["tenant_uhub.fin_contracts","tenant_uhub.fin_fund_income"],"money_view":{"说明":"合同现金口径","到账":8031718.17},"account_view":{"说明":"合同经营口径","营收":12976135.11,"已开票":8165893.84},"contract_summary":{"scope":"company","contract_count":18,"revenue_settlement":12976135.11,"revenue_received":8031718.17,"invoice_amount":8165893.84,"coverage":{"收入":true}},"source_note":"来源：《优集资金收入计算表-副本.xlsx》的【25年Q4收入明细】和【26年Q1收入明细】；补充参考：《合同信息表》","query_spec":{"query_family":"core_metric","metric_kind":"revenue","prefer_contract_aggregate":true}},"executed_sql":["SELECT aggregate revenue"],"calculation_logs":["contract-aggregate-revenue-ok"]}
+{"success":true,"message":"2026-01~2026-03 老板口径先看合同/项目汇总：营收 12976135.11 元。补充合同现金到账 8031718.17 元，已开票 8165893.84 元。","answer_method":"sql","data":{"period":"2026-01~2026-03","metric":"收入","requested_metrics":["收入"],"source_priority":"contract_first","source_tables":["tenant_uhub.fin_contracts","tenant_uhub.fin_fund_income"],"money_view":{"说明":"合同现金口径","到账":8031718.17},"account_view":{"说明":"合同经营口径","营收":12976135.11,"已开票":8165893.84},"contract_summary":{"scope":"company","contract_count":18,"revenue_settlement":12976135.11,"revenue_received":8031718.17,"invoice_amount":8165893.84,"coverage":{"收入":true}},"source_summary":"来源：《优集资金收入计算表-副本.xlsx》的【25年Q4收入明细】和【26年Q1收入明细】；补充参考：《合同信息表》","source_note":"来源：《优集资金收入计算表-副本.xlsx》的【25年Q4收入明细】和【26年Q1收入明细】；补充参考：《合同信息表》","query_spec":{"query_family":"core_metric","metric_kind":"revenue","prefer_contract_aggregate":true}},"executed_sql":["SELECT aggregate revenue"],"calculation_logs":["contract-aggregate-revenue-ok"]}
 JSON
   exit 0
 fi
@@ -503,6 +503,9 @@ exit 2
 	contract := mustMapMap(t, payload, "host_summary_contract")
 	if kind := contract["kind"]; kind != "contract_aggregate" {
 		t.Fatalf("host_summary_contract.kind should be contract_aggregate, got %v", kind)
+	}
+	if got := contract["source_summary"]; got != "来源：《优集资金收入计算表-副本.xlsx》的【25年Q4收入明细】和【26年Q1收入明细】；补充参考：《合同信息表》" {
+		t.Fatalf("host_summary_contract.source_summary = %v", got)
 	}
 
 	bossReply := mustMapMap(t, payload, "boss_reply")

@@ -56,6 +56,7 @@ func (e *Engine) annotateSourceAttribution(spec QuerySpec, result Result) Result
 		}
 	}
 	result.Data["source_note"] = sourceNote
+	result.Data["source_summary"] = sourceNote
 
 	if !strings.Contains(result.Message, "来源：") {
 		result.Message = strings.TrimSpace(result.Message) + "\n" + sourceNote

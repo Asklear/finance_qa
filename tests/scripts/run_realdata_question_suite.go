@@ -31,6 +31,7 @@ type suiteRow struct {
 	HasSQL    bool
 	HasLogs   bool
 	Message   string
+	Source    string
 }
 
 func main() {
@@ -109,6 +110,7 @@ func main() {
 			HasSQL:    len(res.ExecutedSQL) > 0,
 			HasLogs:   len(res.CalculationLogs) > 0,
 			Message:   strings.ReplaceAll(res.Message, "\n", " "),
+			Source:    support.BuildSourceSummary(res.Data, res.Message),
 		}
 		if row.Success {
 			passCount++
@@ -133,10 +135,10 @@ func main() {
 	fmt.Fprintf(f, "- 公司: `%s`\n", *company)
 	fmt.Fprintf(f, "- 结果概览: %d/%d 成功\n\n", passCount, len(rows))
 	fmt.Fprintln(f, "## 汇总表\n")
-	fmt.Fprintln(f, "| ID | 问题 | success | 方法 | SQL过程 | 计算过程 | 耗时(ms) |")
-	fmt.Fprintln(f, "|---:|---|:---:|:---:|:---:|:---:|---:|")
+	fmt.Fprintln(f, "| ID | 问题 | success | 方法 | SQL过程 | 计算过程 | 耗时(ms) | 来源 |")
+	fmt.Fprintln(f, "|---:|---|:---:|:---:|:---:|:---:|---:|---|")
 	for _, row := range rows {
-		fmt.Fprintf(f, "| %d | %s | %s | %s | %s | %s | %d |\n",
+		fmt.Fprintf(f, "| %d | %s | %s | %s | %s | %s | %d | %s |\n",
 			row.ID,
 			strings.ReplaceAll(row.Question, "|", "\\|"),
 			boolMark(row.Success),
@@ -144,6 +146,7 @@ func main() {
 			boolMark(row.HasSQL),
 			boolMark(row.HasLogs),
 			row.ElapsedMS,
+			strings.ReplaceAll(emptyDash(row.Source), "|", "\\|"),
 		)
 	}
 
@@ -155,6 +158,7 @@ func main() {
 		fmt.Fprintf(f, "- elapsed_ms: `%d`\n", row.ElapsedMS)
 		fmt.Fprintf(f, "- executed_sql_present: `%t`\n", row.HasSQL)
 		fmt.Fprintf(f, "- calculation_logs_present: `%t`\n", row.HasLogs)
+		fmt.Fprintf(f, "- 来源: %s\n", emptyDash(row.Source))
 		fmt.Fprintf(f, "- 回答: %s\n\n", row.Message)
 	}
 

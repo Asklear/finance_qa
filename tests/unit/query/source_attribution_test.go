@@ -1,6 +1,7 @@
 package query_test
 
 import (
+	"strings"
 	"testing"
 
 	"financeqa/internal/query"
@@ -67,6 +68,18 @@ func TestCompanyAggregateMetricPrimarySourceTablesPreferMetricTableOverContractD
 	if res.Data["supporting_source_partitions"] != nil {
 		t.Fatalf("supporting_source_partitions should be nil for revenue-only aggregate, got %#v", res.Data["supporting_source_partitions"])
 	}
+
+	sourceSummary, _ := res.Data["source_summary"].(string)
+	if sourceSummary == "" {
+		t.Fatalf("source_summary missing: %#v", res.Data["source_summary"])
+	}
+	sourceNote, _ := res.Data["source_note"].(string)
+	if sourceSummary != sourceNote {
+		t.Fatalf("source_summary = %q, want match source_note %q", sourceSummary, sourceNote)
+	}
+	if sourceSummary == "" || !containsAll(sourceSummary, "优集资金收入计算表-副本.xlsx", "25年Q4收入明细") {
+		t.Fatalf("source_summary should expose concrete workbook lineage, got %q", sourceSummary)
+	}
 }
 
 func extractSourcePartitionsForTest(t *testing.T, v any) []map[string]any {
@@ -88,4 +101,16 @@ func extractSourcePartitionsForTest(t *testing.T, v any) []map[string]any {
 		out = append(out, row)
 	}
 	return out
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }
