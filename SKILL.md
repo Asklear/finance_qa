@@ -9,7 +9,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 0. 契约版本
 
-1. `skill_contract_version`: `2026-04-23.2`
+1. `skill_contract_version`: `2026-04-24.1`
 2. `bridge_protocol_version`: `v2`
 3. 按需附录：`docs/SKILL_APPENDIX_FULL.md`
 
@@ -75,10 +75,14 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `data.query_pipeline`
    - `data.source_plan`
    - `data.fact_sets`
+   - `data.source_catalog`
    - `data.source_note`
    - `data.source_documents`
    - `data.primary_source_tables`
    - `data.supporting_source_documents`
+   - `data.extraction_errors`
+   - `data.contract_fallback_reason`
+   - `data.contract_fallback_target`
    - `data.tax_inclusion`
    - `data.tax_inclusion_note`
    - `bridge_meta`
@@ -86,8 +90,10 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
 7. 若 `success=false` 或 `answer_method=llm_payload`：
-   - 立即调用 `finance-host-data`
+   - 如果当前结果来自 `finance-query`，立即调用 `finance-host-data`
    - 让宿主 LLM 基于 `data.llm_payload` 继续判断
+   - 如果当前结果已经来自 `finance-host-data` 且存在 `data.extraction_errors`，说明宿主数据包提取不完整；此时不能再把半截 `llm_payload` 当完整事实总结给老板
+   - 应明确提示“宿主数据包提取不完整，需要先修复库表/字段再重试”
 8. 若存在 `data.tax_inclusion` / `data.tax_inclusion_note`：
    - 宿主摘要时必须保留这条口径提示
    - 不能把序时账汇总金额改写成“不含税”或“默认税后”
@@ -105,6 +111,13 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 4. CLI 非 0 退出码不等于没有结果：
    - 必须优先解析 `stdout` JSON
    - 再看 exit code
+5. 若存在 `data.contract_fallback_reason`：
+   - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
+   - 宿主必须保留“已回退到财务账/流水口径”的事实
+   - 不能把回退后的金额继续表述成合同台账原生结果
+6. 若存在 `data.extraction_errors`：
+   - 说明 `finance-host-data` 或自动 fallback 的宿主数据包提取不完整
+   - 宿主不能把 `data.llm_payload` 视为完整证据继续生成确定性结论
 
 ## 5. 老板问答规则
 
@@ -112,6 +125,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 如果老板在问整公司或区间汇总的 `收入 / 营收 / 成本 / 利润 / 销售额`，先尝试 `fin_contracts + fin_fund_income + fin_cost_settlements`
    - 合同/项目汇总能回答时，优先按老板口径返回合同营收、合同成本、合同利润；可补充合同回款/开票
    - 只有合同/项目汇总表答不全时，才回退到“先现金、再经营/财务”
+   - 一旦发生回退，宿主要明确说明“合同台账当前不能直接回答，以下改按财务账/流水口径回答”，不能静默换口径
    - 银行流水 / 实际到账 / 实际支出 / 净增加 / 回款 这类现金问题，不要强行先走合同汇总
    - `利润` 默认按 `收入 - 成本及费用 + 营业外收入 - 营业外支出`
    - 如果老板明确问 `净利润`，再单独按净利润回答，不要和“利润”混说
@@ -137,6 +151,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 客户合同默认先答“现金口径：到账/回款”，再答“财务口径：合同台账结算/开票”
    - 供应商合同默认先答“现金口径：实际付款”，再答“财务口径：合同成本”
    - 混合合同也要先现金、再财务，不能把两个口径揉成一段
+   - 如果合同台账当前不能直接回答，要保留 `data.contract_fallback_reason`，并显式说明已回退到财务账/流水口径
    - 合同优先关键词、合同来源表映射都应视为可配置规则，不要假设是写死常量
 8. 证据不足：
    - 直接说“目前库里还不能硬判”
