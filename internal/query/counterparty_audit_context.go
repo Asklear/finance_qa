@@ -55,6 +55,8 @@ func buildCounterpartyAuditContext(question, entity, from, to string, snap count
 		resultData: map[string]any{
 			"entity":            entity,
 			"role":              role,
+			"period_from":       from,
+			"period_to":         to,
 			"bank_in":           round2(snap.BankIn),
 			"bank_out":          round2(snap.BankOut),
 			"revenue_net":       round2(snap.RevenueNet),
@@ -66,6 +68,7 @@ func buildCounterpartyAuditContext(question, entity, from, to string, snap count
 			"comparison_basis":  snap.ComparisonBasis,
 			"evidence":          evidence,
 			"tax_breakdown":     taxReport,
+			"source_tables":     sourceTablesForCounterparty(q),
 			"tax_basis": map[string]any{
 				"cash_receipts":      "gross_bank_cash",
 				"book_revenue":       "net_of_output_vat",
@@ -75,7 +78,20 @@ func buildCounterpartyAuditContext(question, entity, from, to string, snap count
 			},
 		},
 	}
+	if isCounterpartyClassificationQuestion(q) {
+		ctx.resultData["source_primary_tables"] = []string{"fin_journal", "fin_bank_statement"}
+	}
 	if usedRetro {
+		retroFrom := from[:4] + "-01"
+		ctx.periodLabel = displayPeriod(retroFrom, to)
+		ctx.receiptPeriodLabel = displayReceiptPeriodLabel(q, retroFrom, to)
+		ctx.resultData["period_from"] = retroFrom
+		ctx.resultData["period_to"] = to
+		ctx.resultData["query_spec_overrides"] = map[string]any{
+			"period_from": retroFrom,
+			"period_to":   to,
+			"time_scope":  string(TimeScopeYearToDate),
+		}
 		ctx.logs = append(ctx.logs, fmt.Sprintf("[年度回溯] %s 当月无记录，已回溯到 %s~%s", entity, from[:4]+"-01", to))
 	}
 	return ctx

@@ -3,7 +3,7 @@ package query
 func defaultRuleConfig() RuleConfig {
 	cfg := RuleConfig{
 		GenericMetricStopwords: []string{
-			"收入", "营收", "销售额",
+			"收入", "营收", "销售额", "GMV", "gmv",
 			"成本", "总成本", "人力成本", "工资成本", "薪酬成本",
 			"工资", "社保", "公积金",
 			"利润", "毛利", "净利",
@@ -14,7 +14,7 @@ func defaultRuleConfig() RuleConfig {
 			"销项税", "销项税额", "进项税", "进项税额", "税额",
 			"应收", "应付", "应收账款", "应付账款",
 			"现金流", "流水", "回款", "到账", "收款", "付款",
-			"经营状况", "指标", "核心指标", "月度经营",
+			"经营状况", "经营概览", "经营概况", "经营总览", "概览", "概况", "总览", "指标", "核心指标", "月度经营",
 		},
 		IntentARAPKeywords: []string{
 			"应收", "应付", "账款", "往来款",
@@ -41,7 +41,7 @@ func defaultRuleConfig() RuleConfig {
 			"宿主llm", "hostllm", "原始数据", "全量财报", "财报原始", "llm数据包",
 		},
 		IntentMonthlySummaryKeywords: []string{
-			"概括", "总结", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额",
+			"概括", "总结", "概览", "概况", "总览", "经营概览", "经营概况", "经营总览", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额",
 		},
 		FallbackMonthlyExpenseKeywords: []string{
 			"整体支出", "总支出", "全部支出", "支出汇总",
@@ -78,8 +78,9 @@ func defaultRuleConfig() RuleConfig {
 		RoleMixedMinPositiveRoles: 2,
 		RoleMinPrimaryScore:       0.5,
 		RoleMinConfidence:         0.0,
+		ReconciliationResidualGapEscalationAmount: 100000,
 		ContractPriorityKeywordLexicon: []string{
-			"内容", "结算", "到账", "回款", "收款", "付款", "支付", "成本", "收入", "营收", "销售额", "利润", "支出", "开票", "执行",
+			"内容", "结算", "到账", "回款", "收款", "付款", "支付", "成本", "收入", "营收", "销售额", "GMV", "gmv", "利润", "支出", "开票", "执行", "客户", "供应商",
 		},
 		ContractSourceTableLexicon: map[string][]string{
 			"default":           {"tenant_uhub.fin_contracts", "tenant_uhub.fin_fund_income"},
@@ -89,7 +90,7 @@ func defaultRuleConfig() RuleConfig {
 			"contract_content":  {"tenant_uhub.fin_contracts"},
 		},
 		ContractSummaryKeywordLexicon: []string{
-			"收入", "营收", "销售额", "成本", "利润",
+			"收入", "营收", "销售额", "GMV", "gmv", "成本", "利润",
 		},
 		ContractCashFallbackLexicon: []string{
 			"银行", "银行卡", "流水", "现金流", "净现金流", "净增加", "净流入", "净流出",
@@ -109,6 +110,19 @@ func defaultRuleConfig() RuleConfig {
 			"net_profit":            {"净利润"},
 			"income_tax":            {"所得税费用"},
 		},
+		HRBreakdownAccountCodeLexicon: map[string][]string{
+			"wage":    {"66020101", "66022301"},
+			"social":  {"66020102", "66022302"},
+			"housing": {"66020103", "66022303"},
+		},
+		HRCashBankAccountPrefixLexicon:  []string{"1001", "1002"},
+		HRPayrollLiabilityPrefixLexicon: []string{"2211"},
+		HRPayrollLiabilityNameLexicon:   []string{"应付职工薪酬", "应付薪酬"},
+		HRCategoryKeywordLexicon: map[string][]string{
+			"wage":    {"工资", "薪酬"},
+			"social":  {"社保", "社保扣款"},
+			"housing": {"公积金"},
+		},
 		IntentKeywordLexicon: map[string][]string{
 			string(IntentARAPQuery):             {"应收", "应付", "账款", "往来款"},
 			routerGroupHRCost:                   {"人力成本", "工资成本", "薪酬成本", "应付职工薪酬"},
@@ -117,19 +131,19 @@ func defaultRuleConfig() RuleConfig {
 			string(IntentFallback):              {"健康度", "健康", "怎么样", "供应商多少", "多少供应商", "供应商有多少", "人力成本", "工资成本", "薪酬成本", "应付职工薪酬", "整体支出", "总支出", "全部支出"},
 			string(IntentAnalysis):              {"分析", "评分", "评价", "风险", "分析下"},
 			string(IntentHostPayload):           {"宿主llm", "hostllm", "原始数据", "全量财报", "财报原始", "llm数据包"},
-			string(IntentMonthlySummary):        {"概括", "总结", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额"},
+			string(IntentMonthlySummary):        {"概括", "总结", "概览", "概况", "总览", "经营概览", "经营概况", "经营总览", "利润", "指标", "经营状况", "收入", "支出", "支出汇总", "报销汇总", "成本", "总成本", "费用总额"},
 			string(IntentLargeTransactionQuery): {"最大", "单笔", "流入对手方", "流出对手方"},
 			string(IntentIdentityQuery):         {"是谁", "身份", "干嘛的", "哪里的", "谁是"},
 			string(IntentPrecise):               {"期末", "余额", "是多少", "查询余额", "还有多少"},
 		},
 		MetricKeywordLexicon: map[string][]string{
-			metricKeyRevenue: {"收入", "营收", "销售额"},
+			metricKeyRevenue: {"收入", "营收", "销售额", "GMV", "gmv"},
 			metricKeyCost:    {"成本"},
 			metricKeyProfit:  {"利润"},
 		},
 		HRBreakdownKeywordLexicon:                 []string{"工资", "社保", "公积金", "分别", "拆分", "拆开", "明细", "构成"},
 		SupplierPaymentExcludeNameLexicon:         []string{"暂收款", "暂付款", "汇划收入", "中间业务收入", "手续费", "利息收入", "利息"},
-		CounterpartyClassificationQuestionLexicon: []string{"成本还是收入", "是成本还是收入", "供应商付款还是预收款", "客户还是供应商"},
+		CounterpartyClassificationQuestionLexicon: []string{"成本还是收入", "是成本还是收入", "供应商付款还是预收款", "客户还是供应商", "混合往来", "更像客户", "更像供应商", "客户、供应商还是混合往来", "客户,供应商还是混合往来"},
 		ProfitSingleViewBlockKeywordLexicon:       []string{"现金流", "回款", "到账", "银行卡", "差异", "为什么"},
 		CounterpartyRoleLexicon: map[string][]string{
 			string(CounterpartyCustomer): {"应收", "回款", "收款", "结算款", "销售", "收入", "主营业务收入", "营业收入", "预收", "合同资产", "客户", "1122", "1121"},

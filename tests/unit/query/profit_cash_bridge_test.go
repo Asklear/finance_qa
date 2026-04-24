@@ -30,8 +30,8 @@ func TestProfitQueryExposesProfitCashBridge(t *testing.T) {
 	if !ok {
 		t.Fatalf("profit_cash_bridge missing: %+v", res.Data)
 	}
-	if got := bridge["estimated_operating_cash"]; got != float64(300) {
-		t.Fatalf("estimated_operating_cash = %v, want 300", got)
+	if got := bridge["estimated_operating_cash"]; got != float64(240) {
+		t.Fatalf("estimated_operating_cash = %v, want 240", got)
 	}
 	if got := bridge["bank_net_cash"]; got != float64(-300) {
 		t.Fatalf("bank_net_cash = %v, want -300", got)
@@ -48,20 +48,32 @@ func TestProfitQueryExposesProfitCashBridge(t *testing.T) {
 	if got := bridge["tax_timing_adjustment"]; got != float64(5) {
 		t.Fatalf("tax_timing_adjustment = %v, want 5", got)
 	}
-	if got := bridge["adjusted_operating_cash_estimate"]; got != float64(305) {
-		t.Fatalf("adjusted_operating_cash_estimate = %v, want 305", got)
+	if got := bridge["adjusted_operating_cash_estimate"]; got != float64(245) {
+		t.Fatalf("adjusted_operating_cash_estimate = %v, want 245", got)
 	}
-	if got := bridge["non_operating_cash_delta"]; got != float64(-240) {
-		t.Fatalf("non_operating_cash_delta = %v, want -240", got)
+	if got := bridge["non_operating_cash_delta"]; got != float64(-180) {
+		t.Fatalf("non_operating_cash_delta = %v, want -180", got)
 	}
-	if got := bridge["adjusted_operating_cash_gap"]; got != float64(-245) {
-		t.Fatalf("adjusted_operating_cash_gap = %v, want -245", got)
+	if got := bridge["adjusted_operating_cash_gap"]; got != float64(-185) {
+		t.Fatalf("adjusted_operating_cash_gap = %v, want -185", got)
 	}
 	if got := bridge["operating_cash_net"]; got != float64(60) {
 		t.Fatalf("operating_cash_net = %v, want 60", got)
 	}
 	if got := bridge["non_operating_cash_out"]; got != float64(70) {
 		t.Fatalf("non_operating_cash_out = %v, want 70", got)
+	}
+	switch deltaSources := bridge["delta_sources"].(type) {
+	case map[string]any:
+		if got := deltaSources["ar_increase"]; got != "previous_period" {
+			t.Fatalf("delta_sources[ar_increase] = %v, want previous_period", got)
+		}
+	case map[string]string:
+		if got := deltaSources["ar_increase"]; got != "previous_period" {
+			t.Fatalf("delta_sources[ar_increase] = %v, want previous_period", got)
+		}
+	default:
+		t.Fatalf("delta_sources missing: %+v", bridge)
 	}
 }
 
@@ -105,7 +117,7 @@ func TestCoreMetricsSourceAdapterReturnsProfitAndBridgeFacts(t *testing.T) {
 	}
 
 	assertFactValue(t, factSet, "accrual_profit", 100)
-	assertFactValue(t, factSet, "cash_bridge_adjusted_operating_cash", 305)
+	assertFactValue(t, factSet, "cash_bridge_adjusted_operating_cash", 245)
 	assertFactValue(t, factSet, "cash_bridge_bank_net_cash", -300)
 }
 
@@ -149,6 +161,8 @@ func buildProfitBridgeQueryDB(t *testing.T) string {
 		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-03','一、营业收入',1000,1000)`,
 		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-03','减：营业成本',700,700)`,
 		`INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-03','四、净利润（净亏损以"－"号填列）',100,100)`,
+		`INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','160101','电脑',0,0,0,0,0,0)`,
+		`INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-03','160101','电脑',30,0,30,0,30,0)`,
 		`INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','1602','累计折旧',0,0,0,10,0,10)`,
 		`INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-03','1602','累计折旧',0,0,0,20,0,20)`,
 		`INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','1122','应收账款',80,0,130,30,80,0)`,

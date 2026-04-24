@@ -57,6 +57,7 @@ func TestClassifyIntent(t *testing.T) {
 		want     query.Intent
 	}{
 		{question: "2月收入是多少", want: query.IntentMonthlySummary},
+		{question: "2026年第一季度经营概览", want: query.IntentMonthlySummary},
 		{question: "2月增值税是多少", want: query.IntentTaxQuery},
 		{question: "2月应收账款情况", want: query.IntentARAPQuery},
 		{question: "2月账龄分析", want: query.IntentAnalysis},
@@ -69,6 +70,21 @@ func TestClassifyIntent(t *testing.T) {
 		if got := query.ClassifyIntent(tc.question); got != tc.want {
 			t.Fatalf("ClassifyIntent(%q) = %q, want %q", tc.question, got, tc.want)
 		}
+	}
+}
+
+func TestBuildQuerySpecTreatsOverviewAsCoreMetricSummary(t *testing.T) {
+	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+
+	spec := query.BuildQuerySpec("2026年第一季度经营概览", now)
+	if spec.Intent != query.IntentMonthlySummary {
+		t.Fatalf("Intent = %q, want %q", spec.Intent, query.IntentMonthlySummary)
+	}
+	if spec.QueryFamily != query.QueryFamilyCoreMetric {
+		t.Fatalf("QueryFamily = %q, want %q", spec.QueryFamily, query.QueryFamilyCoreMetric)
+	}
+	if spec.PeriodFrom != "2026-01" || spec.PeriodTo != "2026-03" {
+		t.Fatalf("period = %s~%s, want 2026-01~2026-03", spec.PeriodFrom, spec.PeriodTo)
 	}
 }
 

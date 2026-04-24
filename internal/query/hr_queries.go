@@ -23,73 +23,12 @@ func (e *Engine) queryHRBreakdown(from, to string) Result {
 	start := from + "-01"
 	end := monthEndDay(to)
 	periodLabel := displayPeriod(from, to)
+	cfg := getRuleConfig()
 
-	accountSQL := `
-SELECT
-  COALESCE(SUM(CASE WHEN direction='借' AND account_code IN ('66020101','66022301') THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS wage,
-  COALESCE(SUM(CASE WHEN direction='借' AND account_code IN ('66020102','66022302') THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS social,
-  COALESCE(SUM(CASE WHEN direction='借' AND account_code IN ('66020103','66022303') THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS housing
-FROM journal
-WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-  AND voucher_date BETWEEN ? AND ?
-`
-	cashSQL := `
-SELECT
-  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND summary LIKE '%工资%' THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS wage,
-  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND (summary LIKE '%社保%' OR summary LIKE '%社保扣款%') THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS social,
-  COALESCE(SUM(CASE WHEN account_code LIKE '1002%' AND direction='贷' AND summary LIKE '%公积金%' THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS housing,
-  0 AS branch_transfer
-FROM journal
-WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-  AND voucher_date BETWEEN ? AND ?
-`
+	accountSQL := buildHRAccountingQuery(cfg)
+	cashSQL := buildHRCashQuery(cfg, false)
 	if e.journalHasVoucherGrouping() {
-		cashSQL = `
-SELECT
-  COALESCE(SUM(CASE WHEN (base.account_code LIKE '1001%' OR base.account_code LIKE '1002%') AND base.direction='贷' AND (
-    NOT (base.summary LIKE '%分公司%' OR IFNULL(base.counterparty,'') LIKE '%分公司%') AND (
-      base.summary LIKE '%工资%' OR
-      base.summary LIKE '%薪酬%' OR
-      EXISTS (
-        SELECT 1 FROM journal sibling
-        WHERE (? LIKE '%' || sibling.company || '%' OR sibling.company LIKE '%' || ? || '%')
-          AND sibling.voucher_date = base.voucher_date
-          AND sibling.voucher_no = base.voucher_no
-          AND sibling.direction = '借'
-          AND (sibling.account_code LIKE '2211%' OR sibling.account_name LIKE '%应付职工薪酬%')
-          AND (sibling.summary LIKE '%工资%' OR sibling.summary LIKE '%薪酬%' OR sibling.account_name LIKE '%工资%' OR sibling.account_name LIKE '%薪酬%')
-      )
-    )
-  ) THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS wage,
-  COALESCE(SUM(CASE WHEN (base.account_code LIKE '1001%' OR base.account_code LIKE '1002%') AND base.direction='贷' AND (
-    base.summary LIKE '%社保%' OR
-    base.summary LIKE '%社保扣款%' OR
-    EXISTS (
-      SELECT 1 FROM journal sibling
-      WHERE (? LIKE '%' || sibling.company || '%' OR sibling.company LIKE '%' || ? || '%')
-        AND sibling.voucher_date = base.voucher_date
-        AND sibling.voucher_no = base.voucher_no
-        AND sibling.direction = '借'
-        AND (sibling.account_code LIKE '2211%' OR sibling.account_name LIKE '%应付职工薪酬%')
-        AND (sibling.summary LIKE '%社保%' OR sibling.account_name LIKE '%社保%')
-    )
-  ) THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS social,
-  COALESCE(SUM(CASE WHEN (base.account_code LIKE '1001%' OR base.account_code LIKE '1002%') AND base.direction='贷' AND (
-    base.summary LIKE '%公积金%' OR
-    EXISTS (
-      SELECT 1 FROM journal sibling
-      WHERE (? LIKE '%' || sibling.company || '%' OR sibling.company LIKE '%' || ? || '%')
-        AND sibling.voucher_date = base.voucher_date
-        AND sibling.voucher_no = base.voucher_no
-        AND sibling.direction = '借'
-        AND (sibling.account_code LIKE '2211%' OR sibling.account_name LIKE '%应付职工薪酬%')
-        AND (sibling.summary LIKE '%公积金%' OR sibling.account_name LIKE '%公积金%')
-    )
-  ) THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS housing
-FROM journal base
-WHERE (? LIKE '%' || base.company || '%' OR base.company LIKE '%' || ? || '%')
-  AND base.voucher_date BETWEEN ? AND ?
-`
+		cashSQL = buildHRCashQuery(cfg, true)
 	}
 
 	var accountWage, accountSocial, accountHousing float64
@@ -115,13 +54,14 @@ WHERE (? LIKE '%' || base.company || '%' OR base.company LIKE '%' || ? || '%')
 	usedFallback := false
 	if accountTotal == 0 {
 		var fallbackTotal float64
-		e.db.QueryRow(`
+		fallbackSQL := fmt.Sprintf(`
 SELECT COALESCE(SUM(closing_balance), 0)
-FROM balance_sheet
-WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-  AND period = ?
-  AND (account_name LIKE '%应付职工薪酬%' OR account_code LIKE '2211%')
-`, e.Company, e.Company, to).Scan(&fallbackTotal)
+	FROM balance_sheet
+	WHERE (? LIKE '%%' || company || '%%' OR company LIKE '%%' || ? || '%%')
+	  AND period = ?
+	  AND (%s OR %s)
+`, hrKeywordLikeExpr([]string{"account_name"}, cfg.HRPayrollLiabilityNameKeywords()), hrPrefixLikeExpr("account_code", cfg.HRPayrollLiabilityPrefixes()))
+		e.db.QueryRow(fallbackSQL, e.Company, e.Company, to).Scan(&fallbackTotal)
 		if fallbackTotal > 0 {
 			accountTotal = round2(fallbackTotal)
 			usedFallback = true
@@ -166,6 +106,158 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 	e.hrBreakdownCache[cacheKey] = cloneResult(result)
 	e.cacheMu.Unlock()
 	return result
+}
+
+func buildHRAccountingQuery(cfg RuleConfig) string {
+	return fmt.Sprintf(`
+SELECT
+  COALESCE(SUM(CASE WHEN direction='借' AND %s THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS wage,
+  COALESCE(SUM(CASE WHEN direction='借' AND %s THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS social,
+  COALESCE(SUM(CASE WHEN direction='借' AND %s THEN COALESCE(debit_amount,0) ELSE 0 END),0) AS housing
+FROM journal
+WHERE (? LIKE '%%' || company || '%%' OR company LIKE '%%' || ? || '%%')
+  AND voucher_date BETWEEN ? AND ?
+`,
+		hrInExpr("account_code", cfg.HRBreakdownAccountCodes("wage")),
+		hrInExpr("account_code", cfg.HRBreakdownAccountCodes("social")),
+		hrInExpr("account_code", cfg.HRBreakdownAccountCodes("housing")),
+	)
+}
+
+func buildHRCashQuery(cfg RuleConfig, grouped bool) string {
+	bankExpr := hrPrefixLikeExpr("base.account_code", cfg.HRCashBankAccountPrefixes())
+	if !grouped {
+		bankExpr = hrPrefixLikeExpr("account_code", cfg.HRCashBankAccountPrefixes())
+		return fmt.Sprintf(`
+SELECT
+  COALESCE(SUM(CASE WHEN %s AND direction='贷' AND %s THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS wage,
+  COALESCE(SUM(CASE WHEN %s AND direction='贷' AND %s THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS social,
+  COALESCE(SUM(CASE WHEN %s AND direction='贷' AND %s THEN COALESCE(credit_amount,0) ELSE 0 END),0) AS housing,
+  0 AS branch_transfer
+FROM journal
+WHERE (? LIKE '%%' || company || '%%' OR company LIKE '%%' || ? || '%%')
+  AND voucher_date BETWEEN ? AND ?
+`,
+			bankExpr, hrKeywordLikeExpr([]string{"summary", "account_name"}, cfg.HRCategoryKeywords("wage")),
+			bankExpr, hrKeywordLikeExpr([]string{"summary", "account_name"}, cfg.HRCategoryKeywords("social")),
+			bankExpr, hrKeywordLikeExpr([]string{"summary", "account_name"}, cfg.HRCategoryKeywords("housing")),
+		)
+	}
+
+	liabilityExpr := hrJoinOr(
+		hrPrefixLikeExpr("sibling.account_code", cfg.HRPayrollLiabilityPrefixes()),
+		hrKeywordLikeExpr([]string{"sibling.account_name"}, cfg.HRPayrollLiabilityNameKeywords()),
+	)
+	notBranchExpr := fmt.Sprintf("NOT (%s)", hrKeywordLikeExpr([]string{"base.summary", "base.counterparty"}, cfg.InternalPartyOrgSuffixes()))
+
+	categoryExpr := func(category string) string {
+		baseKeywords := hrKeywordLikeExpr([]string{"base.summary", "base.account_name"}, cfg.HRCategoryKeywords(category))
+		siblingKeywords := hrKeywordLikeExpr([]string{"sibling.summary", "sibling.account_name"}, cfg.HRCategoryKeywords(category))
+		return fmt.Sprintf(`(
+    %s AND (
+      %s OR
+      EXISTS (
+        SELECT 1 FROM journal sibling
+        WHERE (? LIKE '%%' || sibling.company || '%%' OR sibling.company LIKE '%%' || ? || '%%')
+          AND sibling.voucher_date = base.voucher_date
+          AND sibling.voucher_no = base.voucher_no
+          AND sibling.direction = '借'
+          AND %s
+          AND %s
+      )
+    )
+  )`, notBranchExpr, baseKeywords, liabilityExpr, siblingKeywords)
+	}
+
+	return fmt.Sprintf(`
+SELECT
+  COALESCE(SUM(CASE WHEN %s AND base.direction='贷' AND %s THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS wage,
+  COALESCE(SUM(CASE WHEN %s AND base.direction='贷' AND %s THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS social,
+  COALESCE(SUM(CASE WHEN %s AND base.direction='贷' AND %s THEN COALESCE(base.credit_amount,0) ELSE 0 END),0) AS housing
+FROM journal base
+WHERE (? LIKE '%%' || base.company || '%%' OR base.company LIKE '%%' || ? || '%%')
+  AND base.voucher_date BETWEEN ? AND ?
+`,
+		bankExpr, categoryExpr("wage"),
+		bankExpr, categoryExpr("social"),
+		bankExpr, categoryExpr("housing"),
+	)
+}
+
+func hrInExpr(column string, values []string) string {
+	if len(values) == 0 {
+		return "1=0"
+	}
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		quoted = append(quoted, hrQuotedLiteral(value))
+	}
+	if len(quoted) == 0 {
+		return "1=0"
+	}
+	return fmt.Sprintf("%s IN (%s)", column, strings.Join(quoted, ","))
+}
+
+func hrPrefixLikeExpr(column string, prefixes []string) string {
+	if len(prefixes) == 0 {
+		return "1=0"
+	}
+	parts := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSpace(prefix)
+		if prefix == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s LIKE %s", column, hrQuotedLiteral(prefix+"%")))
+	}
+	return hrJoinOr(parts...)
+}
+
+func hrKeywordLikeExpr(columns, keywords []string) string {
+	if len(columns) == 0 || len(keywords) == 0 {
+		return "1=0"
+	}
+	parts := make([]string, 0, len(columns)*len(keywords))
+	for _, column := range columns {
+		column = strings.TrimSpace(column)
+		if column == "" {
+			continue
+		}
+		for _, keyword := range keywords {
+			keyword = strings.TrimSpace(keyword)
+			if keyword == "" {
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("%s LIKE %s", column, hrQuotedLiteral("%"+keyword+"%")))
+		}
+	}
+	return hrJoinOr(parts...)
+}
+
+func hrJoinOr(parts ...string) string {
+	filtered := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		filtered = append(filtered, part)
+	}
+	if len(filtered) == 0 {
+		return "1=0"
+	}
+	if len(filtered) == 1 {
+		return filtered[0]
+	}
+	return "(" + strings.Join(filtered, " OR ") + ")"
+}
+
+func hrQuotedLiteral(raw string) string {
+	return "'" + strings.ReplaceAll(raw, "'", "''") + "'"
 }
 
 func (e *Engine) journalHasVoucherGrouping() bool {

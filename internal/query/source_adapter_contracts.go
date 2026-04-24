@@ -26,7 +26,10 @@ func (a *ContractSourceAdapter) Fetch(_ context.Context, spec QuerySpec) (FactSe
 		}
 		return buildContractAggregateFactSet(spec, summary), nil
 	}
-	summary, err := a.engine.collectContractDimensionSummary(spec.OriginalQuestion, spec.Entity, a.engine.getLatestPeriodAnchor())
+	summary, err := a.engine.collectContractDimensionSummaryForPeriod(spec.OriginalQuestion, spec.Entity, spec.PeriodFrom, spec.PeriodTo)
+	if err != nil && (spec.PeriodFrom == "" || spec.PeriodTo == "") {
+		summary, err = a.engine.collectContractDimensionSummary(spec.OriginalQuestion, spec.Entity, a.engine.getLatestContractPeriodAnchor())
+	}
 	if err != nil {
 		return FactSet{}, err
 	}

@@ -58,35 +58,11 @@ func (e *Engine) queryMonthlySummary(question, from, to string) Result {
 
 func buildMonthlyCoreMetricResultData(year, month int, bookSource string, book monthlyBookView, cumulative *accounting.IncomeStatementResult, cash *accounting.CashPerspective, bridgeMap map[string]any) map[string]any {
 	cashFlowSummary := buildCoreMetricCashFlowSummary(cash)
-	return map[string]any{
-		"monthly": map[string]any{
-			"year":                  year,
-			"month":                 month,
-			"source":                bookSource,
-			"revenue":               book.Revenue,
-			"cost":                  book.TotalCost,
-			"profit":                book.Profit,
-			"net_profit":            book.NetProfit,
-			"non_operating_income":  book.NonOperatingIncome,
-			"non_operating_expense": book.NonOperatingExpense,
-			"income_tax":            book.IncomeTax,
-			"operating_profit":      book.OperatingProfit,
-			"cost_detail": map[string]any{
-				"operating_cost":  book.Cost,
-				"tax_surcharge":   book.TaxSurcharge,
-				"selling_expense": book.SellingExpense,
-				"admin_expense":   book.AdminExpense,
-				"finance_expense": book.FinanceExpense,
-			},
-		},
-		"cumulative":         cumulative,
-		"cash_flow":          cash,
-		"profit_cash_bridge": bridgeMap,
-		"现金流入":               cashFlowSummary["现金流入"],
-		"现金流出":               cashFlowSummary["现金流出"],
-		"净现金流":               cashFlowSummary["净现金流"],
-		"财务做账口径(看利润)":        buildCoreMetricBookView(book, book.Profit),
-	}
+	data := buildCoreMetricSharedResultFields(bookSource, book, book.Profit, cashFlowSummary, bridgeMap)
+	data["monthly"] = buildCoreMetricMonthlyPayload(year, month, bookSource, book)
+	data["cumulative"] = cumulative
+	data["cash_flow"] = cash
+	return data
 }
 
 func appendCoreMetricBookSummaryTrace(sqls, logs []string, period, bookSource string) ([]string, []string) {

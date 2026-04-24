@@ -101,7 +101,7 @@ ORDER BY out_amt DESC, counterparty_name
 			evidence = groupedEvidence[name]
 			classification = ClassifyCounterparty(name, evidence)
 			include, reason = e.shouldIncludeSupplierPaymentCounterparty(name, classification)
-			if !include && len(evidence) == 0 && !looksLikeExternalOrganizationCounterparty(name) {
+			if !include && len(evidence) == 0 {
 				evidence = e.collectCounterpartyEvidence(name, from, to)
 				classification = ClassifyCounterparty(name, evidence)
 				include, reason = e.shouldIncludeSupplierPaymentCounterparty(name, classification)

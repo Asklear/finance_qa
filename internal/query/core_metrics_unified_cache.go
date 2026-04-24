@@ -33,6 +33,7 @@ func cloneUnifiedCoreMetrics(in *unifiedCoreMetrics) *unifiedCoreMetrics {
 	out.Guard = cloneMap(in.Guard)
 	if in.Bridge != nil {
 		bridgeCopy := *in.Bridge
+		bridgeCopy.DeltaSources = cloneStringMap(in.Bridge.DeltaSources)
 		out.Bridge = &bridgeCopy
 	}
 	return &out

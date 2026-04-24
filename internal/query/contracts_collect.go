@@ -9,11 +9,15 @@ import (
 
 func (e *Engine) collectContractDimensionSummary(question, entity string, anchor time.Time) (contractDimensionSummary, error) {
 	from, to := extractContractQuestionPeriods(question, anchor)
+	return e.collectContractDimensionSummaryForPeriod(question, entity, from, to)
+}
+
+func (e *Engine) collectContractDimensionSummaryForPeriod(question, entity, from, to string) (contractDimensionSummary, error) {
 	subPeriod, hasSubPeriod := extractReceiptSubPeriod(question, from, to)
 	askedTopic := inferContractAskedTopic(question)
 
-	if strings.TrimSpace(entity) == "" {
-		entity = e.matchContractSubjectByName(question)
+	if resolved := e.resolveContractSubject(question, entity); resolved != "" {
+		entity = resolved
 	}
 	if strings.TrimSpace(entity) == "" {
 		return contractDimensionSummary{}, errors.New("contract entity not found")

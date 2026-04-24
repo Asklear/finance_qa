@@ -68,3 +68,25 @@ func TestBuildCounterpartyReceiptsMessageIncludesHistoricalAndSubPeriodHints(t *
 		t.Fatalf("buildCounterpartyReceiptsMessage() = %q, want %q", got, want)
 	}
 }
+
+func TestBuildCounterpartyAuditContextUsesRetroYearRangeLabels(t *testing.T) {
+	classification := CounterpartyClassification{Role: CounterpartyCustomer}
+	ctx := buildCounterpartyAuditContext(
+		"飞未云科这个主体目前更像客户、供应商还是混合往来？",
+		"飞未云科",
+		"2026-04",
+		"2026-04",
+		counterpartySnapshot{Role: "customer", RevenueNet: 1000},
+		classification,
+		TaxNormalizationReport{},
+		nil,
+		true,
+	)
+
+	if ctx.periodLabel != "2026-01~2026-04" {
+		t.Fatalf("periodLabel = %q, want %q", ctx.periodLabel, "2026-01~2026-04")
+	}
+	if ctx.receiptPeriodLabel != "2026-01~2026-04 " {
+		t.Fatalf("receiptPeriodLabel = %q, want %q", ctx.receiptPeriodLabel, "2026-01~2026-04 ")
+	}
+}

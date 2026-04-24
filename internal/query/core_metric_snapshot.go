@@ -21,19 +21,11 @@ func buildCoreMetricDualSnapshot(question string, spec QuerySpec, coverage coreM
 	periodLabel := unified.Period
 	requestedPeriodLabel := displayPeriod(spec.PeriodFrom, spec.PeriodTo)
 
-	requestedMetrics := detectRequestedMetrics(question)
-	explicitNetProfit := asksExplicitNetProfit(question)
-	if explicitNetProfit {
-		requestedMetrics = []string{"净利润"}
-	}
-	primaryMetric := firstMetricOrDefault(requestedMetrics, detectCoreMetric(question))
-	metric := "核心指标"
-	if len(requestedMetrics) == 1 {
-		metric = primaryMetric
-	}
-	if explicitNetProfit {
-		metric = "净利润"
-	}
+	request := resolveCoreMetricRequest(question, "核心指标")
+	requestedMetrics := request.RequestedMetrics
+	primaryMetric := request.PrimaryMetric
+	metric := request.MetricLabel
+	explicitNetProfit := request.ExplicitNetProfit
 	cashView := accounting.CashPerspective{
 		Description: "现金口径",
 		Income:      dualCash.Income,
@@ -69,23 +61,7 @@ func buildCoreMetricDualSnapshot(question string, spec QuerySpec, coverage coreM
 		msg = fmt.Sprintf("你问的是 %s，但当前账务数据仅到 %s，以下先按 %s 已出账数据回答。\n%s", requestedPeriodLabel, coverage.AvailableTo, periodLabel, msg)
 	}
 
-	summaryPayload := map[string]any{
-		"source":                unified.AccrualFrom,
-		"revenue":               dualAccrual.Revenue,
-		"cost":                  dualAccrual.TotalCost,
-		"profit":                dualAccrual.Profit,
-		"non_operating_income":  dualAccrual.NonOperatingIncome,
-		"non_operating_expense": dualAccrual.NonOperatingExpense,
-		"net_profit":            dualAccrual.NetProfit,
-	}
-	if spec.PeriodFrom == spec.PeriodTo {
-		year, month := parsePeriod(spec.PeriodTo)
-		summaryPayload["year"] = year
-		summaryPayload["month"] = month
-	} else {
-		summaryPayload["from"] = spec.PeriodFrom
-		summaryPayload["to"] = spec.PeriodTo
-	}
+	summaryPayload := buildCoreMetricSummaryPayload(spec.PeriodFrom, spec.PeriodTo, unified.AccrualFrom, dualAccrual)
 
 	data := map[string]any{
 		"period":           periodLabel,
@@ -97,6 +73,7 @@ func buildCoreMetricDualSnapshot(question string, spec QuerySpec, coverage coreM
 		"account_value":    accrualValue,
 		"total":            accrualValue,
 		"data_ready":       true,
+		"source_tables":    sourceTablesForCoreMetric(unified.AccrualFrom, true),
 		"coverage": map[string]any{
 			"requested_from": spec.PeriodFrom,
 			"requested_to":   spec.PeriodTo,
@@ -110,19 +87,14 @@ func buildCoreMetricDualSnapshot(question string, spec QuerySpec, coverage coreM
 		"一致性守卫":              unified.Guard,
 		"range_validation":   unified.AccrualValidation,
 		"profit_cash_bridge": bridgeToMap(unified.Bridge),
-		"metrics": map[string]any{
-			"收入":  round2(dualAccrual.Revenue),
-			"成本":  round2(dualAccrual.TotalCost),
-			"利润":  round2(dualAccrual.Profit),
-			"净利润": round2(dualAccrual.NetProfit),
-		},
-		"monthly":       cloneMap(summaryPayload),
-		"range_summary": cloneMap(summaryPayload),
-		"现金流入":          dualCash.Income,
-		"现金流出":          dualCash.Expense,
-		"净现金流":          dualCash.Net,
-		"cash_flow":     buildCoreMetricCashFlowSummary(&dualCash),
-		"财务做账口径(看利润)":   buildCoreMetricBookView(dualAccrual, displayedBookProfit),
+		"metrics":            buildCoreMetricMetricsMap(dualAccrual),
+		"monthly":            cloneMap(summaryPayload),
+		"range_summary":      cloneMap(summaryPayload),
+		"现金流入":               dualCash.Income,
+		"现金流出":               dualCash.Expense,
+		"净现金流":               dualCash.Net,
+		"cash_flow":          buildCoreMetricCashFlowSummary(&dualCash),
+		"财务做账口径(看利润)":        buildCoreMetricBookView(dualAccrual, displayedBookProfit),
 		"difference_bridge": map[string]any{
 			"利润与现金净额差":     round2(dualAccrual.Profit - dualCash.Net),
 			"收入确认回款时间差":    round2(dualAccrual.Revenue - dualCash.Income),

@@ -6,52 +6,16 @@ func choosePrimaryAndSupportingTables(spec QuerySpec, data map[string]any, table
 	if len(tables) == 0 {
 		return nil, nil
 	}
-
-	switch spec.QueryFamily {
-	case QueryFamilyContractDimension:
-		role := strings.TrimSpace(anyToString(data["role"]))
-		askedTopic := strings.TrimSpace(anyToString(data["asked_topic"]))
-		switch askedTopic {
-		case "content":
-			return filterSourceTables(tables, "fin_contracts"), remainingSourceTables(tables, "fin_contracts")
-		case "revenue", "receipts":
-			return filterSourceTables(tables, "fin_fund_income"), remainingSourceTables(tables, "fin_fund_income")
-		case "cost", "payments":
-			return filterSourceTables(tables, "fin_cost_settlements"), remainingSourceTables(tables, "fin_cost_settlements")
-		case "profit":
-			if role == "mixed_contract" {
-				return filterSourceTables(tables, "fin_fund_income", "fin_cost_settlements"), remainingSourceTables(tables, "fin_fund_income", "fin_cost_settlements")
-			}
-			if role == "customer_contract" {
-				return filterSourceTables(tables, "fin_fund_income"), remainingSourceTables(tables, "fin_fund_income")
-			}
-			return filterSourceTables(tables, "fin_cost_settlements"), remainingSourceTables(tables, "fin_cost_settlements")
-		default:
-			return tables, nil
-		}
-	case QueryFamilyCoreMetric:
-		if strings.TrimSpace(anyToString(data["source_priority"])) == "contract_first" {
-			metric := detectSourceMetric(spec, data)
-			primary := contractAggregateTablesForMetric(metric)
-			return filterSourceTables(tables, primary...), remainingSourceTables(tables, primary...)
-		}
-		accrualSource := detectAccrualSource(data)
-		if strings.Contains(accrualSource, "journal") {
-			return filterSourceTables(tables, "fin_journal"), remainingSourceTables(tables, "fin_journal")
-		}
-		return filterSourceTables(tables, "fin_income_statement"), remainingSourceTables(tables, "fin_income_statement")
-	case QueryFamilyARAP:
-		if strings.Contains(strings.TrimSpace(anyToString(data["source"])), "journal") {
-			return filterSourceTables(tables, "fin_journal"), remainingSourceTables(tables, "fin_journal")
-		}
-		return filterSourceTables(tables, "fin_balance_detail"), remainingSourceTables(tables, "fin_balance_detail")
-	case QueryFamilySupplierPayments:
-		return filterSourceTables(tables, "fin_bank_statement"), remainingSourceTables(tables, "fin_bank_statement")
-	case QueryFamilyHRCost:
-		return filterSourceTables(tables, "fin_journal"), remainingSourceTables(tables, "fin_journal")
-	default:
+	plan := resolveSourceAttributionPlan(spec, data)
+	if len(plan.primaryBaseTables) == 0 {
 		return tables, nil
 	}
+	primary := filterSourceTables(tables, plan.primaryBaseTables...)
+	supporting := filterSourceTables(tables, plan.supportingBaseTables...)
+	if len(primary) == 0 {
+		return tables, nil
+	}
+	return primary, supporting
 }
 
 func filterSourceTables(tables []string, wanted ...string) []string {

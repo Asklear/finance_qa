@@ -33,7 +33,12 @@ LIMIT 1`, amountColumn, companyClause, amountColumn, amountColumn)
 	return Result{
 		Success: true,
 		Message: fmt.Sprintf("%s 最大%s对手方为 [%s]，流水 %.2f 元", from, directionLabel, name, amount),
-		Data:    map[string]any{"counterparty": name, "amount": amount, "direction": directionLabel},
+		Data: map[string]any{
+			"counterparty":  name,
+			"amount":        amount,
+			"direction":     directionLabel,
+			"source_tables": sourceTablesForLargeBankTransaction(),
+		},
 		ExecutedSQL: []string{
 			fmt.Sprintf("queryLargeBankTransactions: %s [args: %v]", sqlTxt, args),
 		},

@@ -1,0 +1,92 @@
+package query
+
+import "time"
+
+type resolvedQueryRouting struct {
+	normalizedQuestion string
+	intent             Intent
+	traceMap           map[string]any
+	spec               QuerySpec
+	entity             string
+	hasRealEntity      bool
+	anchor             time.Time
+	cfg                RuleConfig
+}
+
+func buildIntentTraceMap(intentTrace IntentTrace) map[string]any {
+	return map[string]any{
+		"router_version": intentTrace.RouterVersion,
+		"matched":        append([]string{}, intentTrace.Matched...),
+		"scores":         intentTrace.Scores,
+		"final_intent":   intentTrace.FinalIntent,
+		"confidence":     intentTrace.Confidence,
+	}
+}
+
+func (e *Engine) normalizeQuestionAndResolveCompany(question string) string {
+	q := NormalizeQuestion(question)
+	resolved := ResolveCompanyMention(q, e.available)
+	if resolved != "" && resolved != e.Company {
+		e.Company = resolved
+	}
+	return q
+}
+
+func (e *Engine) resolveQueryEntity(q string, spec QuerySpec) string {
+	entity := spec.Entity
+	if shouldResolveEntityDeeply(spec) {
+		entity = e.extractNamedEntity(q)
+	}
+	return entity
+}
+
+func (e *Engine) applyQueryPriorityAdjustments(q string, intent Intent, spec QuerySpec, entity string, hasRealEntity bool, anchor time.Time) (QuerySpec, string, bool, time.Time) {
+	if intent == IntentIdentityQuery || isCounterpartyClassificationQuestion(q) {
+		return spec, entity, hasRealEntity, anchor
+	}
+	if !e.shouldPrioritizeContractQuery(q, entity, hasRealEntity) {
+		return spec, entity, hasRealEntity, anchor
+	}
+	if matched := e.resolveContractSubject(q, entity); matched != "" {
+		entity = matched
+		spec.Entity = matched
+	}
+	anchor = e.getLatestContractPeriodAnchor()
+	from, to := extractContractQuestionPeriods(q, anchor)
+	subPeriod, _ := extractReceiptSubPeriod(q, from, to)
+	spec.QueryFamily = QueryFamilyContractDimension
+	spec.PeriodFrom = from
+	spec.PeriodTo = to
+	spec.SubPeriod = subPeriod
+	spec.TimeScope = detectTimeScope(q, from, to, anchor)
+	spec.NeedsContractDimension = true
+	spec.PerspectivePolicy = PerspectiveCashThenAccrual
+	spec.PreferContractAggregate = false
+	hasRealEntity = true
+	return spec, entity, hasRealEntity, anchor
+}
+
+func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
+	q := e.normalizeQuestionAndResolveCompany(question)
+	cfg := getRuleConfig()
+	anchor := e.getLatestPeriodAnchor()
+
+	intent, intentTrace := ClassifyIntentV2(q)
+	spec := BuildQuerySpec(q, anchor)
+	entity := e.resolveQueryEntity(q, spec)
+	spec = reconcileQuerySpec(spec, entity, cfg)
+	entity = spec.Entity
+	hasRealEntity := e.isRealBusinessEntity(q, entity)
+	spec, entity, hasRealEntity, anchor = e.applyQueryPriorityAdjustments(q, intent, spec, entity, hasRealEntity, anchor)
+
+	return resolvedQueryRouting{
+		normalizedQuestion: q,
+		intent:             intent,
+		traceMap:           buildIntentTraceMap(intentTrace),
+		spec:               spec,
+		entity:             entity,
+		hasRealEntity:      hasRealEntity,
+		anchor:             anchor,
+		cfg:                cfg,
+	}
+}

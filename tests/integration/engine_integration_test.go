@@ -232,10 +232,28 @@ CREATE TABLE budget (
 CREATE TABLE bank_statement (
   company TEXT,
   transaction_date TEXT,
+  transaction_time TEXT,
+  transaction_type TEXT,
   credit_amount REAL,
   debit_amount REAL,
+  balance REAL,
   counterparty_name TEXT,
+  counterparty_account TEXT,
   summary TEXT
+);
+CREATE TABLE balance_detail (
+  company TEXT,
+  year INTEGER,
+  period TEXT,
+  opening_period TEXT,
+  account_code TEXT,
+  account_name TEXT,
+  opening_debit REAL,
+  opening_credit REAL,
+  current_debit REAL,
+  current_credit REAL,
+  closing_debit REAL,
+  closing_credit REAL
 );
 CREATE TABLE journal (
   company TEXT,
@@ -256,6 +274,52 @@ CREATE TABLE cas_mapping (
   standard_name TEXT NOT NULL,
   category TEXT
 );
+CREATE TABLE fin_contracts (
+  contract_id TEXT PRIMARY KEY,
+  customer_name TEXT,
+  contract_content TEXT,
+  contract_start_date TEXT,
+  contract_end_date TEXT,
+  settlement_cycle TEXT
+);
+CREATE TABLE fin_cost_settlements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id TEXT,
+  year_month TEXT,
+  source_report_type TEXT,
+  source_sheet_name TEXT,
+  quantity TEXT,
+  settlement_amount REAL,
+  is_invoiced TEXT,
+  invoice_amount REAL,
+  paid_amount REAL,
+  account_code TEXT,
+  contract_start_date TEXT,
+  contract_end_date TEXT,
+  settlement_cycle TEXT,
+  settlement_unit_price TEXT
+);
+CREATE TABLE fin_fund_income (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  contract_id TEXT,
+  year_month TEXT,
+  source_report_type TEXT,
+  source_sheet_name TEXT,
+  quantity TEXT,
+  settlement_amount REAL,
+  received_amount REAL,
+  is_invoiced TEXT,
+  invoice_amount REAL,
+  contract_start_date TEXT,
+  contract_end_date TEXT,
+  settlement_cycle TEXT,
+  settlement_unit_price TEXT
+);
+CREATE TABLE meta_table_comments (
+  table_name TEXT PRIMARY KEY,
+  comment TEXT,
+  updated_at TEXT
+);
 
 INSERT INTO cas_mapping VALUES ('1002','银行存款','资产');
 INSERT INTO cas_mapping VALUES ('1122','应收账款','资产');
@@ -274,9 +338,11 @@ INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02',
 INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','管理费用',300,450);
 INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','净利润',700,1050);
 
-INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-10',1000,0,'客户A','回款');
-INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-11',0,300,'供应商B','付款');
-INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-12',500,50,'客户C','手续费');
+INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-10','10:00:00','转账',1000,0,1150,'客户A','ACC-A','回款');
+INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-11','11:00:00','转账',0,300,850,'供应商B','ACC-B','付款');
+INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-12','12:00:00','手续费',500,50,1300,'客户C','ACC-C','手续费');
+
+INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','2026-01','1122','应收账款',1000,0,1200,1000,1200,0);
 
 INSERT INTO journal VALUES ('模拟财务科技有限公司','2026-02','2026-02-15','V001','222101','应交税费-销项税','销项税','贷',130,0,130,'税局');
 INSERT INTO journal VALUES ('模拟财务科技有限公司','2026-02','2026-02-16','V002','222102','应交税费-进项税','进项税','借',20,20,0,'税局');

@@ -44,11 +44,12 @@ WHERE %s
 		Success: true,
 		Message: msg,
 		Data: map[string]any{
-			"output":       output,
-			"input":        input,
-			"total_output": output,
-			"total_input":  input,
-			"net_vat":      output - input,
+			"output":        output,
+			"input":         input,
+			"total_output":  output,
+			"total_input":   input,
+			"net_vat":       output - input,
+			"source_tables": sourceTablesForTaxQuery(),
 		},
 		ExecutedSQL: []string{
 			fmt.Sprintf("queryTax(aggregated): %s [args: %v]", sqlTxt, args),

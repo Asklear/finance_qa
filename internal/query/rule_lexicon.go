@@ -50,6 +50,26 @@ func (cfg RuleConfig) IncomeStatementPatterns(key string) []string {
 	return copyStringSlice(cfg.IncomeStatementItemLexicon[strings.TrimSpace(key)])
 }
 
+func (cfg RuleConfig) HRBreakdownAccountCodes(category string) []string {
+	return copyStringSlice(cfg.HRBreakdownAccountCodeLexicon[strings.TrimSpace(category)])
+}
+
+func (cfg RuleConfig) HRCashBankAccountPrefixes() []string {
+	return copyStringSlice(cfg.HRCashBankAccountPrefixLexicon)
+}
+
+func (cfg RuleConfig) HRPayrollLiabilityPrefixes() []string {
+	return copyStringSlice(cfg.HRPayrollLiabilityPrefixLexicon)
+}
+
+func (cfg RuleConfig) HRPayrollLiabilityNameKeywords() []string {
+	return copyStringSlice(cfg.HRPayrollLiabilityNameLexicon)
+}
+
+func (cfg RuleConfig) HRCategoryKeywords(category string) []string {
+	return copyStringSlice(cfg.HRCategoryKeywordLexicon[strings.TrimSpace(category)])
+}
+
 func (cfg RuleConfig) CounterpartyRoleKeywords(role CounterpartyRole) []string {
 	return copyStringSlice(cfg.CounterpartyRoleLexicon[string(role)])
 }
@@ -64,6 +84,13 @@ func (cfg RuleConfig) InternalPartyOrgSuffixes() []string {
 
 func (cfg RuleConfig) InternalPartyAccountContextKeywords() []string {
 	return copyStringSlice(cfg.InternalPartyAccountContextKeywordLexicon)
+}
+
+func (cfg RuleConfig) ReconciliationResidualGapEscalationThreshold() float64 {
+	if cfg.ReconciliationResidualGapEscalationAmount < 0 {
+		return 0
+	}
+	return cfg.ReconciliationResidualGapEscalationAmount
 }
 
 func (cfg RuleConfig) intentKeywordGroup(group string) []string {

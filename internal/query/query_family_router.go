@@ -3,34 +3,59 @@ package query
 import "strings"
 
 func detectQueryFamily(q string, intent Intent, entity, from, to string, cfg RuleConfig, needsContractDimension bool) QueryFamily {
-	if needsContractDimension {
-		return QueryFamilyContractDimension
+	if family, ok := resolveForcedQueryFamily(needsContractDimension); ok {
+		return family
 	}
-	if strings.Contains(q, "数据出来") {
-		return QueryFamilyReadiness
-	}
-	if shouldUseSupplierPaymentStats(q) {
-		return QueryFamilySupplierPayments
-	}
-	if shouldUseHRBreakdown(q, cfg) {
-		return QueryFamilyHRCost
-	}
-	if intent == IntentARAPQuery || isOpeningPeriodQuestion(q) {
-		return QueryFamilyARAP
-	}
-	if shouldUseReconciliation(q) {
-		return QueryFamilyReconciliation
+	if family, ok := resolveOperationalQueryFamily(q, intent, cfg); ok {
+		return family
 	}
 	hasRealishEntity := isRealishQueryEntity(entity)
-	if isBossAggregateSummaryQuestion(q, entity, from, to, cfg) {
-		return QueryFamilyCoreMetric
+	if family, ok := resolveMetricDrivenQueryFamily(q, entity, from, to, cfg, hasRealishEntity); ok {
+		return family
 	}
-	if isIntervalCoreMetricQuestion(q, entity, hasRealishEntity, from, to) || shouldPreferCoreMetricSummary(q, entity, hasRealishEntity, from, to) {
-		return QueryFamilyCoreMetric
+	return resolveFallbackQueryFamily(intent, hasRealishEntity)
+}
+
+func resolveForcedQueryFamily(needsContractDimension bool) (QueryFamily, bool) {
+	if needsContractDimension {
+		return QueryFamilyContractDimension, true
 	}
-	if hasRealishEntity && containsAny(q, append(metricQuestionKeywords(cfg), "回款", "到账", "收款", "费用", "支出", "付款", "支付")) {
-		return QueryFamilyCounterparty
+	return "", false
+}
+
+func resolveOperationalQueryFamily(q string, intent Intent, cfg RuleConfig) (QueryFamily, bool) {
+	switch {
+	case strings.Contains(q, "数据出来"):
+		return QueryFamilyReadiness, true
+	case shouldUseSupplierPaymentStats(q):
+		return QueryFamilySupplierPayments, true
+	case shouldUseHRBreakdown(q, cfg):
+		return QueryFamilyHRCost, true
+	case intent == IntentARAPQuery || isOpeningPeriodQuestion(q):
+		return QueryFamilyARAP, true
+	case shouldUseReconciliation(q):
+		return QueryFamilyReconciliation, true
+	default:
+		return "", false
 	}
+}
+
+func resolveMetricDrivenQueryFamily(q, entity, from, to string, cfg RuleConfig, hasRealishEntity bool) (QueryFamily, bool) {
+	switch {
+	case isBossAggregateSummaryQuestion(q, entity, from, to, cfg):
+		return QueryFamilyCoreMetric, true
+	case isIntervalCoreMetricQuestion(q, entity, hasRealishEntity, from, to):
+		return QueryFamilyCoreMetric, true
+	case shouldPreferCoreMetricSummary(q, entity, hasRealishEntity, from, to):
+		return QueryFamilyCoreMetric, true
+	case hasRealishEntity && containsAny(q, counterpartyMetricKeywords(cfg)):
+		return QueryFamilyCounterparty, true
+	default:
+		return "", false
+	}
+}
+
+func resolveFallbackQueryFamily(intent Intent, hasRealishEntity bool) QueryFamily {
 	switch intent {
 	case IntentMonthlySummary:
 		return QueryFamilyCoreMetric

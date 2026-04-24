@@ -6,7 +6,8 @@ import (
 )
 
 func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Result {
-	coverage := e.resolveCoreMetricCoverage(from, to)
+	request := resolveCoreMetricRequest(question, metricDisplayName(detectCoreMetric(question)))
+	coverage := e.resolveCoreMetricCoverageForRequest(from, to, request)
 	requestedPeriodLabel := displayPeriod(from, to)
 	if !coverage.HasData {
 		cutoff := coverage.AvailableTo
@@ -65,11 +66,7 @@ func (e *Engine) queryDualPerspectiveForCoreMetric(question, from, to string) Re
 	spec := BuildQuerySpec(question, e.getLatestPeriodAnchor())
 	spec.PeriodFrom = from
 	spec.PeriodTo = to
-	factSet := buildCoreMetricsFactSet(spec, coverage, unified, sqls, logs)
-	if len(factSet.Facts) > 0 && factSet.Facts[0].TracePayload != nil {
-		factSet.Facts[0].TracePayload["result_message"] = snapshot.Message
-		factSet.Facts[0].TracePayload["result_data"] = cloneMap(snapshot.Data)
-	}
+	factSet := attachCoreMetricsSnapshotTrace(buildCoreMetricsFactSet(spec, coverage, unified, sqls, logs), snapshot)
 	data := cloneMap(snapshot.Data)
 	data["fact_sets"] = []FactSet{factSet}
 	result := Result{

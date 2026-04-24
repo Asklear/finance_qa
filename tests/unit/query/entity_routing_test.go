@@ -33,7 +33,7 @@ func TestQueryMonthlyKPIShouldNotBeMisroutedAsMetricEntity(t *testing.T) {
 	}
 }
 
-func TestQueryRealEntityQuestionStillUsesCounterpartyPath(t *testing.T) {
+func TestQueryRealEntityQuestionPrefersContractDimensionWhenContractDataExists(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -45,12 +45,17 @@ func TestQueryRealEntityQuestionStillUsesCounterpartyPath(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "[飞未]") && !strings.Contains(res.Message, "[飞未云科]") && !strings.Contains(res.Message, "[飞未云科(") {
-		t.Fatalf("expected counterparty style response, got: %s", res.Message)
+	if !strings.Contains(res.Message, "先看现金口径") || !strings.Contains(res.Message, "再看财务口径") {
+		t.Fatalf("expected contract-dimension dual view response, got: %s", res.Message)
+	}
+	if spec, ok := res.Data["query_spec"].(map[string]any); ok {
+		if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
+			t.Fatalf("query_spec.query_family = %v, want %v", got, query.QueryFamilyContractDimension)
+		}
 	}
 }
 
-func TestMarchCounterpartyRevenueQuestionDoesNotFallBackToMonthlySummary(t *testing.T) {
+func TestMarchEntityRevenueQuestionPrefersContractDimensionWhenContractDataExists(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -81,17 +86,20 @@ func TestMarchCounterpartyRevenueQuestionDoesNotFallBackToMonthlySummary(t *test
 		t.Fatalf("query failed: %+v", res)
 	}
 	if strings.Contains(res.Message, "月度经营分析") {
-		t.Fatalf("counterparty revenue question should not route to monthly summary: %s", res.Message)
+		t.Fatalf("entity revenue question should not route to monthly summary: %s", res.Message)
 	}
 	if strings.Contains(res.Message, "语义模糊") {
-		t.Fatalf("counterparty revenue question should not fall back to ambiguity: %s", res.Message)
+		t.Fatalf("entity revenue question should not fall back to ambiguity: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "[飞未云科]") && !strings.Contains(res.Message, "[飞未云科(") {
-		t.Fatalf("expected counterparty style response, got: %s", res.Message)
+	if !strings.Contains(res.Message, "合同台账结算") {
+		t.Fatalf("expected contract-dimension response, got: %s", res.Message)
 	}
 	if spec, ok := res.Data["query_spec"].(map[string]any); ok {
-		if got := spec["entity"]; got == "" {
-			t.Fatalf("query_spec.entity should not be empty: %+v", spec)
+		if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
+			t.Fatalf("query_spec.query_family = %v, want %v", got, query.QueryFamilyContractDimension)
+		}
+		if got := spec["entity"]; got != "飞未云科（深圳）技术有限公司" {
+			t.Fatalf("query_spec.entity = %v, want 飞未云科（深圳）技术有限公司", got)
 		}
 	}
 }
@@ -152,16 +160,23 @@ func TestEntityYearCumulativeUsesYearRangeInsteadOfSingleMonth(t *testing.T) {
 		t.Fatalf("query failed: %+v", res)
 	}
 
-	amount, ok := res.Data["amount"].(float64)
+	accountView, ok := res.Data["account_view"].(map[string]any)
 	if !ok {
-		t.Fatalf("missing amount in response: %+v", res.Data)
+		t.Fatalf("missing account_view in response: %+v", res.Data)
 	}
-	// test db has 2026-01 revenue=1200 and 2026-02 revenue=800 for 飞未云科
-	if amount != 2000 {
-		t.Fatalf("want cumulative amount=2000, got=%v message=%s", amount, res.Message)
+	if got := accountView["settlement_amount"]; got != float64(2900) {
+		t.Fatalf("settlement_amount = %v, want 2900", got)
 	}
 	if !strings.Contains(res.Message, "2026-01~2026-03") {
 		t.Fatalf("expected period range in message, got: %s", res.Message)
+	}
+	if spec, ok := res.Data["query_spec"].(map[string]any); ok {
+		if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
+			t.Fatalf("query_spec.query_family = %v, want %v", got, query.QueryFamilyContractDimension)
+		}
+		if got := spec["entity"]; got != "飞未云科（深圳）技术有限公司" {
+			t.Fatalf("query_spec.entity = %v, want 飞未云科（深圳）技术有限公司", got)
+		}
 	}
 }
 
@@ -203,6 +218,17 @@ func TestProfitQuestionUsesCashFirstDualAnswer(t *testing.T) {
 
 func TestRevenueQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	for _, stmt := range []string{`DELETE FROM fin_fund_income`, `DELETE FROM fin_contracts`} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("delete contract seed data failed: %v", err)
+		}
+	}
+
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
@@ -288,6 +314,17 @@ func TestQueryInjectsIntentTraceQuerySpecAndProcessEnvelope(t *testing.T) {
 
 func TestRangeRevenueQuestionsAggregateAcrossPeriods(t *testing.T) {
 	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	for _, stmt := range []string{`DELETE FROM fin_fund_income`, `DELETE FROM fin_contracts`} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("delete contract seed data failed: %v", err)
+		}
+	}
+
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
@@ -668,6 +705,34 @@ func TestEngineUsesConfigurableCounterpartyClassificationKeywords(t *testing.T) 
 	}
 	if !strings.Contains(res.Message, "供应商") {
 		t.Fatalf("custom counterparty classification keyword should use role judgement, got: %s", res.Message)
+	}
+}
+
+func TestCounterpartyClassificationRetroWritesActualRangeIntoQuerySpec(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("飞未云科这个主体目前更像客户、供应商还是混合往来？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "2026-01~2026-03") {
+		t.Fatalf("expected retro range in message, got: %s", res.Message)
+	}
+
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["period_from"]; got != "2026-01" {
+		t.Fatalf("period_from = %v, want 2026-01", got)
+	}
+	if got := spec["period_to"]; got != "2026-03" {
+		t.Fatalf("period_to = %v, want 2026-03", got)
 	}
 }
 
@@ -1189,6 +1254,22 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 			current_amount REAL,
 			cumulative_amount REAL
 		)`,
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -1207,6 +1288,16 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 		 VALUES ('南京优集数据科技有限公司', '2026-01-20', '6401', '主营业务成本', '借', 400, '1月项目成本', '飞未云科', 400, 0)`,
 		`INSERT INTO journal(company, voucher_date, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
 		 VALUES ('南京优集数据科技有限公司', '2026-02-10', '6001', '主营业务收入', '贷', 800, '2月飞未收入确认', '飞未云科', 0, 800)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
+		 VALUES ('C-FW-001', '飞未云科（深圳）技术有限公司', '飞未云科项目-京东价格数据')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
+		 VALUES ('C-FW-002', '飞未云科（深圳）技术有限公司', '飞未云科项目-京东销量数据')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('C-FW-001', '2026-01', 'contract_fund_income', '26年Q1收入明细', 1200, 1200, '是', 1200)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('C-FW-002', '2026-02', 'contract_fund_income', '26年Q1收入明细', 800, 800, '是', 800)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('C-FW-002', '2026-03', 'contract_fund_income', '26年Q1收入明细', 900, 900, '是', 900)`,
 		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount)
 		 VALUES ('南京优集数据科技有限公司', '2026-01', '一、营业收入', 1200, 1200)`,
 		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount)

@@ -93,7 +93,7 @@ func stripQuestionFragments(entity string) string {
 		"这个主体", "更像", "目前", "还是", "请给判断依据", "这笔",
 		"今年", "其中", "一共", "总计", "多少",
 		"回款", "到账", "收款", "付款",
-		"收入", "支出", "费用", "成本", "利润", "营收", "销售额",
+		"收入", "支出", "费用", "成本", "利润", "营收", "销售额", "GMV", "gmv",
 	}
 	for _, token := range noiseTokens {
 		trimmed = strings.ReplaceAll(trimmed, token, "")

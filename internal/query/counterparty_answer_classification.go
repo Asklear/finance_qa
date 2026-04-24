@@ -22,26 +22,32 @@ func tryCounterpartyClassificationAnswer(ctx counterpartyAuditContext) (Result, 
 	reason := strings.Join(reasonParts, "；")
 	switch ctx.role {
 	case "supplier":
+		data := ctx.cloneResultData()
+		data["basis"] = reasonParts
 		return Result{
-			Success: true,
-			Message: fmt.Sprintf("[%s]%s %s 判断为供应商/成本侧往来。%s。", ctx.entity, ctx.roleLabel, ctx.periodLabel, reason),
-			Data: map[string]any{
-				"entity": ctx.entity,
-				"role":   ctx.role,
-				"basis":  reasonParts,
-			},
+			Success:         true,
+			Message:         fmt.Sprintf("[%s]%s %s 判断为供应商/成本侧往来。%s。", ctx.entity, ctx.roleLabel, ctx.periodLabel, reason),
+			Data:            data,
 			ExecutedSQL:     ctx.cloneSQLs(),
 			CalculationLogs: ctx.cloneLogs(),
 		}, true
 	case "customer":
+		data := ctx.cloneResultData()
+		data["basis"] = reasonParts
 		return Result{
-			Success: true,
-			Message: fmt.Sprintf("[%s]%s %s 判断为客户/收入侧往来。%s。", ctx.entity, ctx.roleLabel, ctx.periodLabel, reason),
-			Data: map[string]any{
-				"entity": ctx.entity,
-				"role":   ctx.role,
-				"basis":  reasonParts,
-			},
+			Success:         true,
+			Message:         fmt.Sprintf("[%s]%s %s 判断为客户/收入侧往来。%s。", ctx.entity, ctx.roleLabel, ctx.periodLabel, reason),
+			Data:            data,
+			ExecutedSQL:     ctx.cloneSQLs(),
+			CalculationLogs: ctx.cloneLogs(),
+		}, true
+	case "mixed":
+		data := ctx.cloneResultData()
+		data["basis"] = reasonParts
+		return Result{
+			Success:         true,
+			Message:         fmt.Sprintf("[%s]%s %s 判断为混合往来。%s。", ctx.entity, ctx.roleLabel, ctx.periodLabel, reason),
+			Data:            data,
 			ExecutedSQL:     ctx.cloneSQLs(),
 			CalculationLogs: ctx.cloneLogs(),
 		}, true

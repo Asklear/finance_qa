@@ -3,50 +3,7 @@ package query
 import "strings"
 
 func (e *Engine) collectSourceTables(spec QuerySpec, data map[string]any) []string {
-	if tables := anySourceStringSlice(data["source_tables"]); len(tables) > 0 {
-		return dedupeSourceTables(tables...)
-	}
-
-	switch spec.QueryFamily {
-	case QueryFamilyContractDimension:
-		return dedupeSourceTables(contractSourceTablesFromData(data)...)
-	case QueryFamilyCoreMetric:
-		if strings.TrimSpace(anyToString(data["source_priority"])) == "contract_first" {
-			return dedupeSourceTables(contractAggregateTablesForMetric(detectSourceMetric(spec, data))...)
-		}
-		accrualSource := detectAccrualSource(data)
-		tables := make([]string, 0, 2)
-		switch {
-		case strings.Contains(accrualSource, "journal"):
-			tables = append(tables, "fin_journal")
-		default:
-			tables = append(tables, "fin_income_statement")
-		}
-		if hasCashPerspective(data) {
-			tables = append(tables, "fin_bank_statement")
-		}
-		return dedupeSourceTables(tables...)
-	case QueryFamilySupplierPayments:
-		return []string{"fin_bank_statement"}
-	case QueryFamilyHRCost:
-		return []string{"fin_journal", "fin_bank_statement"}
-	case QueryFamilyARAP:
-		source := strings.TrimSpace(anyToString(data["source"]))
-		if strings.Contains(source, "journal") {
-			return []string{"fin_journal", "fin_balance_detail"}
-		}
-		return []string{"fin_balance_detail"}
-	case QueryFamilyCounterparty:
-		if strings.Contains(strings.TrimSpace(anyToString(data["tax_inclusion"])), "journal") {
-			return []string{"fin_journal", "fin_bank_statement"}
-		}
-		if strings.Contains(spec.NormalizedQuestion, "回款") || strings.Contains(spec.NormalizedQuestion, "到账") || strings.Contains(spec.NormalizedQuestion, "收款") || strings.Contains(spec.NormalizedQuestion, "付款") {
-			return []string{"fin_bank_statement"}
-		}
-		return []string{"fin_journal", "fin_bank_statement"}
-	default:
-		return nil
-	}
+	return resolveSourceAttributionPlan(spec, data).tables
 }
 
 func contractSourceTablesFromData(data map[string]any) []string {

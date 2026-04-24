@@ -6,6 +6,10 @@ import (
 )
 
 func (e *Engine) shouldUseOrchestrator(spec QuerySpec) bool {
+	return shouldUseOrchestratorForSpec(spec)
+}
+
+func shouldUseOrchestratorForSpec(spec QuerySpec) bool {
 	switch spec.QueryFamily {
 	case QueryFamilyContractDimension, QueryFamilySupplierPayments, QueryFamilyReadiness, QueryFamilyCoreMetric:
 		return true

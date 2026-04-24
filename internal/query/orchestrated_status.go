@@ -60,6 +60,13 @@ func composeReadinessResult(frame AnswerFrame) (Result, error) {
 			"fact_sets":      frame.FactSets,
 			"query_pipeline": "orchestrator",
 			"source_plan":    sourceCapabilitiesToStrings(frame.Plan.Capabilities),
+			"source_tables": sourceTablesForReadiness(readinessSummary{
+				JournalRows:      int(anyToFloat64(trace["journal_rows"])),
+				BankRows:         int(anyToFloat64(trace["bank_rows"])),
+				ContractRows:     int(anyToFloat64(trace["contract_rows"])),
+				ContractFundRows: int(anyToFloat64(trace["contract_fund_rows"])),
+				ContractCostRows: int(anyToFloat64(trace["contract_cost_rows"])),
+			}),
 		},
 		ExecutedSQL:     extractFrameTraceStrings(frame.FactSets, "executed_sql"),
 		CalculationLogs: extractFrameTraceStrings(frame.FactSets, "logs"),

@@ -11,36 +11,39 @@ import (
 )
 
 type ProfitCashBridge struct {
-	Company                       string  `json:"company"`
-	Period                        string  `json:"period"`
-	NetProfit                     float64 `json:"net_profit"`
-	Depreciation                  float64 `json:"depreciation"`
-	FixedAssetPurchasePrincipal   float64 `json:"fixed_asset_purchase_principal"`
-	ARIncrease                    float64 `json:"ar_increase"`
-	PrepaymentIncrease            float64 `json:"prepayment_increase"`
-	OtherReceivableIncrease       float64 `json:"other_receivable_increase"`
-	OtherPayableIncrease          float64 `json:"other_payable_increase"`
-	APIncrease                    float64 `json:"ap_increase"`
-	AdvanceReceiptIncrease        float64 `json:"advance_receipt_increase"`
-	PayrollIncrease               float64 `json:"payroll_increase"`
-	TaxBalanceIncrease            float64 `json:"tax_balance_increase"`
-	TaxTimingAdjustment           float64 `json:"tax_timing_adjustment"`
-	EstimatedOperatingCash        float64 `json:"estimated_operating_cash"`
-	AdjustedOperatingCashEstimate float64 `json:"adjusted_operating_cash_estimate"`
-	OperatingCashIn               float64 `json:"operating_cash_in"`
-	OperatingCashOut              float64 `json:"operating_cash_out"`
-	OperatingCashNet              float64 `json:"operating_cash_net"`
-	NonOperatingCashIn            float64 `json:"non_operating_cash_in"`
-	NonOperatingCashOut           float64 `json:"non_operating_cash_out"`
-	NonOperatingCashNet           float64 `json:"non_operating_cash_net"`
-	MixedCashIn                   float64 `json:"mixed_cash_in"`
-	MixedCashOut                  float64 `json:"mixed_cash_out"`
-	MixedCashNet                  float64 `json:"mixed_cash_net"`
-	BankNetCash                   float64 `json:"bank_net_cash"`
-	ExcludedCashNet               float64 `json:"excluded_cash_net"`
-	OperatingCashGap              float64 `json:"operating_cash_gap"`
-	AdjustedOperatingCashGap      float64 `json:"adjusted_operating_cash_gap"`
-	NonOperatingCashDelta         float64 `json:"non_operating_cash_delta"`
+	Company                       string            `json:"company"`
+	Period                        string            `json:"period"`
+	NetProfit                     float64           `json:"net_profit"`
+	Depreciation                  float64           `json:"depreciation"`
+	FixedAssetPurchasePrincipal   float64           `json:"fixed_asset_purchase_principal"`
+	ARIncrease                    float64           `json:"ar_increase"`
+	PrepaymentIncrease            float64           `json:"prepayment_increase"`
+	OtherReceivableIncrease       float64           `json:"other_receivable_increase"`
+	OtherPayableIncrease          float64           `json:"other_payable_increase"`
+	APIncrease                    float64           `json:"ap_increase"`
+	AdvanceReceiptIncrease        float64           `json:"advance_receipt_increase"`
+	PayrollIncrease               float64           `json:"payroll_increase"`
+	TaxBalanceIncrease            float64           `json:"tax_balance_increase"`
+	TaxTimingAdjustment           float64           `json:"tax_timing_adjustment"`
+	EstimatedOperatingCash        float64           `json:"estimated_operating_cash"`
+	AdjustedOperatingCashEstimate float64           `json:"adjusted_operating_cash_estimate"`
+	OperatingCashIn               float64           `json:"operating_cash_in"`
+	OperatingCashOut              float64           `json:"operating_cash_out"`
+	OperatingCashNet              float64           `json:"operating_cash_net"`
+	NonOperatingCashIn            float64           `json:"non_operating_cash_in"`
+	NonOperatingCashOut           float64           `json:"non_operating_cash_out"`
+	NonOperatingCashNet           float64           `json:"non_operating_cash_net"`
+	MixedCashIn                   float64           `json:"mixed_cash_in"`
+	MixedCashOut                  float64           `json:"mixed_cash_out"`
+	MixedCashNet                  float64           `json:"mixed_cash_net"`
+	BankNetCash                   float64           `json:"bank_net_cash"`
+	ExcludedCashNet               float64           `json:"excluded_cash_net"`
+	OperatingCashGap              float64           `json:"operating_cash_gap"`
+	AdjustedOperatingCashGap      float64           `json:"adjusted_operating_cash_gap"`
+	NonOperatingCashDelta         float64           `json:"non_operating_cash_delta"`
+	BankCashGap                   float64           `json:"bank_cash_gap"`
+	AdjustedBankCashGap           float64           `json:"adjusted_bank_cash_gap"`
+	DeltaSources                  map[string]string `json:"delta_sources,omitempty"`
 }
 
 func AnalyzeProfitCashBridge(dbPath, company, period string) (ProfitCashBridge, error) {
@@ -54,8 +57,9 @@ func AnalyzeProfitCashBridge(dbPath, company, period string) (ProfitCashBridge, 
 
 func AnalyzeProfitCashBridgeWithDB(ctx context.Context, db *sql.DB, company, period string) (ProfitCashBridge, error) {
 	bridge := ProfitCashBridge{
-		Company: company,
-		Period:  period,
+		Company:      company,
+		Period:       period,
+		DeltaSources: make(map[string]string),
 	}
 	if db == nil {
 		return bridge, fmt.Errorf("db not available")
@@ -65,43 +69,43 @@ func AnalyzeProfitCashBridgeWithDB(ctx context.Context, db *sql.DB, company, per
 	if err != nil {
 		return bridge, err
 	}
-	depreciation, err := loadPeriodDelta(ctx, db, company, period, "1602", "累计折旧", creditNormal)
+	depreciation, depreciationSource, err := loadPeriodDelta(ctx, db, company, period, "1602", "累计折旧", creditNormal)
 	if err != nil {
 		return bridge, err
 	}
-	fixedAssetPurchasePrincipal, err := loadPeriodDelta(ctx, db, company, period, "1601", "固定资产", debitNormal)
+	fixedAssetPurchasePrincipal, fixedAssetSource, err := loadPeriodDelta(ctx, db, company, period, "1601", "固定资产", debitNormal)
 	if err != nil {
 		return bridge, err
 	}
-	arIncrease, err := loadPeriodDelta(ctx, db, company, period, "1122", "应收账款", debitNormal)
+	arIncrease, arSource, err := loadPeriodDelta(ctx, db, company, period, "1122", "应收账款", debitNormal)
 	if err != nil {
 		return bridge, err
 	}
-	prepaymentIncrease, err := loadPeriodDelta(ctx, db, company, period, "1123", "预付账款", debitNormal)
+	prepaymentIncrease, prepaymentSource, err := loadPeriodDelta(ctx, db, company, period, "1123", "预付账款", debitNormal)
 	if err != nil {
 		return bridge, err
 	}
-	otherReceivableIncrease, err := loadPeriodDelta(ctx, db, company, period, "1221", "其他应收款", debitNormal)
+	otherReceivableIncrease, otherReceivableSource, err := loadPeriodDelta(ctx, db, company, period, "1221", "其他应收款", debitNormal)
 	if err != nil {
 		return bridge, err
 	}
-	otherPayableIncrease, err := loadPeriodDelta(ctx, db, company, period, "2241", "其他应付款", creditNormal)
+	otherPayableIncrease, otherPayableSource, err := loadPeriodDelta(ctx, db, company, period, "2241", "其他应付款", creditNormal)
 	if err != nil {
 		return bridge, err
 	}
-	apIncrease, err := loadPeriodDelta(ctx, db, company, period, "2202", "应付账款", creditNormal)
+	apIncrease, apSource, err := loadPeriodDelta(ctx, db, company, period, "2202", "应付账款", creditNormal)
 	if err != nil {
 		return bridge, err
 	}
-	advanceReceiptIncrease, err := loadPeriodDelta(ctx, db, company, period, "2203", "预收账款", creditNormal)
+	advanceReceiptIncrease, advanceReceiptSource, err := loadPeriodDelta(ctx, db, company, period, "2203", "预收账款", creditNormal)
 	if err != nil {
 		return bridge, err
 	}
-	payrollIncrease, err := loadPeriodDelta(ctx, db, company, period, "2211", "应付职工薪酬", creditNormal)
+	payrollIncrease, payrollSource, err := loadPeriodDelta(ctx, db, company, period, "2211", "应付职工薪酬", creditNormal)
 	if err != nil {
 		return bridge, err
 	}
-	taxBalanceIncrease, err := loadPeriodDelta(ctx, db, company, period, "2221", "应交税费", creditNormal)
+	taxBalanceIncrease, taxBalanceSource, err := loadPeriodDelta(ctx, db, company, period, "2221", "应交税费", creditNormal)
 	if err != nil {
 		return bridge, err
 	}
@@ -118,7 +122,9 @@ func AnalyzeProfitCashBridgeWithDB(ctx context.Context, db *sql.DB, company, per
 		return bridge, err
 	}
 
-	estimated := netProfit + depreciation - arIncrease - prepaymentIncrease - otherPayableIncrease + apIncrease + advanceReceiptIncrease + payrollIncrease
+	// 老板对账口径优先还原“净现金流”，要把经营性往来、税费留抵和固定资产购置都纳入桥接，
+	// 避免把利润桥只算成“过滤后的经营现金”。
+	estimated := netProfit + depreciation - arIncrease - prepaymentIncrease - otherReceivableIncrease + apIncrease + advanceReceiptIncrease + payrollIncrease + taxBalanceIncrease - fixedAssetPurchasePrincipal
 	bridge.NetProfit = round2(netProfit)
 	bridge.Depreciation = round2(depreciation)
 	bridge.FixedAssetPurchasePrincipal = round2(fixedAssetPurchasePrincipal)
@@ -146,7 +152,20 @@ func AnalyzeProfitCashBridgeWithDB(ctx context.Context, db *sql.DB, company, per
 	bridge.ExcludedCashNet = round2(bridge.NonOperatingCashNet + bridge.MixedCashNet)
 	bridge.OperatingCashGap = round2(bridge.OperatingCashNet - estimated)
 	bridge.AdjustedOperatingCashGap = round2(bridge.OperatingCashNet - bridge.AdjustedOperatingCashEstimate)
+	bridge.BankCashGap = round2(bridge.BankNetCash - bridge.EstimatedOperatingCash)
+	bridge.AdjustedBankCashGap = round2(bridge.BankNetCash - bridge.AdjustedOperatingCashEstimate)
 	bridge.NonOperatingCashDelta = bridge.OperatingCashGap
+	bridge.DeltaSources["depreciation"] = depreciationSource
+	bridge.DeltaSources["fixed_asset_purchase_principal"] = fixedAssetSource
+	bridge.DeltaSources["ar_increase"] = arSource
+	bridge.DeltaSources["prepayment_increase"] = prepaymentSource
+	bridge.DeltaSources["other_receivable_increase"] = otherReceivableSource
+	bridge.DeltaSources["other_payable_increase"] = otherPayableSource
+	bridge.DeltaSources["ap_increase"] = apSource
+	bridge.DeltaSources["advance_receipt_increase"] = advanceReceiptSource
+	bridge.DeltaSources["payroll_increase"] = payrollSource
+	bridge.DeltaSources["tax_balance_increase"] = taxBalanceSource
+	bridge.DeltaSources["tax_timing_adjustment"] = "vat_balance_delta"
 	return bridge, nil
 }
 
@@ -185,65 +204,167 @@ LIMIT 1
 	return round2(metrics.Profit), nil
 }
 
-func loadPeriodDelta(ctx context.Context, db *sql.DB, company, period, rootCode, accountName string, normal accountNormal) (float64, error) {
-	current, err := loadClosingNet(ctx, db, company, period, rootCode, accountName, normal)
+func loadPeriodDelta(ctx context.Context, db *sql.DB, company, period, rootCode, accountName string, normal accountNormal) (float64, string, error) {
+	current, currentFound, err := loadBalanceNet(ctx, db, company, period, rootCode, accountName, normal, balanceNetClosing)
 	if err != nil {
-		return 0, err
+		return 0, "", err
+	}
+	opening, openingFound, err := loadBalanceNet(ctx, db, company, period, rootCode, accountName, normal, balanceNetOpening)
+	if err != nil {
+		return 0, "", err
+	}
+	openingPeriodReady, err := balanceDetailOpeningPeriodAvailable(ctx, db, company, period, rootCode, accountName)
+	if err != nil {
+		return 0, "", err
+	}
+	if currentFound && openingFound && openingPeriodReady {
+		return round2(current - opening), "opening_balance", nil
 	}
 	prevPeriod, err := previousPeriod(period)
-	if err != nil {
-		return 0, err
+	if err == nil {
+		previous, previousFound, loadErr := loadBalanceNet(ctx, db, company, prevPeriod, rootCode, accountName, normal, balanceNetClosing)
+		if loadErr != nil {
+			return 0, "", loadErr
+		}
+		if currentFound && previousFound {
+			return round2(current - previous), "previous_period", nil
+		}
 	}
-	previous, err := loadClosingNet(ctx, db, company, prevPeriod, rootCode, accountName, normal)
-	if err != nil {
-		return 0, err
+	if currentFound {
+		return round2(current), "closing_balance_only", nil
 	}
-	return round2(current - previous), nil
+	return 0, "no_data", nil
 }
 
-func loadClosingNet(ctx context.Context, db *sql.DB, company, period, rootCode, accountName string, normal accountNormal) (float64, error) {
+type balanceNetKind int
+
+const (
+	balanceNetOpening balanceNetKind = iota + 1
+	balanceNetClosing
+)
+
+func loadBalanceNet(ctx context.Context, db *sql.DB, company, period, rootCode, accountName string, normal accountNormal, kind balanceNetKind) (float64, bool, error) {
+	debitColumn := "closing_debit"
+	creditColumn := "closing_credit"
+	columnLabel := "closing"
+	if kind == balanceNetOpening {
+		debitColumn = "opening_debit"
+		creditColumn = "opening_credit"
+		columnLabel = "opening"
+	}
 	var closingDebit, closingCredit sql.NullFloat64
 	var found int
-	err := db.QueryRowContext(ctx, `
-SELECT COALESCE(closing_debit, 0), COALESCE(closing_credit, 0), 1
-FROM balance_detail
-WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-  AND period = ?
-  AND account_code = ?
-LIMIT 1
-`, company, company, period, rootCode).Scan(&closingDebit, &closingCredit, &found)
+	err := db.QueryRowContext(ctx, balanceNetQuery(debitColumn, creditColumn, "1", "AND account_code = ?\nLIMIT 1"), company, company, period, rootCode).Scan(&closingDebit, &closingCredit, &found)
 	if err != nil && err != sql.ErrNoRows {
-		return 0, fmt.Errorf("query balance_detail %s closing: %w", rootCode, err)
+		return 0, false, fmt.Errorf("query balance_detail %s %s: %w", rootCode, columnLabel, err)
 	}
 	if found == 0 {
-		err = db.QueryRowContext(ctx, `
-SELECT COALESCE(SUM(closing_debit), 0), COALESCE(SUM(closing_credit), 0), COUNT(1)
-FROM balance_detail
-WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
-  AND period = ?
-  AND account_name = ?
-`, company, company, period, accountName).Scan(&closingDebit, &closingCredit, &found)
+		err = db.QueryRowContext(ctx, balanceNetQuery("SUM("+debitColumn+")", "SUM("+creditColumn+")", "COUNT(1)", "AND account_code LIKE ?"), company, company, period, rootCode+"%").Scan(&closingDebit, &closingCredit, &found)
 		if err != nil {
-			return 0, fmt.Errorf("query balance_detail by name %s closing: %w", accountName, err)
+			return 0, false, fmt.Errorf("query balance_detail by prefix %s %s: %w", rootCode, columnLabel, err)
 		}
 	}
 	if found == 0 {
-		return 0, nil
+		err = db.QueryRowContext(ctx, balanceNetQuery("SUM("+debitColumn+")", "SUM("+creditColumn+")", "COUNT(1)", "AND account_name = ?"), company, company, period, accountName).Scan(&closingDebit, &closingCredit, &found)
+		if err != nil {
+			return 0, false, fmt.Errorf("query balance_detail by name %s %s: %w", accountName, columnLabel, err)
+		}
+	}
+	if found == 0 {
+		return 0, false, nil
 	}
 	switch normal {
 	case creditNormal:
-		return round2(closingCredit.Float64 - closingDebit.Float64), nil
+		return round2(closingCredit.Float64 - closingDebit.Float64), true, nil
 	default:
-		return round2(closingDebit.Float64 - closingCredit.Float64), nil
+		return round2(closingDebit.Float64 - closingCredit.Float64), true, nil
 	}
 }
 
+func balanceNetQuery(debitExpr, creditExpr, foundExpr, selector string) string {
+	return strings.Join([]string{
+		"SELECT COALESCE(" + debitExpr + ", 0), COALESCE(" + creditExpr + ", 0), " + foundExpr,
+		"FROM balance_detail",
+		"WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')",
+		"  AND period = ?",
+		"  " + selector,
+	}, "\n")
+}
+
+func balanceDetailOpeningPeriodAvailable(ctx context.Context, db *sql.DB, company, period, rootCode, accountName string) (bool, error) {
+	hasColumn, err := balanceDetailHasOpeningPeriod(ctx, db)
+	if err != nil || !hasColumn {
+		return false, err
+	}
+	selectors := []struct {
+		clause string
+		arg    string
+	}{
+		{clause: "AND account_code = ?", arg: rootCode},
+		{clause: "AND account_code LIKE ?", arg: rootCode + "%"},
+		{clause: "AND account_name = ?", arg: accountName},
+	}
+	for _, selector := range selectors {
+		available, found, err := queryOpeningPeriodAvailability(ctx, db, company, period, selector.clause, selector.arg)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return available, nil
+		}
+	}
+	return false, nil
+}
+
+func balanceDetailHasOpeningPeriod(ctx context.Context, db *sql.DB) (bool, error) {
+	queries := []string{
+		`SELECT COUNT(1) FROM information_schema.columns WHERE table_name IN ('balance_detail', 'fin_balance_detail') AND column_name = 'opening_period'`,
+		`SELECT COUNT(1) FROM pragma_table_info('balance_detail') WHERE name = 'opening_period'`,
+	}
+	var lastErr error
+	for _, query := range queries {
+		var count int
+		if err := db.QueryRowContext(ctx, query).Scan(&count); err != nil {
+			lastErr = err
+			continue
+		}
+		return count > 0, nil
+	}
+	if lastErr != nil {
+		return false, fmt.Errorf("detect balance_detail opening_period column: %w", lastErr)
+	}
+	return false, nil
+}
+
+func queryOpeningPeriodAvailability(ctx context.Context, db *sql.DB, company, period, selector, arg string) (bool, bool, error) {
+	var totalCount, usableCount int
+	err := db.QueryRowContext(ctx, openingPeriodAvailabilityQuery(selector), company, company, period, arg).Scan(&totalCount, &usableCount)
+	if err != nil {
+		return false, false, fmt.Errorf("query opening_period availability: %w", err)
+	}
+	if totalCount == 0 {
+		return false, false, nil
+	}
+	return usableCount > 0, true, nil
+}
+
+func openingPeriodAvailabilityQuery(selector string) string {
+	return strings.Join([]string{
+		"SELECT COUNT(1),",
+		"       COALESCE(SUM(CASE WHEN opening_period IS NOT NULL AND TRIM(opening_period) <> '' THEN 1 ELSE 0 END), 0)",
+		"FROM balance_detail",
+		"WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')",
+		"  AND period = ?",
+		"  " + selector,
+	}, "\n")
+}
+
 func loadVATTimingAdjustment(ctx context.Context, db *sql.DB, company, period string) (float64, error) {
-	inputVATIncrease, err := loadPeriodDelta(ctx, db, company, period, "22210101", "进项税额", debitNormal)
+	inputVATIncrease, _, err := loadPeriodDelta(ctx, db, company, period, "22210101", "进项税额", debitNormal)
 	if err != nil {
 		return 0, err
 	}
-	outputVATIncrease, err := loadPeriodDelta(ctx, db, company, period, "22210106", "销项税额", creditNormal)
+	outputVATIncrease, _, err := loadPeriodDelta(ctx, db, company, period, "22210106", "销项税额", creditNormal)
 	if err != nil {
 		return 0, err
 	}

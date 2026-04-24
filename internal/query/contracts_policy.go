@@ -9,7 +9,7 @@ func inferContractAskedTopic(question string) string {
 		return "content"
 	case containsAny(q, []string{"利润", "毛利", "净利"}):
 		return "profit"
-	case containsAny(q, []string{"营收", "收入", "销售额"}):
+	case containsAny(q, []string{"营收", "收入", "销售额", "GMV", "gmv"}):
 		return "revenue"
 	case containsAny(q, []string{"成本", "支出"}):
 		return "cost"
@@ -27,13 +27,7 @@ func contractSourceTablesForRole(role string) []string {
 }
 
 func (e *Engine) hasContractDimensionEntity(entity string) bool {
-	like := "%" + strings.TrimSpace(entity) + "%"
-	if like == "%%" {
-		return false
-	}
-	var exists int
-	e.db.QueryRow(`SELECT 1 FROM fin_contracts WHERE customer_name LIKE ? OR contract_content LIKE ? LIMIT 1`, like, like).Scan(&exists)
-	return exists == 1
+	return len(e.resolveContractSubjectCandidates(entity)) > 0
 }
 
 func (e *Engine) shouldPrioritizeContractQuery(question, entity string, hasRealEntity bool) bool {
@@ -43,9 +37,8 @@ func (e *Engine) shouldPrioritizeContractQuery(question, entity string, hasRealE
 	if !isContractPriorityQuestion(question) {
 		return false
 	}
-	if hasRealEntity && e.hasContractDimensionEntity(entity) {
+	if matched := e.resolveContractSubject(question, entity); matched != "" {
 		return true
 	}
-	matched := e.matchContractSubjectByName(question)
-	return matched != ""
+	return hasRealEntity && e.hasContractDimensionEntity(entity)
 }

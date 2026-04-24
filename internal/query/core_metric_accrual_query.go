@@ -19,21 +19,10 @@ func (e *Engine) queryAccrualCoreMetrics(question, from, to string) Result {
 	cash, _ := e.calc.ComputeCashFlow(e.Company, from, to)
 	logs := append([]string{}, e.calc.CalculationLogs...)
 	sqls := append([]string{}, e.calc.ExecutedSQLs...)
-	requestedMetrics := detectRequestedMetrics(question)
-	explicitNetProfit := asksExplicitNetProfit(question)
-	if explicitNetProfit {
-		requestedMetrics = []string{"净利润"}
-	}
-	if len(requestedMetrics) == 0 {
-		requestedMetrics = []string{detectCoreMetric(question)}
-	}
-	metric := metricDisplayName(detectCoreMetric(question))
-	if explicitNetProfit {
-		metric = "净利润"
-	}
-	if len(requestedMetrics) == 1 {
-		metric = requestedMetrics[0]
-	}
+	request := resolveCoreMetricRequest(question, metricDisplayName(detectCoreMetric(question)))
+	requestedMetrics := request.RequestedMetrics
+	explicitNetProfit := request.ExplicitNetProfit
+	metric := request.MetricLabel
 	accountValue := round2(metricValueFromBook(metric, book))
 	displayedBookProfit := book.Profit
 	if explicitNetProfit {
@@ -71,36 +60,13 @@ func (e *Engine) queryAccrualProfitOnly(from, to string) Result {
 }
 
 func buildAccrualCoreMetricResultData(period string, year, month int, bookSource string, requestedMetrics []string, metric string, accountValue, displayedBookProfit float64, book monthlyBookView, cashFlowSummary, bridgeMap map[string]any) map[string]any {
-	return map[string]any{
-		"period":            period,
-		"metric":            metric,
-		"requested_metrics": requestedMetrics,
-		"account_value":     accountValue,
-		"total":             accountValue,
-		"metrics": map[string]any{
-			"收入":  round2(book.Revenue),
-			"成本":  round2(book.TotalCost),
-			"利润":  round2(book.Profit),
-			"净利润": round2(book.NetProfit),
-		},
-		"monthly": map[string]any{
-			"year":                  year,
-			"month":                 month,
-			"source":                bookSource,
-			"revenue":               book.Revenue,
-			"cost":                  book.TotalCost,
-			"profit":                book.Profit,
-			"net_profit":            book.NetProfit,
-			"non_operating_income":  book.NonOperatingIncome,
-			"non_operating_expense": book.NonOperatingExpense,
-			"income_tax":            book.IncomeTax,
-			"operating_profit":      book.OperatingProfit,
-		},
-		"财务做账口径(看利润)":        buildCoreMetricBookView(book, displayedBookProfit),
-		"现金流入":               cashFlowSummary["现金流入"],
-		"现金流出":               cashFlowSummary["现金流出"],
-		"净现金流":               cashFlowSummary["净现金流"],
-		"cash_flow":          cashFlowSummary,
-		"profit_cash_bridge": bridgeMap,
-	}
+	data := buildCoreMetricSharedResultFields(bookSource, book, displayedBookProfit, cashFlowSummary, bridgeMap)
+	data["period"] = period
+	data["metric"] = metric
+	data["requested_metrics"] = requestedMetrics
+	data["account_value"] = accountValue
+	data["total"] = accountValue
+	data["metrics"] = buildCoreMetricMetricsMap(book)
+	data["monthly"] = buildCoreMetricMonthlyPayload(year, month, bookSource, book)
+	return data
 }

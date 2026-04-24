@@ -19,7 +19,7 @@ func buildCoreMetricCoverage(from, to, availableTo string) coreMetricCoverage {
 		ActualFrom:    from,
 		ActualTo:      to,
 		AvailableTo:   strings.TrimSpace(availableTo),
-		HasData:       true,
+		HasData:       strings.TrimSpace(availableTo) != "",
 	}
 	if coverage.AvailableTo == "" {
 		return coverage
@@ -51,4 +51,8 @@ func buildCoreMetricCoverage(from, to, availableTo string) coreMetricCoverage {
 
 func (e *Engine) resolveCoreMetricCoverage(from, to string) coreMetricCoverage {
 	return buildCoreMetricCoverage(from, to, e.latestAvailableFinancialPeriod())
+}
+
+func (e *Engine) resolveCoreMetricCoverageForRequest(from, to string, request coreMetricRequest) coreMetricCoverage {
+	return buildCoreMetricCoverage(from, to, e.latestAvailableFinancialPeriodForRequest(request))
 }

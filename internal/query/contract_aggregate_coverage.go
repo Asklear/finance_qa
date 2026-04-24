@@ -1,0 +1,53 @@
+package query
+
+import (
+	"fmt"
+	"strings"
+)
+
+func contractAggregateCanAnswer(requestedMetrics []string, summary contractAggregateSummary) bool {
+	for _, metric := range requestedMetrics {
+		switch strings.TrimSpace(metric) {
+		case "收入":
+			if !summary.HasRevenueCoverage {
+				return false
+			}
+		case "成本":
+			if !summary.HasCostCoverage {
+				return false
+			}
+		case "利润":
+			if !(summary.HasRevenueCoverage && summary.HasCostCoverage) {
+				return false
+			}
+		}
+	}
+	return len(requestedMetrics) > 0
+}
+
+func contractAggregateFallbackReason(requestedMetrics []string, summary contractAggregateSummary) string {
+	missing := make([]string, 0, 2)
+	for _, metric := range requestedMetrics {
+		switch strings.TrimSpace(metric) {
+		case "收入":
+			if !summary.HasRevenueCoverage {
+				missing = append(missing, "营收结算")
+			}
+		case "成本":
+			if !summary.HasCostCoverage {
+				missing = append(missing, "合同成本")
+			}
+		case "利润":
+			if !summary.HasRevenueCoverage {
+				missing = append(missing, "营收结算")
+			}
+			if !summary.HasCostCoverage {
+				missing = append(missing, "合同成本")
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("合同/项目汇总表当前缺少%s，已回退到现金+经营/财务口径", joinWithComma(dedupeStrings(missing)))
+}

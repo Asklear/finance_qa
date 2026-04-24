@@ -56,22 +56,12 @@ func buildBossDualPerspectiveMessage(period string, cash accounting.CashPerspect
 		fmt.Sprintf("3. 其他调节项 %.2f 元（含税费/营业外收支/四舍五入等）。", otherAdjustments),
 	}
 	if bridge != nil {
-		gapLabel := fmt.Sprintf("含税项调节后的利润桥和过滤后经营现金仍有 %.2f 元差额待继续拆分。", math.Abs(bridge.AdjustedOperatingCashGap))
-		if bridge.AdjustedOperatingCashGap < 0 {
-			gapLabel = fmt.Sprintf("含税项调节后的利润桥比过滤后的经营现金高 %.2f 元，说明还有营运资金或分类口径没补齐。", math.Abs(bridge.AdjustedOperatingCashGap))
-		} else if bridge.AdjustedOperatingCashGap > 0 {
-			gapLabel = fmt.Sprintf("过滤后的经营现金比含税项调节后的利润桥高 %.2f 元，说明还有现金分类或桥接项待核实。", math.Abs(bridge.AdjustedOperatingCashGap))
-		}
 		lines = append(lines,
-			fmt.Sprintf("按利润调现金桥还原：净利润 %.2f + 折旧 %.2f - 应收净增加 %.2f - 预付净增加 %.2f - 其他应付款净增加 %.2f + 应付账款净增加 %.2f + 预收账款净增加 %.2f + 应付职工薪酬净增加 %.2f = 经营现金 %.2f 元。",
-				bridge.NetProfit, bridge.Depreciation, bridge.ARIncrease, bridge.PrepaymentIncrease, bridge.OtherPayableIncrease, bridge.APIncrease, bridge.AdvanceReceiptIncrease, bridge.PayrollIncrease, bridge.EstimatedOperatingCash),
-			fmt.Sprintf("再加税项时点调节 %.2f 元后，经营现金估算 %.2f 元。", bridge.TaxTimingAdjustment, bridge.AdjustedOperatingCashEstimate),
-			fmt.Sprintf("另识别到固定资产购置本金 %.2f 元，这部分属于非经营现金流，需和经营现金分开看。", bridge.FixedAssetPurchasePrincipal),
+			buildProfitCashBridgeNarrative(bridge, "合计净现金流估算"),
 			fmt.Sprintf("按凭证同组科目过滤后，经营性现金净额 %.2f 元；已识别的非经营/混合现金净额 %.2f 元。", bridge.OperatingCashNet, bridge.ExcludedCashNet),
-			gapLabel,
 		)
-		if bridge.OtherReceivableIncrease != 0 || bridge.TaxBalanceIncrease != 0 {
-			lines = append(lines, fmt.Sprintf("补充披露：其他应收款净增加 %.2f 元、应交税费净变动 %.2f 元，这两项先单独列示，不直接并入经营现金桥，避免把内部往来或税项时差误当经营现金。", bridge.OtherReceivableIncrease, bridge.TaxBalanceIncrease))
+		if bridge.TaxTimingAdjustment != 0 {
+			lines = append(lines, fmt.Sprintf("另有税项时点调节 %.2f 元，作为复核项单独保留，不再直接并入净现金流桥。", bridge.TaxTimingAdjustment))
 		}
 	}
 	lines = append(lines, "建议动作：先盯未回款客户和大额支出项目，周内做一次回款与结算单对齐。")

@@ -15,7 +15,8 @@ func (e *Engine) annotateSourceAttribution(spec QuerySpec, result Result) Result
 		result.Data = map[string]any{}
 	}
 
-	collected := e.collectSourceTables(spec, result.Data)
+	plan := resolveSourceAttributionPlan(spec, result.Data)
+	collected := plan.tables
 	if len(collected) == 0 {
 		return result
 	}

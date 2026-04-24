@@ -51,53 +51,20 @@ func (e *Engine) Query(question string) Result {
 }
 
 func (e *Engine) prepareQueryExecutionContext(question string) queryExecutionContext {
-	q := NormalizeQuestion(question)
-	resolved := ResolveCompanyMention(q, e.available)
-	if resolved != "" && resolved != e.Company {
-		e.Company = resolved
-	}
-
-	intent, intentTrace := ClassifyIntentV2(q)
-	spec := BuildQuerySpec(q, e.getLatestPeriodAnchor())
-	traceMap := map[string]any{
-		"router_version": intentTrace.RouterVersion,
-		"matched":        append([]string{}, intentTrace.Matched...),
-		"scores":         intentTrace.Scores,
-		"final_intent":   intentTrace.FinalIntent,
-		"confidence":     intentTrace.Confidence,
-	}
-
-	entity := spec.Entity
-	if shouldResolveEntityDeeply(spec) {
-		entity = e.extractNamedEntity(q)
-	}
-	spec = reconcileQuerySpec(spec, entity, getRuleConfig())
-	entity = spec.Entity
-	hasRealEntity := e.isRealBusinessEntity(q, entity)
-	if e.shouldPrioritizeContractQuery(q, entity, hasRealEntity) {
-		if matched := e.matchContractSubjectByName(q); matched != "" {
-			entity = matched
-			spec.Entity = matched
-		}
-		spec.QueryFamily = QueryFamilyContractDimension
-		spec.NeedsContractDimension = true
-		spec.PerspectivePolicy = PerspectiveCashThenAccrual
-		spec.PreferContractAggregate = false
-		hasRealEntity = true
-	}
+	route := e.resolveQueryRouting(question)
 
 	return queryExecutionContext{
 		engine:        e,
 		question:      question,
-		q:             q,
-		intent:        intent,
-		spec:          spec,
-		traceMap:      traceMap,
-		anchor:        e.getLatestPeriodAnchor(),
-		from:          spec.PeriodFrom,
-		to:            spec.PeriodTo,
-		cfg:           getRuleConfig(),
-		entity:        entity,
-		hasRealEntity: hasRealEntity,
+		q:             route.normalizedQuestion,
+		intent:        route.intent,
+		spec:          route.spec,
+		traceMap:      route.traceMap,
+		anchor:        route.anchor,
+		from:          route.spec.PeriodFrom,
+		to:            route.spec.PeriodTo,
+		cfg:           route.cfg,
+		entity:        route.entity,
+		hasRealEntity: route.hasRealEntity,
 	}
 }

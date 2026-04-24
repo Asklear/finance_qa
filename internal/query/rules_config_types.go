@@ -23,30 +23,36 @@ var (
 
 // RuleConfig 定义查询层可调规则（默认值 + 外部覆盖）。
 type RuleConfig struct {
-	GenericMetricStopwords         []string            `json:"generic_metric_stopwords"`
-	IntentARAPKeywords             []string            `json:"intent_arap_keywords"`
-	IntentHRCostKeywords           []string            `json:"intent_hr_cost_keywords"`
-	IntentTaxKeywords              []string            `json:"intent_tax_keywords"`
-	IntentHealthKeywords           []string            `json:"intent_health_keywords"`
-	IntentFallbackKeywords         []string            `json:"intent_fallback_keywords"`
-	IntentAnalysisKeywords         []string            `json:"intent_analysis_keywords"`
-	IntentHostPayloadKeywords      []string            `json:"intent_host_payload_keywords"`
-	IntentMonthlySummaryKeywords   []string            `json:"intent_monthly_summary_keywords"`
-	FallbackMonthlyExpenseKeywords []string            `json:"fallback_monthly_expense_keywords"`
-	HighPriorityPhrases            map[string][]string `json:"high_priority_phrases"`
-	IntentPriority                 map[string]int      `json:"intent_priority"`
-	IntentConflicts                map[string][]string `json:"intent_conflicts"`
-	IntentMinConfidence            map[string]float64  `json:"intent_min_confidence"`
-	RoleMixedMinRatio              float64             `json:"role_mixed_min_ratio"`
-	RoleMixedMinPositiveScore      float64             `json:"role_mixed_min_positive_score"`
-	RoleMixedMinPositiveRoles      int                 `json:"role_mixed_min_positive_roles"`
-	RoleMinPrimaryScore            float64             `json:"role_min_primary_score"`
-	RoleMinConfidence              float64             `json:"role_min_confidence"`
-	ContractPriorityKeywordLexicon []string            `json:"-"`
-	ContractSourceTableLexicon     map[string][]string `json:"-"`
-	ContractSummaryKeywordLexicon  []string            `json:"-"`
-	ContractCashFallbackLexicon    []string            `json:"-"`
-	IncomeStatementItemLexicon     map[string][]string `json:"-"`
+	GenericMetricStopwords                    []string            `json:"generic_metric_stopwords"`
+	IntentARAPKeywords                        []string            `json:"intent_arap_keywords"`
+	IntentHRCostKeywords                      []string            `json:"intent_hr_cost_keywords"`
+	IntentTaxKeywords                         []string            `json:"intent_tax_keywords"`
+	IntentHealthKeywords                      []string            `json:"intent_health_keywords"`
+	IntentFallbackKeywords                    []string            `json:"intent_fallback_keywords"`
+	IntentAnalysisKeywords                    []string            `json:"intent_analysis_keywords"`
+	IntentHostPayloadKeywords                 []string            `json:"intent_host_payload_keywords"`
+	IntentMonthlySummaryKeywords              []string            `json:"intent_monthly_summary_keywords"`
+	FallbackMonthlyExpenseKeywords            []string            `json:"fallback_monthly_expense_keywords"`
+	HighPriorityPhrases                       map[string][]string `json:"high_priority_phrases"`
+	IntentPriority                            map[string]int      `json:"intent_priority"`
+	IntentConflicts                           map[string][]string `json:"intent_conflicts"`
+	IntentMinConfidence                       map[string]float64  `json:"intent_min_confidence"`
+	RoleMixedMinRatio                         float64             `json:"role_mixed_min_ratio"`
+	RoleMixedMinPositiveScore                 float64             `json:"role_mixed_min_positive_score"`
+	RoleMixedMinPositiveRoles                 int                 `json:"role_mixed_min_positive_roles"`
+	RoleMinPrimaryScore                       float64             `json:"role_min_primary_score"`
+	RoleMinConfidence                         float64             `json:"role_min_confidence"`
+	ReconciliationResidualGapEscalationAmount float64             `json:"reconciliation_residual_gap_escalation_amount"`
+	ContractPriorityKeywordLexicon            []string            `json:"-"`
+	ContractSourceTableLexicon                map[string][]string `json:"-"`
+	ContractSummaryKeywordLexicon             []string            `json:"-"`
+	ContractCashFallbackLexicon               []string            `json:"-"`
+	IncomeStatementItemLexicon                map[string][]string `json:"-"`
+	HRBreakdownAccountCodeLexicon             map[string][]string `json:"-"`
+	HRCashBankAccountPrefixLexicon            []string            `json:"-"`
+	HRPayrollLiabilityPrefixLexicon           []string            `json:"-"`
+	HRPayrollLiabilityNameLexicon             []string            `json:"-"`
+	HRCategoryKeywordLexicon                  map[string][]string `json:"-"`
 
 	IntentKeywordLexicon                      map[string][]string `json:"-"`
 	MetricKeywordLexicon                      map[string][]string `json:"-"`
@@ -61,32 +67,34 @@ type RuleConfig struct {
 }
 
 type ruleConfigFile struct {
-	SchemaVersion int                         `json:"schema_version"`
-	Router        routerRuleConfigFile        `json:"router"`
-	Counterparty  counterpartyRuleConfigFile  `json:"counterparty"`
-	InternalParty internalPartyRuleConfigFile `json:"internal_party"`
-	Contract      contractRuleConfigFile      `json:"contract"`
-	Accounting    accountingRuleConfigFile    `json:"accounting"`
+	SchemaVersion  int                          `json:"schema_version"`
+	Router         routerRuleConfigFile         `json:"router"`
+	Counterparty   counterpartyRuleConfigFile   `json:"counterparty"`
+	InternalParty  internalPartyRuleConfigFile  `json:"internal_party"`
+	Contract       contractRuleConfigFile       `json:"contract"`
+	Accounting     accountingRuleConfigFile     `json:"accounting"`
+	Reconciliation reconciliationRuleConfigFile `json:"reconciliation"`
 
-	GenericMetricStopwords         []string            `json:"generic_metric_stopwords"`
-	IntentARAPKeywords             []string            `json:"intent_arap_keywords"`
-	IntentHRCostKeywords           []string            `json:"intent_hr_cost_keywords"`
-	IntentTaxKeywords              []string            `json:"intent_tax_keywords"`
-	IntentHealthKeywords           []string            `json:"intent_health_keywords"`
-	IntentFallbackKeywords         []string            `json:"intent_fallback_keywords"`
-	IntentAnalysisKeywords         []string            `json:"intent_analysis_keywords"`
-	IntentHostPayloadKeywords      []string            `json:"intent_host_payload_keywords"`
-	IntentMonthlySummaryKeywords   []string            `json:"intent_monthly_summary_keywords"`
-	FallbackMonthlyExpenseKeywords []string            `json:"fallback_monthly_expense_keywords"`
-	HighPriorityPhrases            map[string][]string `json:"high_priority_phrases"`
-	IntentPriority                 map[string]int      `json:"intent_priority"`
-	IntentConflicts                map[string][]string `json:"intent_conflicts"`
-	IntentMinConfidence            map[string]float64  `json:"intent_min_confidence"`
-	RoleMixedMinRatio              *float64            `json:"role_mixed_min_ratio"`
-	RoleMixedMinPositiveScore      *float64            `json:"role_mixed_min_positive_score"`
-	RoleMixedMinPositiveRoles      *int                `json:"role_mixed_min_positive_roles"`
-	RoleMinPrimaryScore            *float64            `json:"role_min_primary_score"`
-	RoleMinConfidence              *float64            `json:"role_min_confidence"`
+	GenericMetricStopwords                    []string            `json:"generic_metric_stopwords"`
+	IntentARAPKeywords                        []string            `json:"intent_arap_keywords"`
+	IntentHRCostKeywords                      []string            `json:"intent_hr_cost_keywords"`
+	IntentTaxKeywords                         []string            `json:"intent_tax_keywords"`
+	IntentHealthKeywords                      []string            `json:"intent_health_keywords"`
+	IntentFallbackKeywords                    []string            `json:"intent_fallback_keywords"`
+	IntentAnalysisKeywords                    []string            `json:"intent_analysis_keywords"`
+	IntentHostPayloadKeywords                 []string            `json:"intent_host_payload_keywords"`
+	IntentMonthlySummaryKeywords              []string            `json:"intent_monthly_summary_keywords"`
+	FallbackMonthlyExpenseKeywords            []string            `json:"fallback_monthly_expense_keywords"`
+	HighPriorityPhrases                       map[string][]string `json:"high_priority_phrases"`
+	IntentPriority                            map[string]int      `json:"intent_priority"`
+	IntentConflicts                           map[string][]string `json:"intent_conflicts"`
+	IntentMinConfidence                       map[string]float64  `json:"intent_min_confidence"`
+	RoleMixedMinRatio                         *float64            `json:"role_mixed_min_ratio"`
+	RoleMixedMinPositiveScore                 *float64            `json:"role_mixed_min_positive_score"`
+	RoleMixedMinPositiveRoles                 *int                `json:"role_mixed_min_positive_roles"`
+	RoleMinPrimaryScore                       *float64            `json:"role_min_primary_score"`
+	RoleMinConfidence                         *float64            `json:"role_min_confidence"`
+	ReconciliationResidualGapEscalationAmount *float64            `json:"reconciliation_residual_gap_escalation_amount"`
 }
 
 type routerRuleConfigFile struct {
@@ -139,5 +147,14 @@ type contractRuleConfigFile struct {
 }
 
 type accountingRuleConfigFile struct {
-	IncomeStatementItems map[string][]string `json:"income_statement_items"`
+	IncomeStatementItems       map[string][]string `json:"income_statement_items"`
+	HRBreakdownAccountCodes    map[string][]string `json:"hr_breakdown_account_codes"`
+	HRCashBankAccountPrefixes  []string            `json:"hr_cash_bank_account_prefixes"`
+	HRPayrollLiabilityPrefixes []string            `json:"hr_payroll_liability_account_prefixes"`
+	HRPayrollLiabilityNames    []string            `json:"hr_payroll_liability_name_keywords"`
+	HRCategoryKeywords         map[string][]string `json:"hr_category_keywords"`
+}
+
+type reconciliationRuleConfigFile struct {
+	ResidualGapEscalationAmount *float64 `json:"residual_gap_escalation_amount"`
 }

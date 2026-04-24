@@ -311,5 +311,8 @@
       "其他应付款",
       "内部往来"
     ]
+  },
+  "reconciliation": {
+    "residual_gap_escalation_amount": 100000
   }
 }

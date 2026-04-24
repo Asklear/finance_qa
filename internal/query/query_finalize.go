@@ -1,6 +1,9 @@
 package query
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 func (e *Engine) queryIdentityResult(entity string) Result {
 	role, _ := e.detectEntityRole(entity)
@@ -37,12 +40,42 @@ func buildQuerySpecEnvelope(spec QuerySpec) map[string]any {
 	}
 }
 
+func applyQuerySpecOverrides(spec QuerySpec, data map[string]any) QuerySpec {
+	if data == nil {
+		return spec
+	}
+	raw, ok := data["query_spec_overrides"].(map[string]any)
+	if !ok {
+		return spec
+	}
+	overrides := cloneMap(raw)
+	if len(overrides) == 0 {
+		return spec
+	}
+	if periodFrom := strings.TrimSpace(anyToString(overrides["period_from"])); periodFrom != "" {
+		spec.PeriodFrom = periodFrom
+	}
+	if periodTo := strings.TrimSpace(anyToString(overrides["period_to"])); periodTo != "" {
+		spec.PeriodTo = periodTo
+	}
+	if subPeriod := strings.TrimSpace(anyToString(overrides["sub_period"])); subPeriod != "" {
+		spec.SubPeriod = subPeriod
+	}
+	if timeScope := strings.TrimSpace(anyToString(overrides["time_scope"])); timeScope != "" {
+		spec.TimeScope = TimeScope(timeScope)
+	}
+	if perspective := strings.TrimSpace(anyToString(overrides["perspective_policy"])); perspective != "" {
+		spec.PerspectivePolicy = PerspectivePolicy(perspective)
+	}
+	return spec
+}
+
 func finalizeQueryResult(ctx queryExecutionContext, r Result) Result {
 	if r.Data == nil {
 		r.Data = map[string]any{}
 	}
 	r.Data["intent_trace"] = ctx.traceMap
-	r.Data["query_spec"] = buildQuerySpecEnvelope(ctx.spec)
+	r.Data["query_spec"] = buildQuerySpecEnvelope(applyQuerySpecOverrides(ctx.spec, r.Data))
 	if ctx.engine != nil {
 		r = ctx.engine.annotateSourceAttribution(ctx.spec, r)
 	}

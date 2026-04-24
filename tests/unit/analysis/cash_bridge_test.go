@@ -57,6 +57,8 @@ CREATE TABLE journal (
 
 INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-03','四、净利润（净亏损以"－"号填列）',100,300);
 
+INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','160101','电脑',0,0,0,0,0,0);
+INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-03','160101','电脑',30,0,30,0,30,0);
 INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','1602','累计折旧',0,0,0,10,0,10);
 INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-03','1602','累计折旧',0,0,0,20,0,20);
 INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','1122','应收账款',80,0,130,30,80,0);
@@ -137,20 +139,20 @@ INSERT INTO journal VALUES ('模拟财务科技有限公司','2026-03','2026-03-
 	if bridge.TaxTimingAdjustment != 5 {
 		t.Fatalf("tax timing adjustment = %.2f, want 5", bridge.TaxTimingAdjustment)
 	}
-	if bridge.EstimatedOperatingCash != 300 {
-		t.Fatalf("estimated operating cash = %.2f, want 300", bridge.EstimatedOperatingCash)
+	if bridge.EstimatedOperatingCash != 240 {
+		t.Fatalf("estimated operating cash = %.2f, want 240", bridge.EstimatedOperatingCash)
 	}
-	if bridge.AdjustedOperatingCashEstimate != 305 {
-		t.Fatalf("adjusted operating cash estimate = %.2f, want 305", bridge.AdjustedOperatingCashEstimate)
+	if bridge.AdjustedOperatingCashEstimate != 245 {
+		t.Fatalf("adjusted operating cash estimate = %.2f, want 245", bridge.AdjustedOperatingCashEstimate)
 	}
 	if bridge.BankNetCash != -300 {
 		t.Fatalf("bank net cash = %.2f, want -300", bridge.BankNetCash)
 	}
-	if bridge.NonOperatingCashDelta != -240 {
-		t.Fatalf("non-operating delta = %.2f, want -240", bridge.NonOperatingCashDelta)
+	if bridge.NonOperatingCashDelta != -180 {
+		t.Fatalf("non-operating delta = %.2f, want -180", bridge.NonOperatingCashDelta)
 	}
-	if bridge.AdjustedOperatingCashGap != -245 {
-		t.Fatalf("adjusted operating cash gap = %.2f, want -245", bridge.AdjustedOperatingCashGap)
+	if bridge.AdjustedOperatingCashGap != -185 {
+		t.Fatalf("adjusted operating cash gap = %.2f, want -185", bridge.AdjustedOperatingCashGap)
 	}
 	if bridge.OperatingCashIn != 120 {
 		t.Fatalf("operating cash in = %.2f, want 120", bridge.OperatingCashIn)
@@ -233,5 +235,96 @@ INSERT INTO journal VALUES ('模拟财务科技有限公司','2026-03','2026-03-
 	}
 	if bridge.MixedCashOut != 0 {
 		t.Fatalf("mixed cash out = %.2f, want 0", bridge.MixedCashOut)
+	}
+}
+
+func TestAnalyzeProfitCashBridgeFallsBackToCurrentOpeningBalanceWhenPreviousPeriodMissing(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cash-bridge-opening-fallback.db")
+	schema := `
+CREATE TABLE balance_detail (
+  company TEXT,
+  year INTEGER,
+  period TEXT,
+  account_code TEXT,
+  account_name TEXT,
+  opening_debit REAL,
+  opening_credit REAL,
+  current_debit REAL,
+  current_credit REAL,
+  closing_debit REAL,
+  closing_credit REAL,
+  opening_period TEXT
+);
+CREATE TABLE income_statement (
+  company TEXT,
+  period TEXT,
+  item_name TEXT,
+  current_amount REAL,
+  cumulative_amount REAL
+);
+CREATE TABLE bank_statement (
+  company TEXT,
+  transaction_date TEXT,
+  debit_amount REAL,
+  credit_amount REAL,
+  counterparty_name TEXT,
+  summary TEXT
+);
+CREATE TABLE journal (
+  company TEXT,
+  period TEXT,
+  voucher_date TEXT,
+  voucher_no TEXT,
+  account_code TEXT,
+  account_name TEXT,
+  summary TEXT,
+  direction TEXT,
+  amount REAL,
+  debit_amount REAL,
+  credit_amount REAL,
+  counterparty TEXT
+);
+
+INSERT INTO income_statement VALUES ('模拟财务科技有限公司','2026-02','四、净利润（净亏损以"－"号填列）',0,0);
+INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','1122','应收账款',80,0,20,10,90,0,'2026-01');
+INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','2202','应付账款',0,100,30,80,0,150,'2026-01');
+INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','1601','固定资产',40,0,15,0,55,0,'2026-01');
+INSERT INTO balance_detail VALUES ('模拟财务科技有限公司',2026,'2026-02','1602','累计折旧',0,5,0,7,0,12,'2026-01');
+INSERT INTO bank_statement VALUES ('模拟财务科技有限公司','2026-02-10',0,0,'往来单位','无收付');
+`
+	cmd := exec.Command("sqlite3", dbPath)
+	cmd.Stdin = strings.NewReader(schema)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3 failed: %v\n%s", err, string(out))
+	}
+
+	bridge, err := analysis.AnalyzeProfitCashBridge(dbPath, "模拟财务科技有限公司", "2026-02")
+	if err != nil {
+		t.Fatalf("AnalyzeProfitCashBridge failed: %v", err)
+	}
+
+	if bridge.ARIncrease != 10 {
+		t.Fatalf("AR increase = %.2f, want 10", bridge.ARIncrease)
+	}
+	if bridge.APIncrease != 50 {
+		t.Fatalf("AP increase = %.2f, want 50", bridge.APIncrease)
+	}
+	if bridge.FixedAssetPurchasePrincipal != 15 {
+		t.Fatalf("fixed asset purchase = %.2f, want 15", bridge.FixedAssetPurchasePrincipal)
+	}
+	if bridge.Depreciation != 7 {
+		t.Fatalf("depreciation = %.2f, want 7", bridge.Depreciation)
+	}
+	if got := bridge.DeltaSources["ar_increase"]; got != "opening_balance" {
+		t.Fatalf("ar delta source = %q, want opening_balance", got)
+	}
+	if got := bridge.DeltaSources["ap_increase"]; got != "opening_balance" {
+		t.Fatalf("ap delta source = %q, want opening_balance", got)
+	}
+	if got := bridge.DeltaSources["fixed_asset_purchase_principal"]; got != "opening_balance" {
+		t.Fatalf("fixed asset delta source = %q, want opening_balance", got)
+	}
+	if got := bridge.DeltaSources["depreciation"]; got != "opening_balance" {
+		t.Fatalf("depreciation delta source = %q, want opening_balance", got)
 	}
 }

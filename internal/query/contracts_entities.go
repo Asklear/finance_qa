@@ -2,7 +2,113 @@ package query
 
 import "strings"
 
+func contractSubjectCandidatesQuery(column string) string {
+	return `
+SELECT ` + column + ` AS name
+FROM fin_contracts
+WHERE COALESCE(TRIM(` + column + `), '') <> ''
+ORDER BY LENGTH(` + column + `) DESC, ` + column + `
+`
+}
+
+func (e *Engine) contractSubjectCandidates(column string) []string {
+	rows, err := e.db.Query(contractSubjectCandidatesQuery(column))
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	out := make([]string, 0, 64)
+	for rows.Next() {
+		var name string
+		if scanErr := rows.Scan(&name); scanErr != nil {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func (e *Engine) contractCustomerCandidates() []string {
+	return e.contractSubjectCandidates("customer_name")
+}
+
+func (e *Engine) contractContentCandidates() []string {
+	return e.contractSubjectCandidates("contract_content")
+}
+
+func (e *Engine) resolveContractSubjectCandidates(alias string) []string {
+	alias = trimEntityNoiseSuffixes(stripTemporalNoise(strings.TrimSpace(alias)))
+	matches := rankCounterpartyAliasMatches(alias, e.contractCustomerCandidates())
+	if len(matches) > 0 {
+		return matches
+	}
+	return rankCounterpartyAliasMatches(alias, e.contractContentCandidates())
+}
+
+func (e *Engine) resolveContractSubject(question, entity string) string {
+	nq := normalizeEntityText(question)
+	if nq != "" {
+		directCandidates := append(e.contractCustomerCandidates(), e.contractContentCandidates()...)
+		for _, name := range directCandidates {
+			nm := normalizeEntityText(name)
+			if len([]rune(nm)) < 2 {
+				continue
+			}
+			if strings.Contains(nq, nm) {
+				return name
+			}
+		}
+	}
+
+	terms := []string{
+		strings.TrimSpace(entity),
+		extractNamedEntityFromQuestion(question),
+		extractOrganizationEntityMatch(question),
+	}
+	seen := map[string]struct{}{}
+	for _, term := range terms {
+		term = trimEntityNoiseSuffixes(stripTemporalNoise(strings.TrimSpace(term)))
+		if len([]rune(term)) < 2 {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		if matches := e.resolveContractSubjectCandidates(term); len(matches) > 0 {
+			return matches[0]
+		}
+	}
+
+	if len(seen) > 0 {
+		return ""
+	}
+
+	for _, seg := range chineseEntitySegmentPattern.FindAllString(strings.TrimSpace(question), -1) {
+		runes := []rune(seg)
+		for length := len(runes); length >= 2; length-- {
+			for i := 0; i <= len(runes)-length; i++ {
+				sub := trimEntityNoiseSuffixes(stripTemporalNoise(string(runes[i : i+length])))
+				if shouldSkipEntityFragment(sub, 2) {
+					continue
+				}
+				if matches := e.resolveContractSubjectCandidates(sub); len(matches) > 0 {
+					return matches[0]
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func (e *Engine) detectContractRole(entity, from, to string) string {
+	if resolved := e.resolveContractSubject("", entity); resolved != "" {
+		entity = resolved
+	}
 	like := "%" + entity + "%"
 	var costRows, fundRows int
 	e.db.QueryRow(`
@@ -35,6 +141,9 @@ WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
 }
 
 func (e *Engine) queryMatchingContracts(entity string) []contractDimensionRow {
+	if resolved := e.resolveContractSubject("", entity); resolved != "" {
+		entity = resolved
+	}
 	rows, err := e.db.Query(`
 SELECT contract_id, customer_name, contract_content
 FROM fin_contracts
@@ -58,37 +167,5 @@ ORDER BY contract_id
 }
 
 func (e *Engine) matchContractSubjectByName(question string) string {
-	nq := normalizeEntityText(question)
-	if nq == "" {
-		return ""
-	}
-	rows, err := e.db.Query(`
-SELECT name
-FROM (
-  SELECT customer_name AS name
-  FROM fin_contracts
-  WHERE COALESCE(TRIM(customer_name), '') <> ''
-  UNION
-  SELECT contract_content AS name
-  FROM fin_contracts
-  WHERE COALESCE(TRIM(contract_content), '') <> ''
-) contract_candidates
-ORDER BY LENGTH(name) DESC, name
-`)
-	if err != nil {
-		return ""
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var name string
-		_ = rows.Scan(&name)
-		if len([]rune(normalizeEntityText(name))) < 2 {
-			continue
-		}
-		if strings.Contains(nq, normalizeEntityText(name)) {
-			return name
-		}
-	}
-	return ""
+	return e.resolveContractSubject(question, "")
 }

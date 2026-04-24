@@ -99,15 +99,131 @@ func (e *Engine) getLatestPeriodAnchor() time.Time {
 	}
 	e.cacheMu.RUnlock()
 
-	var maxDate any
-	if err := e.db.QueryRow(`SELECT MAX(voucher_date) FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`, e.Company, e.Company).Scan(&maxDate); err != nil {
-		return time.Now()
+	candidates := []struct {
+		sqlText string
+		args    []any
+		parser  func(any) (time.Time, bool)
+	}{
+		{
+			sqlText: `SELECT MAX(voucher_date) FROM journal WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+			args:    []any{e.Company, e.Company},
+			parser:  parseAnchorDateValue,
+		},
+		{
+			sqlText: `SELECT MAX(transaction_date) FROM bank_statement WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+			args:    []any{e.Company, e.Company},
+			parser:  parseAnchorDateValue,
+		},
+		{
+			sqlText: `SELECT MAX(period) FROM income_statement WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+			args:    []any{e.Company, e.Company},
+			parser:  parseAnchorMonthValue,
+		},
+		{
+			sqlText: `SELECT MAX(period) FROM balance_detail WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')`,
+			args:    []any{e.Company, e.Company},
+			parser:  parseAnchorMonthValue,
+		},
+		{
+			sqlText: `SELECT MAX(year_month) FROM fin_fund_income`,
+			args:    nil,
+			parser:  parseAnchorMonthValue,
+		},
+		{
+			sqlText: `SELECT MAX(year_month) FROM fin_cost_settlements`,
+			args:    nil,
+			parser:  parseAnchorMonthValue,
+		},
 	}
-	if t, ok := parseAnchorDateValue(maxDate); ok {
+
+	candidateTimes := make([]time.Time, 0, len(candidates))
+	for _, candidate := range candidates {
+		var raw any
+		if err := e.db.QueryRow(candidate.sqlText, candidate.args...).Scan(&raw); err != nil {
+			continue
+		}
+		if t, ok := candidate.parser(raw); ok {
+			candidateTimes = append(candidateTimes, t)
+		}
+	}
+	best := selectLatestAnchorMonth(candidateTimes, time.Now())
+
+	if !best.IsZero() {
 		e.cacheMu.Lock()
-		e.latestAnchorCache[companyKey] = t
+		e.latestAnchorCache[companyKey] = best
 		e.cacheMu.Unlock()
-		return t
+		return best
 	}
 	return time.Now()
+}
+
+func selectLatestAnchorMonth(candidates []time.Time, now time.Time) time.Time {
+	nowMonth := startOfAnchorMonth(now)
+	bestNonFuture := time.Time{}
+	hasCandidate := false
+	for _, candidate := range candidates {
+		if candidate.IsZero() {
+			continue
+		}
+		hasCandidate = true
+		month := startOfAnchorMonth(candidate)
+		if month.After(nowMonth) {
+			continue
+		}
+		if bestNonFuture.IsZero() || month.After(bestNonFuture) {
+			bestNonFuture = month
+		}
+	}
+	if !bestNonFuture.IsZero() {
+		return bestNonFuture
+	}
+	if hasCandidate {
+		return nowMonth
+	}
+	return time.Time{}
+}
+
+func startOfAnchorMonth(value time.Time) time.Time {
+	if value.IsZero() {
+		return value
+	}
+	return time.Date(value.Year(), value.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+func capFutureAnchorMonth(anchor, now time.Time) time.Time {
+	if anchor.IsZero() {
+		return anchor
+	}
+	anchorMonth := startOfAnchorMonth(anchor)
+	nowMonth := startOfAnchorMonth(now)
+	if anchorMonth.After(nowMonth) {
+		return nowMonth
+	}
+	return anchorMonth
+}
+
+func parseAnchorMonthValue(v any) (time.Time, bool) {
+	switch raw := v.(type) {
+	case nil:
+		return time.Time{}, false
+	case string:
+		return parseAnchorMonthString(raw)
+	case []byte:
+		return parseAnchorMonthString(string(raw))
+	default:
+		return parseAnchorDateValue(v)
+	}
+}
+
+func parseAnchorMonthString(raw string) (time.Time, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, false
+	}
+	if len(raw) == len("2006-01") {
+		if t, err := time.Parse("2006-01", raw); err == nil {
+			return t, true
+		}
+	}
+	return parseAnchorDateString(raw)
 }

@@ -31,11 +31,25 @@ func bridgeToMap(bridge *analysis.ProfitCashBridge) map[string]any {
 		"mixed_cash_out":                   bridge.MixedCashOut,
 		"mixed_cash_net":                   bridge.MixedCashNet,
 		"bank_net_cash":                    bridge.BankNetCash,
+		"bank_cash_gap":                    bridge.BankCashGap,
+		"adjusted_bank_cash_gap":           bridge.AdjustedBankCashGap,
 		"excluded_cash_net":                bridge.ExcludedCashNet,
 		"operating_cash_gap":               bridge.OperatingCashGap,
 		"adjusted_operating_cash_gap":      bridge.AdjustedOperatingCashGap,
 		"non_operating_cash_delta":         bridge.NonOperatingCashDelta,
+		"delta_sources":                    cloneStringMap(bridge.DeltaSources),
 	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func bridgeEstimatedCash(bridge *analysis.ProfitCashBridge) float64 {

@@ -30,8 +30,8 @@ type contractAggregateSummary struct {
 
 func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggregateSummary, error) {
 	entity := strings.TrimSpace(spec.Entity)
-	if entity == "" {
-		entity = e.matchContractSubjectByName(spec.OriginalQuestion)
+	if resolved := e.resolveContractSubject(spec.OriginalQuestion, entity); resolved != "" {
+		entity = resolved
 	}
 
 	scope := "company"

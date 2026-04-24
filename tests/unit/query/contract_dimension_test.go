@@ -131,6 +131,12 @@ func TestContractProfitQuestionWithoutContractKeywordStillUsesContractDimension(
 	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
 		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
 	}
+	if got := spec["period_from"]; got != "2025-01" {
+		t.Fatalf("period_from = %v, want 2025-01", got)
+	}
+	if got := spec["period_to"]; got != "2025-12" {
+		t.Fatalf("period_to = %v, want 2025-12", got)
+	}
 	if !strings.Contains(res.Message, "合同利润 180.00 元") {
 		t.Fatalf("message should contain contract book profit, got: %s", res.Message)
 	}
@@ -194,6 +200,57 @@ func TestContractRevenueQuestionWithoutContractKeywordStillUsesContractDimension
 	}
 }
 
+func TestContractAliasRevenueQuestionUsesContractDimension(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("飞未云科2026年累计销售额多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
+		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
+	}
+	if got := res.Data["entity"]; got != "飞未云科（深圳）技术有限公司" {
+		t.Fatalf("entity = %v, want 飞未云科（深圳）技术有限公司", got)
+	}
+	if !strings.Contains(res.Message, "合同台账结算 3600.00 元") {
+		t.Fatalf("message should use contract ledger revenue, got: %s", res.Message)
+	}
+}
+
+func TestContractHalfWidthParenthesesEntityStillUsesContractDimension(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("飞未云科(深圳)技术有限公司2026年累计销售额多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
+		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
+	}
+	if got := res.Data["entity"]; got != "飞未云科（深圳）技术有限公司" {
+		t.Fatalf("entity = %v, want 飞未云科（深圳）技术有限公司", got)
+	}
+}
+
 func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
@@ -234,6 +291,33 @@ func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 	}
 	if len(sourceTables) != 3 {
 		t.Fatalf("source_tables count = %d, want 3", len(sourceTables))
+	}
+}
+
+func TestCompanyAggregateGMVPrefersContractAggregateFirst(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2025年10月GMV多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "老板口径先看合同/项目汇总") {
+		t.Fatalf("message should prefer contract aggregate, got: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "营收 1300.00 元") {
+		t.Fatalf("message should treat GMV as revenue-like contract metric, got: %s", res.Message)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["prefer_contract_aggregate"]; got != true {
+		t.Fatalf("prefer_contract_aggregate = %v, want true", got)
 	}
 }
 
@@ -354,6 +438,55 @@ func TestContractSourceAdapterReturnsCustomerContractFacts(t *testing.T) {
 	assertFactValue(t, factSet, "contract_cash_received_subperiod", 1234)
 }
 
+func TestContractSourceAdapterHonorsSpecResolvedRelativePeriod(t *testing.T) {
+	dbPath := buildContractRelativeAnchorTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	adapter := query.NewContractSourceAdapter(engine)
+	spec := query.BuildQuerySpec("飞未云科（深圳）技术有限公司今年合同结算多少？", contractAnchor())
+	if spec.PeriodFrom != "2026-01" || spec.PeriodTo != "2026-04" {
+		t.Fatalf("resolved period = %s~%s, want 2026-01~2026-04", spec.PeriodFrom, spec.PeriodTo)
+	}
+
+	factSet, err := adapter.Fetch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	assertFactValue(t, factSet, "contract_book_settlement", 900)
+	assertFactValue(t, factSet, "contract_cash_received", 900)
+}
+
+func TestContractSourceAdapterFallsBackToContractRelativeAnchorWhenSpecPeriodMissing(t *testing.T) {
+	dbPath := buildContractRelativeAnchorWithNewerJournalTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	adapter := query.NewContractSourceAdapter(engine)
+	spec := query.QuerySpec{
+		OriginalQuestion: "飞未云科（深圳）技术有限公司本月合同结算多少？",
+		QueryFamily:      query.QueryFamilyContractDimension,
+		Entity:           "飞未云科（深圳）技术有限公司",
+	}
+
+	factSet, err := adapter.Fetch(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+
+	assertFactValue(t, factSet, "contract_book_settlement", 900)
+	if got := factSet.Facts[0].TracePayload["period"]; got != "2026-03" {
+		t.Fatalf("trace period = %v, want 2026-03", got)
+	}
+}
+
 func TestContractQueryExposesSourceBackedFactSets(t *testing.T) {
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
@@ -472,9 +605,13 @@ func buildContractQueryTestDB(t *testing.T) string {
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C001', '辽宁金程信息科技有限公司', '行业商品数据采购合同-A01')`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C002', '南京林悦智能科技有限公司', '技术服务采购合同-LY01')`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C003', '南京众信数通智能科技有限公司', '数据服务合同-ZX01')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C004', '飞未云科（深圳）技术有限公司', '全品类商品价格数据-京东')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C005', '飞未云科（深圳）技术有限公司', '全品类商品销量数据-京东')`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C001', '2025-10', 'contract_fund_income', '25年Q4收入明细', 1000, 1234, '是', 1000)`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C001', '2025-11', 'contract_fund_income', '25年Q4收入明细', 2000, 1500, '是', 2000)`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C003', '2025-10', 'contract_fund_income', '25年Q4收入明细', 300, 280, '是', 300)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C004', '2026-01', 'contract_fund_income', '26年Q1收入明细', 2500, 2500, '是', 2500)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C005', '2026-03', 'contract_fund_income', '26年Q1收入明细', 1100, 1100, '是', 1100)`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, account_code) VALUES ('C002', '2025-10', 'contract_revenue_cost', '成本-月度结算', '1人月', 888, '是', '640101')`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, account_code) VALUES ('C003', '2025-10', 'contract_revenue_cost', '成本-月度结算', '1项', 120, '是', '640101')`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount) VALUES ('南京优集数据科技有限公司', '2025-10-18', '南京林悦智能科技有限公司', '合同付款', 666, 0)`,
@@ -494,4 +631,174 @@ func buildContractQueryTestDB(t *testing.T) string {
 
 func contractAnchor() time.Time {
 	return time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+}
+
+func buildContractRelativeAnchorTestDB(t *testing.T) string {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "contract-relative-anchor.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE journal (
+			company TEXT,
+			period TEXT,
+			voucher_date TEXT,
+			voucher_no TEXT,
+			account_code TEXT,
+			account_name TEXT,
+			direction TEXT,
+			amount REAL,
+			summary TEXT,
+			counterparty TEXT,
+			debit_amount REAL,
+			credit_amount REAL
+		)`,
+		`CREATE TABLE bank_statement (
+			company TEXT,
+			transaction_date TEXT,
+			counterparty_name TEXT,
+			summary TEXT,
+			debit_amount REAL,
+			credit_amount REAL
+		)`,
+		`CREATE TABLE balance_sheet (
+			company TEXT,
+			period TEXT,
+			account_name TEXT,
+			account_code TEXT,
+			opening_balance REAL,
+			closing_balance REAL
+		)`,
+		`CREATE TABLE income_statement (
+			company TEXT,
+			period TEXT,
+			item_name TEXT,
+			current_amount REAL,
+			cumulative_amount REAL
+		)`,
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("create table failed: %v", err)
+		}
+	}
+
+	inserts := []string{
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2025-12', '2025-12-31', 'J-OLD-1', '6001', '主营业务收入', '贷', 1, '旧账锚点', '旧客户', 0, 1)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
+		 VALUES ('C-FW-REL-1', '飞未云科（深圳）技术有限公司', '飞未云科项目-2026')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('C-FW-REL-1', '2025-03', 'contract_fund_income', '25年Q1收入明细', 300, 300, '是', 300)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('C-FW-REL-1', '2026-03', 'contract_fund_income', '26年Q1收入明细', 900, 900, '是', 900)`,
+	}
+	for _, stmt := range inserts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert seed data failed: %v", err)
+		}
+	}
+
+	return dbPath
+}
+
+func buildContractRelativeAnchorWithNewerJournalTestDB(t *testing.T) string {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "contract-relative-anchor-newer-journal.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE journal (
+			company TEXT,
+			period TEXT,
+			voucher_date TEXT,
+			voucher_no TEXT,
+			account_code TEXT,
+			account_name TEXT,
+			direction TEXT,
+			amount REAL,
+			summary TEXT,
+			counterparty TEXT,
+			debit_amount REAL,
+			credit_amount REAL
+		)`,
+		`CREATE TABLE bank_statement (
+			company TEXT,
+			transaction_date TEXT,
+			counterparty_name TEXT,
+			summary TEXT,
+			debit_amount REAL,
+			credit_amount REAL
+		)`,
+		`CREATE TABLE balance_sheet (
+			company TEXT,
+			period TEXT,
+			account_name TEXT,
+			account_code TEXT,
+			opening_balance REAL,
+			closing_balance REAL
+		)`,
+		`CREATE TABLE income_statement (
+			company TEXT,
+			period TEXT,
+			item_name TEXT,
+			current_amount REAL,
+			cumulative_amount REAL
+		)`,
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL
+		)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-04', '2026-04-30', 'J-NEW-1', '6001', '主营业务收入', '贷', 1, '4月账务更新', '其他客户', 0, 1)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
+		 VALUES ('C-FW-REL-NEW-1', '飞未云科（深圳）技术有限公司', '飞未云科项目-2026')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('C-FW-REL-NEW-1', '2026-03', 'contract_fund_income', '26年Q1收入明细', 900, 900, '是', 900)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert seed data failed: %v", err)
+		}
+	}
+
+	return dbPath
 }
