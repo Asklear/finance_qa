@@ -63,6 +63,8 @@ type QuerySpec struct {
 	ReadinessCheckRequired      bool
 	AuthoritativeSourceRequired bool
 	OpeningPeriodAware          bool
+	BossRewrite                 BossQueryRewrite
+	SourceConstraint            string
 	LexiconProfile              string
 }
 

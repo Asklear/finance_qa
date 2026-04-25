@@ -16,6 +16,7 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 	}
 	subPeriod, _ := extractReceiptSubPeriod(q, from, to)
 	entity := extractNamedEntityFromQuestion(q)
+	rewrite := RewriteBossQuery(q, anchor)
 
 	spec := QuerySpec{
 		OriginalQuestion:       question,
@@ -28,6 +29,8 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 		PeriodTo:               to,
 		SubPeriod:              subPeriod,
 		TimeScope:              detectTimeScope(q, from, to, anchor),
+		BossRewrite:            rewrite,
+		SourceConstraint:       rewrite.SourceConstraint,
 		NeedsContractDimension: needsContractDimension,
 		LexiconProfile:         "rules_config",
 	}

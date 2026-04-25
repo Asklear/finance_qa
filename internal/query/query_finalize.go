@@ -22,7 +22,7 @@ func (e *Engine) queryIdentityResult(entity string) Result {
 }
 
 func buildQuerySpecEnvelope(spec QuerySpec) map[string]any {
-	return map[string]any{
+	envelope := map[string]any{
 		"query_family":                  spec.QueryFamily,
 		"metric_kind":                   spec.MetricKind,
 		"entity":                        spec.Entity,
@@ -36,7 +36,27 @@ func buildQuerySpecEnvelope(spec QuerySpec) map[string]any {
 		"readiness_check_required":      spec.ReadinessCheckRequired,
 		"authoritative_source_required": spec.AuthoritativeSourceRequired,
 		"opening_period_aware":          spec.OpeningPeriodAware,
+		"source_constraint":             spec.SourceConstraint,
 		"lexicon_profile":               spec.LexiconProfile,
+	}
+	if spec.BossRewrite.Metric != "" {
+		envelope["boss_rewrite"] = buildBossRewriteEnvelope(spec.BossRewrite)
+	}
+	return envelope
+}
+
+func buildBossRewriteEnvelope(rewrite BossQueryRewrite) map[string]any {
+	return map[string]any{
+		"metric":                rewrite.Metric,
+		"scope":                 rewrite.Scope,
+		"entity":                rewrite.Entity,
+		"period_from":           rewrite.PeriodFrom,
+		"period_to":             rewrite.PeriodTo,
+		"sub_period":            rewrite.SubPeriod,
+		"granularity":           rewrite.Granularity,
+		"perspective":           rewrite.Perspective,
+		"source_constraint":     rewrite.SourceConstraint,
+		"requires_source_probe": rewrite.RequiresSourceProbe,
 	}
 }
 
