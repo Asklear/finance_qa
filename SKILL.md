@@ -9,7 +9,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 0. 契约版本
 
-1. `skill_contract_version`: `2026-04-24.1`
+1. `skill_contract_version`: `2026-04-25.2`
 2. `bridge_protocol_version`: `v2`
 3. 按需附录：`docs/SKILL_APPENDIX_FULL.md`
 
@@ -50,10 +50,29 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 {"filePath":"/abs/path/report.xlsx"}
 ```
 
+4. `finance-sync`
+   - 批量同步目录下财务文件到数据库
+   - 参数：
+```json
+{"directoryPath":"/abs/path/reports","incremental":true,"company":"南京优集数据科技有限公司"}
+```
+
+5. `finance-dimensions`
+   - 维度维护入口，承载 `dimensions` 子命令
+   - 参数示例：
+```json
+{"subcommand":"list"}
+```
+```json
+{"subcommand":"seed-standard","company":"南京优集数据科技有限公司"}
+```
+
 说明：
 
-1. 主 skill 面向宿主问答，不再展开测试、部署、回归、维度维护、批量同步等研发/运维指令。
-2. 如果人类操作者明确要求维护能力，再看 `README.md`、CLI `--help` 或附录，不要默认把这些内容注入老板问答上下文。
+1. 当前 bridge 暴露给 OpenClaw / Claude 的可调用工具共有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
+2. 其中前 3 个面向老板问答主链路；后 2 个属于显式维护/数据治理能力，不应默认注入老板问答上下文。
+3. 这 5 个 bridge 工具不等于仓库 CLI 全部子命令都已桥接暴露。
+4. 如果人类操作者明确要求更多维护能力，再看 `README.md`、CLI `--help` 或附录，不要默认把这些内容注入老板问答上下文。
 
 ## 3. 宿主结果消费顺序
 
@@ -63,13 +82,17 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `原因`
    - `建议`
 3. 若存在 `host_summary_contract`，宿主摘要必须受它约束，不能脱离结构化字段自行重算。
-4. 若没有 `boss_reply`，再退回 `message`。
-5. 无论对老板是否展示，都要保留：
+4. 若存在 `host_summary_supplier_payments`，宿主回答供应商付款类问题时必须优先按它的 `count / total / suppliers / top_supplier / excluded_counterparties` 来组织总结，不要只靠 `message` 或日志重拼。
+5. 若没有 `boss_reply`，再退回 `message`。
+6. 无论对老板是否展示，都要保留：
    - `success`
    - `answer_method`
+   - `boss_reply`
    - `data`
    - `executed_sql`
    - `calculation_logs`
+   - `host_summary_contract`
+   - `host_summary_supplier_payments`
    - `data.trace`
    - `data.intent_trace`
    - `data.query_pipeline`
@@ -86,15 +109,19 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `data.tax_inclusion`
    - `data.tax_inclusion_note`
    - `bridge_meta`
-6. 若存在 `data.source_note`：
+   - `bridge_meta.capabilities`
+7. 若存在 `data.source_note`：
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
-7. 若 `success=false` 或 `answer_method=llm_payload`：
+8. 若 `bridge_meta.capabilities.exposed_tools` 存在：
+   - 仅把其中列出的工具视为当前 bridge 可调用能力
+   - 不要把仓库内其他 CLI 子命令误当成 OpenClaw / Claude 当前可直接调用的 bridge tool
+9. 若 `success=false` 或 `answer_method=llm_payload`：
    - 如果当前结果来自 `finance-query`，立即调用 `finance-host-data`
    - 让宿主 LLM 基于 `data.llm_payload` 继续判断
    - 如果当前结果已经来自 `finance-host-data` 且存在 `data.extraction_errors`，说明宿主数据包提取不完整；此时不能再把半截 `llm_payload` 当完整事实总结给老板
    - 应明确提示“宿主数据包提取不完整，需要先修复库表/字段再重试”
-8. 若存在 `data.tax_inclusion` / `data.tax_inclusion_note`：
+10. 若存在 `data.tax_inclusion` / `data.tax_inclusion_note`：
    - 宿主摘要时必须保留这条口径提示
    - 不能把序时账汇总金额改写成“不含税”或“默认税后”
    - 若给老板做一句话总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
@@ -103,19 +130,20 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 1. `boss_reply` 是后端已整理好的老板口径，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里二次拼数。
 2. `host_summary_contract` 出现时，必须按其字段回答，不允许自行改写成别的时间口径。
-3. 对“累计回款 + 子期间到账”类问题：
+3. `host_summary_supplier_payments` 出现时，必须按其结构化字段回答供应商付款问题，不允许绕开它重新按名称猜供应商、或把被剔除对象重新算回去。
+4. 对“累计回款 + 子期间到账”类问题：
    - `total_amount` 是累计值
    - `sub_period_amount` 是子期间值
    - 不能把 `sub_period_receipts` 当累计值
    - 不能把“其中 3 月到账”改写成“全部在 3 月到账”
-4. CLI 非 0 退出码不等于没有结果：
+5. CLI 非 0 退出码不等于没有结果：
    - 必须优先解析 `stdout` JSON
    - 再看 exit code
-5. 若存在 `data.contract_fallback_reason`：
+6. 若存在 `data.contract_fallback_reason`：
    - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
    - 宿主必须保留“已回退到财务账/流水口径”的事实
    - 不能把回退后的金额继续表述成合同台账原生结果
-6. 若存在 `data.extraction_errors`：
+7. 若存在 `data.extraction_errors`：
    - 说明 `finance-host-data` 或自动 fallback 的宿主数据包提取不完整
    - 宿主不能把 `data.llm_payload` 视为完整证据继续生成确定性结论
 
@@ -174,11 +202,12 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 5. 不能只给一个数字，不保留结构化过程字段
 6. 不能因为 CLI 非 0 退出码直接丢弃 `stdout` JSON
 7. 不能无视 `host_summary_contract`，自行从日志或证据里重算金额
-8. 不能把 `sub_period_receipts` 改写成累计回款
-9. 不能把季度 / 半年 / 全年问题偷换成最后一个月结果
-10. 不能把“利润”和“净利润”混成同一个字段解释
-11. 不能对序时账汇总结果省略含税/未剔税提示
-12. 不能忽略 `data.tax_inclusion` / `data.tax_inclusion_note` 后自行改写税口径
+8. 不能无视 `host_summary_supplier_payments`，自行把员工、内部往来、税费、手续费等被剔除对象加回供应商统计
+9. 不能把 `sub_period_receipts` 改写成累计回款
+10. 不能把季度 / 半年 / 全年问题偷换成最后一个月结果
+11. 不能把“利润”和“净利润”混成同一个字段解释
+12. 不能对序时账汇总结果省略含税/未剔税提示
+13. 不能忽略 `data.tax_inclusion` / `data.tax_inclusion_note` 后自行改写税口径
 
 ## 7. 最小调用示例
 
@@ -232,3 +261,6 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 1. 更细的财务规则、问法覆盖和统计原则，按需参考 `docs/SKILL_APPENDIX_FULL.md`
 2. 若主 skill 与附录冲突，以主 skill 为准
 3. 发布到 Claude / OpenClaw 时，必须保留相对路径 `docs/SKILL_APPENDIX_FULL.md`
+4. 附录会区分：
+   - 已通过 bridge 暴露给宿主的工具/结果结构
+   - 仓库内已实现但默认不桥接暴露的 CLI / 维护能力

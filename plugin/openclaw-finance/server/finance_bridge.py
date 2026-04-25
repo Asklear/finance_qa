@@ -128,8 +128,116 @@ TOOLS = [
             },
             "required": ["filePath"]
         }
+    },
+    {
+        "name": "finance-sync",
+        "description": "批量同步目录下的财务文件到数据库",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "directoryPath": {"type": "string", "description": "待同步目录路径"},
+                "incremental": {"type": "boolean", "description": "是否增量同步"},
+                "company": {"type": "string", "description": "覆盖导入公司名（可选）"},
+            },
+            "required": ["directoryPath"]
+        }
+    },
+    {
+        "name": "finance-dimensions",
+        "description": "维度管理工具，承载 dimensions 子命令",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "subcommand": {"type": "string", "description": "dimensions 子命令"},
+                "code": {"type": "string", "description": "dimension/member code"},
+                "name": {"type": "string", "description": "dimension/member name"},
+                "type": {"type": "string", "description": "dimension type 或 preview type"},
+                "hierarchical": {"type": "boolean", "description": "是否层级维度"},
+                "dimension": {"type": "string", "description": "dimension code"},
+                "company": {"type": "string", "description": "company（可选）"},
+                "outputPath": {"type": "string", "description": "导出文件路径"},
+                "filePath": {"type": "string", "description": "导入/预览文件路径"},
+                "format": {"type": "string", "description": "格式，默认 json"},
+                "validateOnly": {"type": "boolean", "description": "仅校验不写入"},
+                "skipExisting": {"type": "boolean", "description": "跳过已存在记录"},
+                "updateExisting": {"type": "boolean", "description": "更新已存在记录"}
+            },
+            "required": ["subcommand"]
+        }
     }
 ]
+
+DIMENSIONS_SUBCOMMAND_SPECS = {
+    "list": {"args": []},
+    "add-dimension": {
+        "args": [
+            {"name": "code", "flag": "--code", "required": True},
+            {"name": "name", "flag": "--name", "required": True},
+            {"name": "type", "flag": "--type"},
+            {"name": "hierarchical", "flag": "--hierarchical", "type": "bool"},
+        ],
+    },
+    "add-member": {
+        "args": [
+            {"name": "dimension", "flag": "--dimension", "required": True},
+            {"name": "code", "flag": "--code", "required": True},
+            {"name": "name", "flag": "--name", "required": True},
+        ],
+    },
+    "mapping-stats": {
+        "args": [
+            {"name": "company", "flag": "--company"},
+        ],
+    },
+    "seed-standard": {
+        "args": [
+            {"name": "company", "flag": "--company", "required": True},
+        ],
+    },
+    "export-package": {
+        "args": [
+            {"name": "outputPath", "flag": "--output", "required": True},
+            {"name": "format", "flag": "--format"},
+        ],
+    },
+    "import-dimensions": {
+        "args": [
+            {"name": "filePath", "flag": "--file", "required": True},
+            {"name": "format", "flag": "--format"},
+            {"name": "validateOnly", "flag": "--validate-only", "type": "bool"},
+            {"name": "skipExisting", "flag": "--skip-existing", "type": "bool"},
+            {"name": "updateExisting", "flag": "--update-existing", "type": "bool"},
+        ],
+    },
+    "import-members": {
+        "args": [
+            {"name": "dimension", "flag": "--dimension", "required": True},
+            {"name": "filePath", "flag": "--file", "required": True},
+            {"name": "format", "flag": "--format"},
+            {"name": "validateOnly", "flag": "--validate-only", "type": "bool"},
+            {"name": "skipExisting", "flag": "--skip-existing", "type": "bool"},
+            {"name": "updateExisting", "flag": "--update-existing", "type": "bool"},
+        ],
+    },
+    "import-rules": {
+        "args": [
+            {"name": "filePath", "flag": "--file", "required": True},
+            {"name": "company", "flag": "--company"},
+            {"name": "format", "flag": "--format"},
+            {"name": "validateOnly", "flag": "--validate-only", "type": "bool"},
+            {"name": "skipExisting", "flag": "--skip-existing", "type": "bool"},
+            {"name": "updateExisting", "flag": "--update-existing", "type": "bool"},
+        ],
+    },
+    "preview-import": {
+        "args": [
+            {"name": "type", "flag": "--type", "required": True},
+            {"name": "dimension", "flag": "--dimension"},
+            {"name": "filePath", "flag": "--file", "required": True},
+            {"name": "format", "flag": "--format"},
+        ],
+    },
+}
 
 
 def text_result(text):
@@ -169,6 +277,133 @@ def ensure_runtime_ready():
 
 def now_utc_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def bridge_capabilities():
+    return {
+        "boss_reply": True,
+        "contract_summary": True,
+        "supplier_payment_summary": True,
+        "trace": True,
+        "answer_method": True,
+        "llm_fallback": True,
+        "tax_disclosure": True,
+        "exposed_tools": [
+            "finance-query",
+            "finance-host-data",
+            "finance-upload",
+            "finance-sync",
+            "finance-dimensions",
+        ],
+        "result_structures": [
+            "boss_reply",
+            "host_summary_contract",
+            "host_summary_supplier_payments",
+        ],
+        "exposed_fields": [
+            "dual_perspective",
+            "hr_breakdown",
+            "arithmetic_checks",
+            "intent_trace",
+            "tax_inclusion",
+            "tax_inclusion_note",
+        ],
+    }
+
+
+def build_bridge_meta(query=None, tool_name=None, tool_operation=None):
+    meta = {
+        "skill_contract_version": SKILL_CONTRACT_VERSION,
+        "protocol_version": BRIDGE_PROTOCOL_VERSION,
+        "generated_at": now_utc_iso(),
+        "company": DEFAULT_COMPANY,
+        "db": summarize_db_target(FINANCEQA_DB),
+        "skill_path": str(FINANCEQA_SKILL_PATH),
+        "skill_appendix_relative_path": SKILL_APPENDIX_RELATIVE_PATH,
+        "skill_appendix_path": str(SKILL_APPENDIX_PATH),
+        "skill_appendix_exists": SKILL_APPENDIX_PATH.exists(),
+        "capabilities": bridge_capabilities(),
+    }
+    if query is not None:
+        meta["query"] = query
+    if tool_name:
+        meta["tool_name"] = tool_name
+    if tool_operation:
+        meta["tool_operation"] = tool_operation
+    return meta
+
+
+def normalize_cli_command_response(stdout_text, tool_name, tool_operation):
+    parsed = parse_json_or_none(stdout_text)
+    if isinstance(parsed, dict):
+        payload = parsed
+        payload.setdefault("success", True)
+        payload.setdefault("message", "")
+        payload.setdefault("answer_method", "cli_json")
+    elif isinstance(parsed, list):
+        payload = {
+            "success": True,
+            "message": "",
+            "answer_method": "cli_json",
+            "data": parsed,
+        }
+    else:
+        payload = {
+            "success": True,
+            "message": (stdout_text or "").strip(),
+            "answer_method": "cli_text",
+            "data": {"stdout": (stdout_text or "").strip()},
+        }
+    payload["tool_name"] = tool_name
+    payload["bridge_meta"] = build_bridge_meta(tool_name=tool_name, tool_operation=tool_operation)
+    return payload
+
+
+def append_optional_flag(cmd, flag, value):
+    text = str(value or "").strip()
+    if text:
+        cmd.extend([flag, text])
+
+
+def append_optional_bool_flag(cmd, flag, value):
+    if bool(value):
+        cmd.append(flag)
+
+
+def build_dimensions_command(arguments):
+    subcommand = str((arguments or {}).get("subcommand") or "").strip()
+    if not subcommand:
+        raise ValueError("subcommand is required")
+    spec = DIMENSIONS_SUBCOMMAND_SPECS.get(subcommand)
+    if spec is None:
+        raise ValueError(f"unsupported dimensions subcommand: {subcommand}")
+
+    cmd = [
+        str(FINANCEQA_BIN),
+        "dimensions",
+        subcommand,
+        "--db", str(FINANCEQA_DB),
+    ]
+    for arg in spec.get("args") or []:
+        name = arg["name"]
+        flag = arg["flag"]
+        required = bool(arg.get("required"))
+        arg_type = arg.get("type") or "string"
+        value = (arguments or {}).get(name)
+        if arg_type == "bool":
+            append_optional_bool_flag(cmd, flag, value)
+            continue
+        text = str(value or "").strip()
+        if required and not text:
+            raise ValueError(f"{name} is required for dimensions:{subcommand}")
+        append_optional_flag(cmd, flag, text)
+
+    preview_type = str((arguments or {}).get("type") or "").strip()
+    if subcommand == "preview-import" and preview_type == "members":
+        dimension = str((arguments or {}).get("dimension") or "").strip()
+        if not dimension:
+            raise ValueError("dimension is required for dimensions:preview-import when type=members")
+    return cmd, f"dimensions:{subcommand}"
 
 
 def summarize_db_target(db_target):
@@ -351,10 +586,68 @@ def build_host_summary_contract(payload, query):
     return contract
 
 
+def build_host_summary_supplier_payments(payload, query):
+    data = payload.get("data") or {}
+    if payload.get("answer_method") == "llm_payload" or not payload.get("success"):
+        return None
+
+    suppliers = data.get("suppliers") or []
+    if not isinstance(suppliers, list) or not suppliers:
+        return None
+
+    excluded = data.get("excluded_counterparties") or []
+    if not isinstance(excluded, list):
+        excluded = []
+
+    executed_sql = payload.get("executed_sql") or []
+    calculation_logs = payload.get("calculation_logs") or []
+    source_tables = []
+    for text in list(executed_sql) + list(calculation_logs):
+        line = str(text or "")
+        if "bank_statement" in line and "bank_statement" not in source_tables:
+            source_tables.append("bank_statement")
+        if (
+            "collectCounterpartyEvidence" in line or "journal" in line
+        ) and "journal" not in source_tables:
+            source_tables.append("journal")
+
+    evidence_used = any((item or {}).get("signals") for item in suppliers + excluded)
+    if not evidence_used:
+        evidence_used = any(
+            "collectCounterpartyEvidence" in str(text or "") or "journal" in str(text or "")
+            for text in list(executed_sql) + list(calculation_logs)
+        )
+
+    exclusion_reasons = []
+    for item in excluded:
+        reason = str((item or {}).get("exclude_reason") or "").strip()
+        if reason and reason not in exclusion_reasons:
+            exclusion_reasons.append(reason)
+
+    top_supplier = suppliers[0] if suppliers else {}
+    return {
+        "kind": "supplier_payments_period_summary",
+        "period": data.get("period"),
+        "count": data.get("count"),
+        "total": first_float(data.get("total"), data.get("amount")),
+        "suppliers": suppliers,
+        "top_supplier": top_supplier,
+        "excluded_counterparties": excluded,
+        "exclusion_reasons": exclusion_reasons,
+        "supporting_evidence_used": evidence_used,
+        "source_tables": source_tables,
+        "source_summary": data.get("source_summary") or "",
+        "source_note": data.get("source_note") or "",
+        "source_documents": data.get("source_documents") or [],
+        "safe_to_quote_message": True,
+    }
+
+
 def build_boss_reply(payload, query):
     data = payload.get("data") or {}
     msg = payload.get("message") or ""
     summary_contract = build_host_summary_contract(payload, query)
+    summary_supplier = build_host_summary_supplier_payments(payload, query)
     tax_inclusion = str(data.get("tax_inclusion") or "").strip()
     tax_inclusion_note = str(data.get("tax_inclusion_note") or "").strip()
     source_note = str(data.get("source_summary") or data.get("source_note") or "").strip()
@@ -561,6 +854,23 @@ def build_boss_reply(payload, query):
             "建议": "如果还要继续拆客户、项目或月份，请继续追问更细的合同维度问题。",
         }
 
+    if summary_supplier and summary_supplier.get("kind") == "supplier_payments_period_summary":
+        period = summary_supplier.get("period") or data.get("period") or "当前期间"
+        count = int(first_float(summary_supplier.get("count"), data.get("count"), 0) or 0)
+        total = float(first_float(summary_supplier.get("total"), data.get("total"), 0) or 0)
+        top = summary_supplier.get("top_supplier") or {}
+        top_name = str(top.get("name") or "暂无").strip() or "暂无"
+        top_amount = float(first_float(top.get("out_amount"), 0) or 0)
+        evidence_phrase = "，并结合对手方证据补证识别供应商" if summary_supplier.get("supporting_evidence_used") else ""
+        return {
+            "结论": f"{period}外部供应商付款共 {count} 家，合计 {total:.2f} 元。",
+            "原因": append_source_note(
+                f"已按期间内银行实际付款统计{evidence_phrase}，并剔除员工、内部往来、税费和手续费等非供应商项；付款额最高的是 {top_name} {top_amount:.2f} 元。",
+                summary_supplier.get("source_summary") or summary_supplier.get("source_note"),
+            ),
+            "建议": "优先核对前五大供应商付款、发票和应付冲销是否一致。",
+        }
+
     metric = data.get("metric")
     period = data.get("period") or "当前期间"
     if len(requested_metrics) > 1 and "money_view" in data and "account_view" in data:
@@ -594,16 +904,6 @@ def build_boss_reply(payload, query):
             "建议": "如果要继续核对现金收付，请直接追问到账、付款或现金流。",
         }
 
-    if "suppliers" in data:
-        suppliers = data.get("suppliers") or []
-        top = suppliers[0]["name"] if suppliers else "暂无"
-        top_amount = float(suppliers[0].get("out_amount", 0)) if suppliers else 0
-        return {
-            "结论": f"{period}外部供应商付款共 {data.get('count', 0)} 家，合计 {float(data.get('total', 0)):.2f} 元。",
-            "原因": append_source_note(f"已按期间内银行实际付款统计，并剔除员工、内部往来、税费和手续费等非供应商项；付款额最高的是 {top} {top_amount:.2f} 元。"),
-            "建议": "优先核对前五大供应商付款、发票和应付冲销是否一致。",
-        }
-
     if "total" in data and "period" in data:
         return {
             "结论": f"{data.get('period')} 核心金额约 {float(data.get('total', 0)):.2f} 元。",
@@ -624,32 +924,10 @@ def build_structured_response(payload, query):
     summary_contract = build_host_summary_contract(payload, query)
     if summary_contract:
         payload["host_summary_contract"] = summary_contract
-    payload["bridge_meta"] = {
-        "skill_contract_version": SKILL_CONTRACT_VERSION,
-        "protocol_version": BRIDGE_PROTOCOL_VERSION,
-        "generated_at": now_utc_iso(),
-        "query": query,
-        "company": DEFAULT_COMPANY,
-        "db": summarize_db_target(FINANCEQA_DB),
-        "skill_path": str(FINANCEQA_SKILL_PATH),
-        "skill_appendix_relative_path": SKILL_APPENDIX_RELATIVE_PATH,
-        "skill_appendix_path": str(SKILL_APPENDIX_PATH),
-        "skill_appendix_exists": SKILL_APPENDIX_PATH.exists(),
-        "capabilities": {
-            "trace": True,
-            "answer_method": True,
-            "llm_fallback": True,
-            "tax_disclosure": True,
-            "exposed_fields": [
-                "dual_perspective",
-                "hr_breakdown",
-                "arithmetic_checks",
-                "intent_trace",
-                "tax_inclusion",
-                "tax_inclusion_note",
-            ],
-        },
-    }
+    summary_supplier = build_host_summary_supplier_payments(payload, query)
+    if summary_supplier:
+        payload["host_summary_supplier_payments"] = summary_supplier
+    payload["bridge_meta"] = build_bridge_meta(query=query)
     return payload
 
 
@@ -735,19 +1013,33 @@ def run_upload(file_path):
     ])
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout or "").strip())
-    payload = parse_json_or_none(proc.stdout) or {"raw": (proc.stdout or "").strip()}
-    payload["bridge_meta"] = {
-        "skill_contract_version": SKILL_CONTRACT_VERSION,
-        "protocol_version": BRIDGE_PROTOCOL_VERSION,
-        "generated_at": now_utc_iso(),
-        "company": DEFAULT_COMPANY,
-        "db": summarize_db_target(FINANCEQA_DB),
-        "skill_path": str(FINANCEQA_SKILL_PATH),
-        "skill_appendix_relative_path": SKILL_APPENDIX_RELATIVE_PATH,
-        "skill_appendix_path": str(SKILL_APPENDIX_PATH),
-        "skill_appendix_exists": SKILL_APPENDIX_PATH.exists(),
-    }
-    return payload
+    return normalize_cli_command_response(proc.stdout, "finance-upload", "import")
+
+
+def run_sync(arguments):
+    directory_path = str((arguments or {}).get("directoryPath") or "").strip()
+    if not directory_path:
+        raise ValueError("directoryPath is required")
+    cmd = [
+        str(FINANCEQA_BIN),
+        "sync",
+        "--db", str(FINANCEQA_DB),
+    ]
+    append_optional_bool_flag(cmd, "--incremental", (arguments or {}).get("incremental"))
+    append_optional_flag(cmd, "--company", (arguments or {}).get("company"))
+    cmd.append(directory_path)
+    proc = run_cmd(cmd)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "").strip())
+    return normalize_cli_command_response(proc.stdout, "finance-sync", "sync")
+
+
+def run_dimensions(arguments):
+    cmd, tool_operation = build_dimensions_command(arguments or {})
+    proc = run_cmd(cmd)
+    if proc.returncode != 0:
+        raise RuntimeError((proc.stderr or proc.stdout or "").strip())
+    return normalize_cli_command_response(proc.stdout, "finance-dimensions", tool_operation)
 
 
 def handle_list_tools():
@@ -773,6 +1065,14 @@ def handle_call_tool(name, arguments):
         if not file_path:
             raise ValueError("filePath is required")
         payload = run_upload(file_path)
+        return text_result(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    if name == "finance-sync":
+        payload = run_sync(arguments or {})
+        return text_result(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    if name == "finance-dimensions":
+        payload = run_dimensions(arguments or {})
         return text_result(json.dumps(payload, ensure_ascii=False, indent=2))
 
     raise ValueError(f"Unknown tool: {name}")

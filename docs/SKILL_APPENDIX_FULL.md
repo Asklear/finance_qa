@@ -3,26 +3,27 @@ name: "finance"
 description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务问题、读取结构化财务结果，或在不能直接精算时切到宿主LLM兜底。"
 ---
 
-# finance_qa Agent 调用手册（全功能暴露）
+# finance_qa Agent 调用手册（桥接暴露 + 仓库功能全景）
 
-本文档目标：把本代码库所有已实现功能与接口完整暴露，便于各类 Agent 直接调用。
+本文档目标：把“当前已通过 bridge 暴露给 OpenClaw / Claude 的能力”和“仓库内已实现但默认不桥接暴露的能力”同时说清，避免宿主误判可调用范围。
 
 ## 0. 附录状态
 
-1. `appendix_doc_version`: `2026-04-24.1`
-2. `skill_contract_version`: `2026-04-24.1`
+1. `appendix_doc_version`: `2026-04-25.2`
+2. `skill_contract_version`: `2026-04-25.2`
 3. `bridge_protocol_version`: `v2`
-4. `last_updated`: `2026-04-24`
+4. `last_updated`: `2026-04-25`
 5. 当前规范文件名：`docs/SKILL_APPENDIX_FULL.md`
 
 ## 1. 能力定位
 
-`finance_qa` 是老板财务助理引擎，能力分为四层：
+`finance_qa` 是老板财务助理引擎，能力分为五层：
 
-1. 数据层：初始化库、导入报表、目录同步。
-2. 规则层：自然语言意图识别、实体识别、账期识别。
-3. 计算层：双视角核算（银行卡实际进出账 + 财务报表确认）、合同维度台账、税额、应收应付、项目收支等。
-4. 兜底层：输出 `llm_payload` 全量财报上下文给上层 Agent 或宿主模型做最终判别。
+1. Bridge 暴露层：当前 bridge 注册 5 个工具：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
+2. 数据层：初始化库、导入报表、目录同步。
+3. 规则层：自然语言意图识别、实体识别、账期识别。
+4. 计算层：双视角核算（银行卡实际进出账 + 财务报表确认）、合同维度台账、税额、应收应付、项目收支等。
+5. 兜底层：输出 `llm_payload` 全量财报上下文给上层 Agent 或宿主模型做最终判别。
 
 说明：
 
@@ -36,43 +37,48 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 1. `success`
 2. `message`
 3. `answer_method`
-4. `data`
-5. `executed_sql`
-6. `calculation_logs`
-7. `data.trace.executed_sql`
-8. `data.trace.calculation_logs`
-9. `data.intent_trace.router_version`
-10. `data.intent_trace.matched`
-11. `data.intent_trace.scores`
-12. `data.intent_trace.final_intent`
-13. `data.intent_trace.confidence`
-14. `data.query_pipeline`
-15. `data.source_plan`
-16. `data.fact_sets`
-17. `data.source_catalog`
-18. `data.source_note`
-19. `data.source_documents`
-20. `data.primary_source_tables`
-21. `data.supporting_source_documents`
-22. `data.extraction_errors`
-23. `data.contract_fallback_reason`
-24. `data.contract_fallback_target`
-25. `data.exposed_fields.intent_trace`
-26. `data.tax_inclusion`
-27. `data.tax_inclusion_note`
-28. `bridge_meta.skill_contract_version`
-29. `bridge_meta.protocol_version`
-30. `bridge_meta.capabilities`
-31. `bridge_meta.skill_appendix_relative_path`
-32. `bridge_meta.skill_appendix_path`
-33. `bridge_meta.skill_appendix_exists`
+4. `boss_reply`
+5. `host_summary_contract`
+6. `host_summary_supplier_payments`
+7. `data`
+8. `executed_sql`
+9. `calculation_logs`
+10. `data.trace.executed_sql`
+11. `data.trace.calculation_logs`
+12. `data.intent_trace.router_version`
+13. `data.intent_trace.matched`
+14. `data.intent_trace.scores`
+15. `data.intent_trace.final_intent`
+16. `data.intent_trace.confidence`
+17. `data.query_pipeline`
+18. `data.source_plan`
+19. `data.fact_sets`
+20. `data.source_catalog`
+21. `data.source_note`
+22. `data.source_documents`
+23. `data.primary_source_tables`
+24. `data.supporting_source_documents`
+25. `data.extraction_errors`
+26. `data.contract_fallback_reason`
+27. `data.contract_fallback_target`
+28. `data.exposed_fields.intent_trace`
+29. `data.tax_inclusion`
+30. `data.tax_inclusion_note`
+31. `bridge_meta.skill_contract_version`
+32. `bridge_meta.protocol_version`
+33. `bridge_meta.capabilities`
+34. `bridge_meta.capabilities.exposed_tools`
+35. `bridge_meta.capabilities.result_structures`
+36. `bridge_meta.skill_appendix_relative_path`
+37. `bridge_meta.skill_appendix_path`
+38. `bridge_meta.skill_appendix_exists`
 
 说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
 补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序。
 
 ## 3. 宿主运行接口（按需）
 
-宿主默认只需要理解这三个入口：
+宿主当前可调用的 bridge 入口如下：
 
 1. `finance-query`
    - 老板财务问答主入口
@@ -80,6 +86,29 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 当 `finance-query` 不能稳定直答时，提供 `llm_payload`
 3. `finance-upload`
    - 单文件导入财务报表或合同台账 Excel
+4. `finance-sync`
+   - 批量同步目录下财务文件
+5. `finance-dimensions`
+   - 维度管理入口，承载 `dimensions` 子命令
+
+这里的“只需要”是 bridge 当前暴露范围，不代表仓库 CLI 只有这三项能力。
+
+仓库内已实现、但默认不通过 bridge 暴露给宿主上下文的 CLI 能力包括：
+
+1. `init-db`
+2. `config show`
+3. `keywords intents`
+4. `sync`
+5. `dimensions list`
+6. `dimensions add-dimension`
+7. `dimensions add-member`
+8. `dimensions mapping-stats`
+9. `dimensions seed-standard`
+10. `dimensions export-package`
+11. `dimensions import-dimensions`
+12. `dimensions import-members`
+13. `dimensions import-rules`
+14. `dimensions preview-import`
 
 导入落库约定（强制）：
 
@@ -179,6 +208,19 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 3. `supplier_payments`：按期间统计外部供应商付款名单与金额。
 4. `contract_dimension`：客户合同与供应商合同，默认先现金后财务台账。
 5. `readiness`：某主体 / 项目数据是否已出。
+
+bridge 对这些查询族当前额外暴露的宿主摘要结构为：
+
+1. `boss_reply`：老板口径结论/原因/建议
+2. `host_summary_contract`：合同/项目维度及合同汇总结构化摘要
+3. `host_summary_supplier_payments`：供应商付款期间汇总摘要，含：
+   - `count`
+   - `total`
+   - `suppliers`
+   - `top_supplier`
+   - `excluded_counterparties`
+   - `exclusion_reasons`
+   - `supporting_evidence_used`
 
 ## 6. 已支持问题能力清单（老板问法）
 
@@ -331,10 +373,13 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 11. 宿主封装注意事项
 
-1. 当前 `finance_bridge.py` 只注册 3 个桥接工具：
+1. 当前 `finance_bridge.py` 注册 5 个桥接工具：
    - `finance-query`
    - `finance-host-data`
    - `finance-upload`
+   - `finance-sync`
+   - `finance-dimensions`
+   - 宿主应以 `bridge_meta.capabilities.exposed_tools` 为准，不要把仓库内其他 CLI 子命令误判成可直接调用的 bridge tool
 2. 桥接层不会读取或注入 `SKILL.md` / appendix 正文，只会：
    - 读取 `SKILL.md` 顶部契约版本
    - 校验 appendix 相对路径存在
@@ -362,6 +407,9 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 不得把序时账汇总金额擅自改写成“不含税”“税后利润”或“已剔税”
    - 如果要对老板做一段自然语言总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
 10. `bridge_meta.capabilities.tax_disclosure=true` 时，表示 bridge 已显式暴露税口径提示；宿主应优先消费结构化字段，不要回退到正则抽取自然语言。
+11. `bridge_meta.capabilities.boss_reply=true` 时，优先消费 `boss_reply`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
+12. `bridge_meta.capabilities.contract_summary=true` 时，合同类和合同汇总类问题优先消费 `host_summary_contract`。
+13. `bridge_meta.capabilities.supplier_payment_summary=true` 时，供应商付款问题优先消费 `host_summary_supplier_payments`，不要把被剔除的员工、内部往来、税费、手续费对象重新算回去。
 
 ## 12. Agent 返回规范（必须透出中间过程）
 

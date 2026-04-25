@@ -72,8 +72,8 @@ exit 2
 		t.Fatalf("unmarshal list: %v; raw=%s", err, listRaw)
 	}
 	tools, ok := listObj["tools"].([]any)
-	if !ok || len(tools) < 3 {
-		t.Fatalf("expected >=3 tools, got %v", listObj["tools"])
+	if !ok || len(tools) < 5 {
+		t.Fatalf("expected >=5 tools, got %v", listObj["tools"])
 	}
 
 	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"2026年3月人力成本多少"}}`
@@ -108,6 +108,16 @@ exit 2
 	}
 	if exists := bridgeMeta["skill_appendix_exists"]; exists != true {
 		t.Fatalf("skill_appendix_exists should be true, got %v", exists)
+	}
+	capabilities := mustMapMap(t, bridgeMeta, "capabilities")
+	if capabilities["boss_reply"] != true {
+		t.Fatalf("bridge_meta.capabilities.boss_reply should be true, got %v", capabilities["boss_reply"])
+	}
+	if capabilities["contract_summary"] != true {
+		t.Fatalf("bridge_meta.capabilities.contract_summary should be true, got %v", capabilities["contract_summary"])
+	}
+	if exposedTools, ok := capabilities["exposed_tools"].([]any); !ok || len(exposedTools) != 5 {
+		t.Fatalf("bridge_meta.capabilities.exposed_tools should list 5 bridge tools, got %v", capabilities["exposed_tools"])
 	}
 	data := mustMapMap(t, payload, "data")
 	if _, ok := data["trace"].(map[string]any); !ok {
@@ -586,6 +596,87 @@ exit 2
 	}
 	if strings.Contains(conclusion, "核心金额约") {
 		t.Fatalf("boss reply should not fall back to generic total summary, got %s", conclusion)
+	}
+}
+
+func TestFinanceBridgeExposesSupplierPaymentHostSummary(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
+	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
+	dbPath := filepath.Join(tmp, "bridge-supplier-payments.sqlite")
+
+	stubScript := `#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+if [[ "$cmd" == "query" ]]; then
+  cat <<'JSON'
+{"success":true,"message":"2026-03 发生付款的外部供应商共 17 家，合计 3034862.10 元。","answer_method":"sql","data":{"period":"2026-03","count":17,"total":3034862.10,"source_summary":"来源：《银行流水》；供应商识别结合对手方证据与过滤规则复核。","suppliers":[{"name":"南京林悦智能科技有限公司","out_amount":1915915.19,"txn_count":2,"role":"supplier","signals":["journal:应付账款","journal:收到发票"]},{"name":"云南泽塔数据科技有限公司","out_amount":489172.75,"txn_count":1,"role":"supplier","signals":["journal:预付"]}],"excluded_counterparties":[{"name":"南京优集数据科技有限公司深圳分公司","out_amount":77259.78,"exclude_reason":"internal_party"},{"name":"梁梦瑶","out_amount":31469.35,"exclude_reason":"employee_related"}]},"executed_sql":["SELECT ... FROM bank_statement","supplier_payment_classification: collectCounterpartyEvidence + ClassifyCounterparty"],"calculation_logs":["supplier-payments-ok"]}
+JSON
+  exit 0
+fi
+if [[ "$cmd" == "host-data" ]]; then
+  echo '{"success":true,"answer_method":"llm_payload","data":{"llm_payload":{}}}'
+  exit 0
+fi
+echo "unknown cmd: $cmd" >&2
+exit 2
+`
+	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub bin: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"2026年3月有多少家供应商发生付款？分别叫什么、各付了多少？"}}`
+	callRaw := runBridge(t, stubBin, dbPath, skillPath, callReq)
+	payload := parseBridgeContentPayload(t, callRaw)
+
+	summary := mustMapMap(t, payload, "host_summary_supplier_payments")
+	if kind := summary["kind"]; kind != "supplier_payments_period_summary" {
+		t.Fatalf("host_summary_supplier_payments.kind should be supplier_payments_period_summary, got %v", kind)
+	}
+	if count := summary["count"]; count != float64(17) {
+		t.Fatalf("host_summary_supplier_payments.count should be 17, got %v", count)
+	}
+	if total := summary["total"]; total != float64(3034862.10) {
+		t.Fatalf("host_summary_supplier_payments.total should be 3034862.10, got %v", total)
+	}
+	topSupplier := mustMapMap(t, summary, "top_supplier")
+	if topSupplier["name"] != "南京林悦智能科技有限公司" {
+		t.Fatalf("top supplier name mismatch, got %v", topSupplier["name"])
+	}
+	if evidenceUsed := summary["supporting_evidence_used"]; evidenceUsed != true {
+		t.Fatalf("supporting_evidence_used should be true, got %v", evidenceUsed)
+	}
+
+	bossReply := mustMapMap(t, payload, "boss_reply")
+	conclusion, _ := bossReply["结论"].(string)
+	reason, _ := bossReply["原因"].(string)
+	if !strings.Contains(conclusion, "17 家") || !strings.Contains(conclusion, "3034862.10 元") {
+		t.Fatalf("boss reply should summarize supplier count and total, got %s", conclusion)
+	}
+	if !strings.Contains(reason, "对手方证据") {
+		t.Fatalf("boss reply reason should mention supporting evidence, got %s", reason)
+	}
+
+	bridgeMeta := mustMapMap(t, payload, "bridge_meta")
+	capabilities := mustMapMap(t, bridgeMeta, "capabilities")
+	if capabilities["supplier_payment_summary"] != true {
+		t.Fatalf("bridge_meta.capabilities.supplier_payment_summary should be true, got %v", capabilities["supplier_payment_summary"])
 	}
 }
 
