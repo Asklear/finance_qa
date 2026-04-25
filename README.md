@@ -266,6 +266,8 @@ go test ./tests/integration/... -count=1
 ./tests/scripts/run_user19_realdata_check.sh
 ```
 
+真实数据检查脚本的 Markdown 报告默认输出到 `scratch/reports/`，该目录属于本地运行产物，不纳入正式文档入口。
+
 ### 3. 测试文件应该放哪里
 仓库当前采用混合布局，不要求所有 `*_test.go` 都放进顶层 `tests/`：
 
