@@ -188,6 +188,22 @@ ORDER BY year_month, contract_id
 			"strategy": "sql_extract_then_host_llm_reasoning",
 		},
 	}
+	spec := BuildQuerySpec(question, e.getLatestPeriodAnchor())
+	if strings.TrimSpace(from) != "" && strings.TrimSpace(to) != "" {
+		spec.PeriodFrom = from
+		spec.PeriodTo = to
+		spec.BossRewrite.PeriodFrom = from
+		spec.BossRewrite.PeriodTo = to
+	}
+	spec, _ = e.decideBossRoute(context.Background(), spec)
+	if spec.BossRewrite.Metric != "" {
+		payload["query_spec"] = buildQuerySpecEnvelope(spec)
+	}
+	if spec.RouteDecision.SelectedSource != "" || len(spec.RouteDecision.ProbeResults) > 0 {
+		routeDecision := buildRouteDecisionEnvelope(spec.RouteDecision)
+		payload["route_decision"] = routeDecision
+		payload["trace"].(map[string]any)["route_decision"] = routeDecision
+	}
 
 	metadata, err := dbpkg.LoadTableSourceMetadata(context.Background(), e.db, e.dbPath, sourceTables)
 	if err != nil {

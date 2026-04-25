@@ -16,6 +16,7 @@ type RouteDecision struct {
 func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec, RouteDecision) {
 	rewrite := spec.BossRewrite
 	resolvedEntity := strings.TrimSpace(spec.Entity)
+	alreadyContractDimension := spec.NeedsContractDimension || spec.QueryFamily == QueryFamilyContractDimension
 	if rewrite.Metric == "" || rewrite.Metric == BossMetricUnknown {
 		return spec, RouteDecision{}
 	}
@@ -24,20 +25,30 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 	}
 
 	if rewrite.Perspective == BossPerspectiveContractFirst || rewrite.RequiresSourceProbe {
-		contractAnchor := e.getLatestContractPeriodAnchor()
-		rewrite = RewriteBossQuery(spec.NormalizedQuestion, contractAnchor)
-		if resolvedEntity != "" {
-			rewrite.Entity = resolvedEntity
-		}
-		spec.BossRewrite = rewrite
-		if resolvedEntity == "" && strings.TrimSpace(rewrite.Entity) != "" {
-			spec.Entity = strings.TrimSpace(rewrite.Entity)
-		}
-		if strings.TrimSpace(rewrite.PeriodFrom) != "" && strings.TrimSpace(rewrite.PeriodTo) != "" {
-			spec.PeriodFrom = rewrite.PeriodFrom
-			spec.PeriodTo = rewrite.PeriodTo
-			spec.SubPeriod = rewrite.SubPeriod
-			spec.TimeScope = detectTimeScope(spec.NormalizedQuestion, spec.PeriodFrom, spec.PeriodTo, contractAnchor)
+		if alreadyContractDimension {
+			if resolvedEntity != "" {
+				rewrite.Entity = resolvedEntity
+			}
+			rewrite.PeriodFrom = spec.PeriodFrom
+			rewrite.PeriodTo = spec.PeriodTo
+			rewrite.SubPeriod = spec.SubPeriod
+			spec.BossRewrite = rewrite
+		} else {
+			contractAnchor := e.getLatestContractPeriodAnchor()
+			rewrite = RewriteBossQuery(spec.NormalizedQuestion, contractAnchor)
+			if resolvedEntity != "" {
+				rewrite.Entity = resolvedEntity
+			}
+			spec.BossRewrite = rewrite
+			if resolvedEntity == "" && strings.TrimSpace(rewrite.Entity) != "" {
+				spec.Entity = strings.TrimSpace(rewrite.Entity)
+			}
+			if strings.TrimSpace(rewrite.PeriodFrom) != "" && strings.TrimSpace(rewrite.PeriodTo) != "" {
+				spec.PeriodFrom = rewrite.PeriodFrom
+				spec.PeriodTo = rewrite.PeriodTo
+				spec.SubPeriod = rewrite.SubPeriod
+				spec.TimeScope = detectTimeScope(spec.NormalizedQuestion, spec.PeriodFrom, spec.PeriodTo, contractAnchor)
+			}
 		}
 	}
 
@@ -63,7 +74,7 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 	case BossSourceContractAggregate:
 		spec.SourceConstraint = BossSourceContractAggregate
 		spec.PerspectivePolicy = PerspectiveCashThenAccrual
-		if shouldRouteContractProbeAsDimension(rewrite) {
+		if alreadyContractDimension || shouldRouteContractProbeAsDimension(rewrite) {
 			spec.QueryFamily = QueryFamilyContractDimension
 			spec.NeedsContractDimension = true
 			spec.PreferContractAggregate = false
@@ -86,7 +97,7 @@ func shouldSkipBossProbeRouting(spec QuerySpec, rewrite BossQueryRewrite) bool {
 		return false
 	}
 	switch spec.QueryFamily {
-	case QueryFamilyARAP, QueryFamilyReadiness, QueryFamilyReconciliation, QueryFamilyHRCost:
+	case QueryFamilyARAP, QueryFamilyReadiness, QueryFamilyReconciliation, QueryFamilyHRCost, QueryFamilySupplierPayments:
 		return true
 	}
 	switch rewrite.Metric {

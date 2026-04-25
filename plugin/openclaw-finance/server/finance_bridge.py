@@ -288,6 +288,9 @@ def bridge_capabilities():
         "answer_method": True,
         "llm_fallback": True,
         "tax_disclosure": True,
+        "route_decision": True,
+        "probe_results": True,
+        "source_attribution": True,
         "exposed_tools": [
             "finance-query",
             "finance-host-data",
@@ -299,6 +302,7 @@ def bridge_capabilities():
             "boss_reply",
             "host_summary_contract",
             "host_summary_supplier_payments",
+            "route_decision",
         ],
         "exposed_fields": [
             "dual_perspective",
@@ -307,6 +311,11 @@ def bridge_capabilities():
             "intent_trace",
             "tax_inclusion",
             "tax_inclusion_note",
+            "route_decision",
+            "source_documents",
+            "source_note",
+            "source_summary",
+            "contract_fallback_reason",
         ],
     }
 
@@ -448,6 +457,11 @@ def normalize_exposed_fields(data):
         "intent_trace": data.get("intent_trace"),
         "tax_inclusion": data.get("tax_inclusion"),
         "tax_inclusion_note": data.get("tax_inclusion_note"),
+        "route_decision": data.get("route_decision"),
+        "source_documents": data.get("source_documents") or [],
+        "source_note": data.get("source_note") or "",
+        "source_summary": data.get("source_summary") or "",
+        "contract_fallback_reason": data.get("contract_fallback_reason") or "",
     }
     data["exposed_fields"] = exposed
     return data
@@ -519,6 +533,8 @@ def build_host_summary_contract(payload, query):
             "source_summary": data.get("source_summary") or "",
             "source_note": data.get("source_note") or "",
             "source_documents": data.get("source_documents") or [],
+            "route_decision": data.get("route_decision") or (query_spec.get("route_decision") if isinstance(query_spec, dict) else {}),
+            "contract_fallback_reason": data.get("contract_fallback_reason") or "",
             "safe_to_quote_message": True,
         }
         if "sub_period" in data:
@@ -547,6 +563,8 @@ def build_host_summary_contract(payload, query):
             "source_summary": data.get("source_summary") or "",
             "source_note": data.get("source_note") or "",
             "source_documents": data.get("source_documents") or [],
+            "route_decision": data.get("route_decision") or (query_spec.get("route_decision") if isinstance(query_spec, dict) else {}),
+            "contract_fallback_reason": data.get("contract_fallback_reason") or "",
             "safe_to_quote_message": True,
         }
         return contract

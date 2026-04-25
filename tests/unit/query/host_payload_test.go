@@ -251,4 +251,20 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 	if costRows[0]["paid_amount"] != float64(180) {
 		t.Fatalf("paid_amount missing from fin_cost_settlements payload: %#v", costRows[0])
 	}
+
+	routeDecision, ok := payload["route_decision"].(map[string]any)
+	if !ok {
+		t.Fatalf("route_decision should be included for host summarizer: %#v", payload["route_decision"])
+	}
+	if got := routeDecision["selected_source"]; got != "contract_aggregate" {
+		t.Fatalf("route_decision.selected_source = %v, want contract_aggregate", got)
+	}
+	probeResults, ok := routeDecision["probe_results"].([]map[string]any)
+	if !ok || len(probeResults) == 0 {
+		t.Fatalf("route_decision.probe_results missing: %#v", routeDecision["probe_results"])
+	}
+	sourceDocs, ok := probeResults[0]["source_documents"].([]string)
+	if !ok || len(sourceDocs) == 0 {
+		t.Fatalf("probe source_documents should be included: %#v", probeResults[0])
+	}
 }
