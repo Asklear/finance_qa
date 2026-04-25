@@ -32,7 +32,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 2. 过程暴露要求
 
-所有查询响应都必须暴露以下字段，不可只返回结果值：
+查询响应必须暴露足够的业务结构，不可只返回结果值。注意：CLI 内部可能产生 SQL/trace；bridge 面向 OpenClaw / Claude 的结果会做字段净化，隐藏数据库 id、科目代码、SQL 和内部来源分区字段。
 
 1. `success`
 2. `message`
@@ -41,42 +41,39 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 5. `host_summary_contract`
 6. `host_summary_supplier_payments`
 7. `data`
-8. `executed_sql`
-9. `calculation_logs`
-10. `data.trace.executed_sql`
-11. `data.trace.calculation_logs`
-12. `data.intent_trace.router_version`
-13. `data.intent_trace.matched`
-14. `data.intent_trace.scores`
-15. `data.intent_trace.final_intent`
-16. `data.intent_trace.confidence`
-17. `data.query_spec`
-18. `data.route_decision`
-19. `data.route_decision.probe_results`
-20. `data.query_pipeline`
-21. `data.source_plan`
-22. `data.fact_sets`
-23. `data.source_catalog`
-24. `data.source_note`
-25. `data.source_documents`
-26. `data.primary_source_tables`
-27. `data.supporting_source_documents`
-28. `data.extraction_errors`
-29. `data.contract_fallback_reason`
-30. `data.contract_fallback_target`
-31. `data.exposed_fields.intent_trace`
-32. `data.tax_inclusion`
-33. `data.tax_inclusion_note`
-34. `bridge_meta.skill_contract_version`
-35. `bridge_meta.protocol_version`
-36. `bridge_meta.capabilities`
-37. `bridge_meta.capabilities.exposed_tools`
-38. `bridge_meta.capabilities.result_structures`
-39. `bridge_meta.skill_appendix_relative_path`
-40. `bridge_meta.skill_appendix_path`
-41. `bridge_meta.skill_appendix_exists`
+8. `data.trace`（审计摘要；SQL 可能已隐藏）
+9. `data.intent_trace.router_version`
+10. `data.intent_trace.matched`
+11. `data.intent_trace.scores`
+12. `data.intent_trace.final_intent`
+13. `data.intent_trace.confidence`
+14. `data.query_spec`
+15. `data.route_decision`
+16. `data.route_decision.probe_results`
+17. `data.query_pipeline`
+18. `data.source_plan`
+19. `data.fact_sets`
+20. `data.source_catalog`
+21. `data.source_note`
+22. `data.source_documents`
+23. `data.primary_source_tables`
+24. `data.supporting_source_documents`
+25. `data.extraction_errors`
+26. `data.contract_fallback_reason`
+27. `data.contract_fallback_target`
+28. `data.exposed_fields.intent_trace`
+29. `data.tax_inclusion`
+30. `data.tax_inclusion_note`
+31. `bridge_meta.skill_contract_version`
+32. `bridge_meta.protocol_version`
+33. `bridge_meta.capabilities`
+34. `bridge_meta.capabilities.exposed_tools`
+35. `bridge_meta.capabilities.result_structures`
+36. `bridge_meta.skill_appendix_relative_path`
+37. `bridge_meta.skill_appendix_path`
+38. `bridge_meta.skill_appendix_exists`
 
-说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
+说明：即使结果无法直接回答，也要尽量保留完整业务过程。若底层已经产出更完整的 trace、证据等级或规则链路，bridge 可保留脱敏摘要；SQL、数据库 id、科目代码和内部字段名不得默认透出给宿主老板问答。
 重要边界：过程暴露是给宿主、前端和审计链路使用，不等于对老板展示。老板可见回复必须经过字段净化，只输出业务概念、金额、期间、口径和来源，不原样暴露数据库辅助字段。
 补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序。
 
@@ -190,19 +187,20 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 补充规则：
 
 1. 意图识别必须先按功能模块分流，再决定口径，不允许把“季度/半年/全年/累计”的区间问题误当成单月问题。
-2. 总量型核心指标问题（收入/成本/利润/销售额）先尝试合同/项目汇总口径：`fin_contracts + fin_fund_income + fin_cost_settlements`；是否能回答以 `data.route_decision.probe_results` 的真实数据覆盖探测为准，只有合同汇总答不全时，才回退到现金收付 + 经营确认。
-3. 如果合同汇总答不全并触发回退，响应中应保留 `data.contract_fallback_reason`，宿主必须显式告诉老板“合同台账当前不能直接回答，以下改按财务账/流水口径说明”。
-4. `利润` 与 `净利润` 必须分开：
+2. 总量型核心指标问题（收入/成本/利润/销售额）先尝试合同/项目汇总口径：`fin_contracts + fin_fund_income + fin_cost_settlements`；是否能回答以 `data.route_decision.probe_results` 的真实数据覆盖探测为准。
+3. 如果合同汇总答不全，默认返回 `data.contract_answer_status=missing` / `data.contract_fallback_reason` 并停止自动回退；宿主必须告诉老板“合同口径当前不能直接回答”，不能自行切到财务账或银行流水下结论。
+4. 只有用户明确说“账上/科目余额/资产负债表/序时账/银行流水/实际到账/实际支出”等非合同口径时，才允许查对应财务账或现金流水。
+5. `利润` 与 `净利润` 必须分开：
    - `利润` 默认按 `收入 - 成本及费用 + 营业外收入 - 营业外支出`
    - `净利润` 单独回答，不得和“利润”混说
-5. 序时账汇总结果必须带“是否含税”说明；默认解释为按凭证入账金额统计、不主动剔税，若税额未单独拆分通常视为含税口径。
-6. 如果问题里带有明确的真实主体，优先回答这个主体的金额或状态，不强行改成整月汇总。
-7. 当直接规则无法稳定回答时，自动降级输出 `llm_payload` 给上层 Agent 继续判断。
-8. 如果响应里出现 `query_pipeline=orchestrator`，宿主应视为后端已经完成多源聚合，不要再自行重排主口径。
+6. 序时账汇总结果必须带“是否含税”说明；默认解释为按凭证入账金额统计、不主动剔税，若税额未单独拆分通常视为含税口径。
+7. 如果问题里带有明确的真实主体，优先回答这个主体的金额或状态，不强行改成整月汇总。
+8. 当直接规则无法稳定回答时，自动降级输出 `llm_payload` 给上层 Agent 继续判断；但合同严格缺口不是自动降级信号，除非用户显式要求非合同口径。
+9. 如果响应里出现 `query_pipeline=orchestrator`，宿主应视为后端已经完成多源聚合，不要再自行重排主口径。
 
 当前已接入多源编排器的主查询族：
 
-1. `core_metric`：收入 / 成本 / 利润 / 销售额，支持“合同/项目汇总优先，失败后回退到现金+经营/财务”。
+1. `core_metric`：收入 / 成本 / 利润 / 销售额，支持“合同/项目汇总优先；合同缺口时默认停止，显式非合同口径才查现金或财务账”。
 2. `arap`：应收 / 应付，优先官方余额，再补开放项证据。
 3. `supplier_payments`：按期间统计外部供应商付款名单与金额。
 4. `contract_dimension`：客户合同与供应商合同，默认先现金后财务台账。
@@ -226,7 +224,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
 以下问题当前都已支持，且会返回中间过程：
 
-1. 月度收入/成本/利润（老板问汇总时先尝试合同/项目汇总；答不全时再回退现金口径 + 经营口径，并保留差异桥字段）。
+1. 月度收入/成本/利润（老板问汇总时先尝试合同/项目汇总；答不全时默认说明合同口径缺口，不自动回退；显式问账上或银行流水时再查对应口径）。
 2. 某客户/供应商/主体在某期间金额（穿透审计）。
 3. 这个月整体支出。
 4. 人力成本。
@@ -236,7 +234,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 8. 某项目某月成本。
 9. 某月销项税额。
 10. 某月进项税额。
-11. 某月总成本（老板问汇总时先尝试合同成本；答不全时再回退现金支出 + 经营成本，必要时解释预提/冲回影响）。
+11. 某月总成本（老板问汇总时先尝试合同成本；答不全时默认说明合同成本口径缺口；显式问账上或银行支出时再查对应口径，必要时解释预提/冲回影响）。
 12. 某月应收账款（余额表口径）。
 13. 某月应付账款（余额表口径）。
 14. 某项目应收/应付（项目净流入口径）。
@@ -279,8 +277,8 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 1. 先尝试合同/项目汇总：`fin_contracts + fin_fund_income + fin_cost_settlements`。
 2. 合同汇总能回答时，优先输出老板口径的合同营收、合同成本、合同利润，并可补充合同回款/开票。
 3. 合同汇总是否能回答，以 `route_decision.probe_results` 的覆盖状态为准，不靠关键词硬猜。
-4. 只有合同汇总答不全时，才回退到“先现金，再经营/财务”。
-5. 若发生这类回退，必须显式保留并透出 `data.contract_fallback_reason`，不能把回退后的结果伪装成合同台账原生答案。
+4. 合同汇总答不全时，默认停止自动回退，并透出 `data.contract_answer_status=missing` / `data.contract_fallback_reason`。
+5. 只有用户显式要求非合同口径时，才改查“银行流水/现金”或“账上/财务账”；不得把非合同口径伪装成合同台账原生答案。
 6. 如果回答的是 `利润`，经营口径默认解释为：`收入 - 成本及费用 + 营业外收入 - 营业外支出`。
 7. 如果老板明确问 `净利润`，要单独返回净利润，不得把“利润”字段直接冒充净利润。
 8. 如果经营口径来自序时账汇总，必须同步输出含税说明。
@@ -298,7 +296,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
 说明：
 
-1. 核心指标不是一律“银行卡上看 + 经营口径”；老板问汇总时先看合同/项目汇总，只有答不全才回退到“先现金、再经营确认”。
+1. 核心指标不是一律“银行卡上看 + 经营口径”；老板问汇总时先看合同/项目汇总，合同答不全时先说明缺口并停止，只有显式问账上或银行流水才改查对应口径。
 2. `季度/半年/全年/累计` 这类区间问题，经营口径必须按区间汇总，不允许直接拿最后一个月的 `current_amount` 充当区间结果。
 3. 如果问题继续追问 `差异原因`、`为什么不一样`、`回款和利润差异`，再把利润桥、税项时差和预提/冲回影响讲透。
 4. 如果问题明确在问某个客户、供应商、员工或项目，优先返回主体审计结果，不强制改成整月现金和经营汇总。
@@ -403,8 +401,8 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
    - 应直接暴露抽取失败信息，并提示先修复库表/字段再重试
 7. 如果结果带有 `data.contract_fallback_reason`：
    - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
-   - 宿主必须明确说明“以下已回退到财务账/流水口径”
-   - 不得把后续金额继续包装成合同台账原生答案
+   - 若同时存在 `data.contract_answer_status=missing` 或 `data.source_priority=contract_strict`，宿主必须停在合同缺口说明，不能自行切到财务账/流水下结论
+   - 只有后端明确返回 `data.contract_fallback_target` 时，才可说明已经切换到对应非合同口径
 8. 若人类明确要求高级维护能力，再通过直接 CLI / shell 工具调用，不要默认把这些能力说明注入老板问答上下文。
 9. 若响应里带有 `data.tax_inclusion` / `data.tax_inclusion_note`：
    - 宿主摘要时必须保留这条税口径提示
@@ -446,7 +444,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 禁止只返回一个数字，必须按以下结构输出：
 
 1. 一句话结论：先回答老板最关心的结果（金额 + 时间）。
-2. 业务解释：老板问汇总时先说明“合同/项目汇总口径”；只有合同汇总答不全时，再切到“银行卡上看/实际收付 + 经营确认”；继续追问差异时再展开利润桥、税项时差和预提/冲回影响。
+2. 业务解释：老板问汇总时先说明“合同/项目汇总口径”；合同汇总答不全时先说明缺口，不自动切到“银行卡上看/实际收付 + 经营确认”；继续追问差异或显式要求非合同口径时，再展开利润桥、税项时差和预提/冲回影响。
 3. 如果经营口径来自序时账汇总，必须补一句含税说明；不要把序时账金额默认为不含税。
 4. 管理动作：给 1-2 条可执行建议（催收、控费、回款跟进、税务检查等）。
 5. 过程可追溯：接口里保留 `executed_sql` / `calculation_logs`，但对老板默认折叠展示。
@@ -623,7 +621,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
 1. 不要把”收入”直接等同”银行到账”。
 2. 不要把”成本”直接等同”银行支出”。
-3. 涉及核心指标，老板问汇总时先查合同/项目汇总，答不全再给现金收付 + 经营确认；涉及明确主体时优先返回主体审计结果，不强行改成整月现金和经营汇总。
+3. 涉及核心指标，老板问汇总时先查合同/项目汇总，答不全时默认说明合同口径缺口；只有显式问账上或银行流水时再给现金收付或经营确认。涉及明确主体时优先返回主体审计结果，不强行改成整月现金和经营汇总。
 4. 缺数据时必须返回 `llm_payload` 或明确缺口，不可编造。
 5. 供应商相关回答要返回具体名单（`data.suppliers`），不能只给总数。
 6. 问”今年/本月/上个月”时，账期按数据库最新凭证日期自动锚定，不按自然月盲算。

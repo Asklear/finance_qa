@@ -34,7 +34,7 @@ func resolveSourceAttributionTables(spec QuerySpec, data map[string]any) []strin
 		return dedupeSourceTables(contractSourceTablesFromData(data)...)
 	case QueryFamilyCoreMetric:
 		if strings.TrimSpace(anyToString(data["source_priority"])) == "contract_first" {
-			return dedupeSourceTables(append([]string{"fin_contracts"}, contractAggregateTablesForMetric(detectSourceMetric(spec, data))...)...)
+			return dedupeSourceTables(append([]string{"fin_contracts"}, contractAggregateTablesForRequestedMetrics(spec, data)...)...)
 		}
 		accrualSource := detectAccrualSource(data)
 		tables := make([]string, 0, 2)
@@ -92,7 +92,7 @@ func resolvePrimaryAndSupportingBaseTables(spec QuerySpec, data map[string]any) 
 		}
 	case QueryFamilyCoreMetric:
 		if strings.TrimSpace(anyToString(data["source_priority"])) == "contract_first" {
-			return contractAggregateTablesForMetric(detectSourceMetric(spec, data)), []string{"fin_contracts"}
+			return contractAggregateTablesForRequestedMetrics(spec, data), []string{"fin_contracts"}
 		}
 		accrualSource := detectAccrualSource(data)
 		if strings.Contains(accrualSource, "journal") {

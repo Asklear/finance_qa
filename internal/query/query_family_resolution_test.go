@@ -40,8 +40,14 @@ func TestResolveOperationalQueryFamilyPrioritizesOperationalRoutes(t *testing.T)
 			want:   QueryFamilyHRCost,
 		},
 		{
-			name:   "arap",
+			name:   "contract_first_arap",
 			q:      "2026年3月应付账款多少（已收发票未付款）？",
+			intent: IntentARAPQuery,
+			want:   QueryFamilyCoreMetric,
+		},
+		{
+			name:   "explicit_official_arap",
+			q:      "2026年3月科目余额中的应付账款多少？",
 			intent: IntentARAPQuery,
 			want:   QueryFamilyARAP,
 		},

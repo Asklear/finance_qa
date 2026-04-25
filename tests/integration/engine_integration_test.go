@@ -128,7 +128,7 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 		t.Fatalf("net vat = %.2f, want 110", v)
 	}
 
-	ar := eng.Query("2026年2月应收账款情况")
+	ar := eng.Query("2026年2月账上应收账款情况")
 	if !ar.Success {
 		t.Fatalf("ar query failed: %s", ar.Message)
 	}
@@ -139,7 +139,7 @@ func TestEngineCoreQueriesAgainstSQLite(t *testing.T) {
 		t.Fatalf("ar details missing or empty, got %v", ar.Data["details"])
 	}
 
-	ap := eng.Query("2026年2月应付账款情况")
+	ap := eng.Query("2026年2月账上应付账款情况")
 	if !ap.Success {
 		t.Fatalf("ap query failed: %s", ap.Message)
 	}

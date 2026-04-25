@@ -55,7 +55,7 @@ func TestARAPUsesCrossMonthFIFOSettlement(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月应收账款情况")
+	res := engine.Query("2026年3月账上应收账款情况")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
@@ -139,7 +139,7 @@ func TestARAPNormalizesSummaryDerivedCounterpartyBeforeSettlement(t *testing.T) 
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月应收账款情况")
+	res := engine.Query("2026年3月账上应收账款情况")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
@@ -203,7 +203,7 @@ func TestARAPSummaryDerivedSettlementStaysProbableUntilDirectEvidenceExists(t *t
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月应收账款情况")
+	res := engine.Query("2026年3月账上应收账款情况")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
@@ -374,7 +374,7 @@ func TestPayableOpenItemsTreatNegativeCreditAsReduction(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月应付账款情况")
+	res := engine.Query("2026年3月账上应付账款情况")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
@@ -451,7 +451,7 @@ func TestGeneralARAPUsesBalanceSheetAsOfficialTotal(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月应付账款情况")
+	res := engine.Query("2026年3月账上应付账款情况")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
@@ -482,7 +482,7 @@ func TestARAPSourceAdapterReturnsOfficialAndOpenItemFacts(t *testing.T) {
 	defer engine.Close()
 
 	adapter := query.NewARAPSourceAdapter(engine)
-	spec := query.BuildQuerySpec("2026年3月应付账款情况", time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC))
+	spec := query.BuildQuerySpec("2026年3月账上应付账款情况", time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC))
 
 	factSet, err := adapter.Fetch(context.Background(), spec)
 	if err != nil {
@@ -503,7 +503,7 @@ func TestARAPQueryExposesSourceBackedFactSets(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月应付账款情况")
+	res := engine.Query("2026年3月账上应付账款情况")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
@@ -514,9 +514,6 @@ func TestARAPQueryExposesSourceBackedFactSets(t *testing.T) {
 	}
 	if factSets[0].Source != "arap" {
 		t.Fatalf("fact set source = %s, want arap", factSets[0].Source)
-	}
-	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
-		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
 	}
 }
 

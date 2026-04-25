@@ -58,5 +58,14 @@ func composeContractAggregateCoreMetricResult(frame AnswerFrame) (Result, bool, 
 			CalculationLogs: extractFrameTraceStrings(frame.FactSets, "calculation_logs"),
 		}, true, nil
 	}
+	if shouldUseStrictContractSourceForSpec(frame.Spec) {
+		return buildStrictContractMissingResultForSpec(
+			frame.Spec,
+			anyToString(trace["fallback_reason"]),
+			anySourceStringSlice(trace["source_tables"]),
+			extractFrameTraceStrings(frame.FactSets, "executed_sql"),
+			extractFrameTraceStrings(frame.FactSets, "calculation_logs"),
+		), true, nil
+	}
 	return Result{}, false, nil
 }

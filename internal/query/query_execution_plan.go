@@ -44,6 +44,9 @@ func (e *Engine) finalizeExecutionResult(ctx queryExecutionContext, result Resul
 	if result.Success {
 		return ctx.finalize(result)
 	}
+	if shouldStopAtStrictContractSource(ctx) {
+		return ctx.finalize(buildStrictContractMissingResult(ctx, result))
+	}
 	if fallback, ok := e.tryExplicitContractFallback(ctx, result); ok {
 		return ctx.finalize(fallback)
 	}

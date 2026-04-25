@@ -31,6 +31,8 @@ func resolveOperationalQueryFamily(q string, intent Intent, cfg RuleConfig) (Que
 		return QueryFamilySupplierPayments, true
 	case shouldUseHRBreakdown(q, cfg):
 		return QueryFamilyHRCost, true
+	case shouldUseContractFirstARAP(q):
+		return QueryFamilyCoreMetric, true
 	case intent == IntentARAPQuery || isOpeningPeriodQuestion(q):
 		return QueryFamilyARAP, true
 	case shouldUseReconciliation(q):

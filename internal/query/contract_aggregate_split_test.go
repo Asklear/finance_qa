@@ -16,8 +16,8 @@ func TestContractAggregateFallbackReasonMentionsMissingCoverage(t *testing.T) {
 	if !strings.Contains(reason, "合同成本") {
 		t.Fatalf("fallback reason should mention missing contract cost, got: %s", reason)
 	}
-	if !strings.Contains(reason, "已回退到现金+经营/财务口径") {
-		t.Fatalf("fallback reason should mention fallback policy, got: %s", reason)
+	if strings.Contains(reason, "已回退") || strings.Contains(reason, "现金+经营/财务") {
+		t.Fatalf("fallback reason should not claim an automatic fallback, got: %s", reason)
 	}
 }
 

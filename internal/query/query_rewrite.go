@@ -104,6 +104,8 @@ func RewriteBossQuery(question string, anchor time.Time) BossQueryRewrite {
 func detectBossMetric(q string) BossMetric {
 	cfg := getRuleConfig()
 	switch {
+	case isARAPQuestion(q):
+		return BossMetricARAP
 	case containsAny(q, []string{"回款", "到账", "收款"}):
 		return BossMetricReceipts
 	case containsAny(q, []string{"付款", "支付", "付了"}):
@@ -135,8 +137,10 @@ func detectBossPerspectiveAndSource(q string, metric BossMetric) (BossPerspectiv
 	switch {
 	case containsAny(q, []string{"银行", "银行卡", "流水", "现金流", "实际到账", "实际支出", "现金口径"}):
 		return BossPerspectiveExplicitCash, BossSourceBankStatement
-	case containsAny(q, []string{"序时账", "凭证", "利润表", "财务账", "报表口径"}):
+	case shouldUseExplicitFinancialAccountQuestion(q):
 		return BossPerspectiveFinancialAccount, BossSourceJournal
+	case metric == BossMetricARAP && shouldUseContractFirstARAP(q):
+		return BossPerspectiveContractFirst, ""
 	case metric == BossMetricARAP:
 		return BossPerspectiveOfficialThenEvidence, BossSourceBalance
 	case metric == BossMetricTax || metric == BossMetricHRCost:
@@ -146,6 +150,13 @@ func detectBossPerspectiveAndSource(q string, metric BossMetric) (BossPerspectiv
 	default:
 		return BossPerspectiveUnknown, ""
 	}
+}
+
+func shouldUseExplicitFinancialAccountQuestion(q string) bool {
+	return containsAny(q, []string{
+		"序时账", "序时帐", "凭证", "利润表", "财务账", "会计账", "报表口径", "账上",
+		"科目余额", "发生额及余额", "余额表", "资产负债表",
+	})
 }
 
 func detectBossScope(q, entity string) BossScope {
@@ -165,6 +176,7 @@ func looksLikeBossRewriteNonEntity(entity string) bool {
 	}
 	return containsAny(normalized, []string{
 		"银行卡", "银行", "实际", "到账", "回款", "收款", "付款", "现金", "现金流",
+		"应收", "应付", "账款", "开票", "收票", "发票", "未付", "未回", "未收",
 	})
 }
 
@@ -191,12 +203,12 @@ func shouldBossRewriteProbe(metric BossMetric, perspective BossPerspective) bool
 	if perspective == BossPerspectiveExplicitCash {
 		return false
 	}
-	return isBossContractFirstMetric(metric)
+	return perspective == BossPerspectiveContractFirst || isBossContractFirstMetric(metric)
 }
 
 func isBossContractFirstMetric(metric BossMetric) bool {
 	switch metric {
-	case BossMetricRevenue, BossMetricCost, BossMetricProfit, BossMetricReceipts, BossMetricPayments, BossMetricInvoice:
+	case BossMetricRevenue, BossMetricCost, BossMetricProfit, BossMetricReceipts, BossMetricPayments, BossMetricInvoice, BossMetricARAP:
 		return true
 	default:
 		return false

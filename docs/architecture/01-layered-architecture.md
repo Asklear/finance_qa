@@ -46,7 +46,7 @@ flowchart LR
 1. 老板核心指标默认先尝试合同/专家表口径：`fin_contracts + fin_fund_income + fin_cost_settlements`。
 2. 合同/专家表是否能回答，不靠关键词硬猜，而是经过 `query_rewrite -> semantic_catalog -> source_probe -> route_decision`。
 3. 明确现金问题（银行、银行卡、实际到账、实际支出、回款、付款、净增加）优先走 `bank_cash_queries`。
-4. `query_execution*` 负责执行阶段排序和回退策略；合同优先问题只有在合同表不能覆盖时，才显式回退到现金或财务账口径。
+4. `query_execution*` 负责执行阶段排序和口径切换策略；合同优先问题在合同表不能覆盖时默认停止并说明缺口，只有用户显式要求账上或银行流水口径时才切换到现金或财务账。
 5. `orchestrator + source_adapter_*` 负责多源事实集合并，`contract_aggregate_*` 负责老板口径的合同/项目汇总。
 6. 来源追溯统一在查询收口阶段完成：优先读取表/字段注释中的结构化 `financeqa_source` 元数据，生成 `source_note/source_documents`。
 7. 底层数据库默认 PostgreSQL；SQLite 只作为显式本地兼容模式，不再默认回退根目录 `finance.db`。

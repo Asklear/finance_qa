@@ -16,6 +16,9 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 	}
 	subPeriod, _ := extractReceiptSubPeriod(q, from, to)
 	entity := extractNamedEntityFromQuestion(q)
+	if looksLikeBossRewriteNonEntity(entity) {
+		entity = ""
+	}
 	rewrite := RewriteBossQuery(q, anchor)
 
 	spec := QuerySpec{
@@ -40,6 +43,9 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 func reconcileQuerySpec(spec QuerySpec, resolvedEntity string, cfg RuleConfig) QuerySpec {
 	if strings.TrimSpace(resolvedEntity) != "" {
 		spec.Entity = strings.TrimSpace(resolvedEntity)
+		if looksLikeBossRewriteNonEntity(spec.Entity) {
+			spec.Entity = ""
+		}
 	}
 
 	spec.QueryFamily = detectQueryFamily(

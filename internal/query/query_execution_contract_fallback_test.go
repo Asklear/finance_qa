@@ -34,7 +34,7 @@ func TestBuildExecutionPlanForContractDimensionSkipsSilentGenericFallbackStages(
 	}
 }
 
-func TestContractDimensionFailureFallsBackExplicitlyInsteadOfSilentlyHijacking(t *testing.T) {
+func TestContractDimensionFailureStopsAtStrictContractSource(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "contract-explicit-fallback.sqlite")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -77,14 +77,21 @@ func TestContractDimensionFailureFallsBackExplicitlyInsteadOfSilentlyHijacking(t
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "合同台账当前不能直接回答") {
-		t.Fatalf("message should disclose explicit contract fallback, got: %s", res.Message)
+	if !strings.Contains(res.Message, "合同口径当前不能直接回答") {
+		t.Fatalf("message should disclose strict contract miss, got: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "已回退到财务账/流水口径") {
-		t.Fatalf("message should disclose fallback destination, got: %s", res.Message)
+	if strings.Contains(res.Message, "已回退到财务账/流水口径") {
+		t.Fatalf("message should not auto fallback to financial/cash source, got: %s", res.Message)
 	}
 	if got, _ := res.Data["contract_fallback_reason"].(string); got == "" {
 		t.Fatalf("contract_fallback_reason missing: %+v", res.Data)
+	}
+	if got, _ := res.Data["contract_answer_status"].(string); got != "missing" {
+		t.Fatalf("contract_answer_status = %q, want missing", got)
+	}
+	sourceNote, _ := res.Data["source_note"].(string)
+	if !strings.Contains(sourceNote, "《合同信息表》") || !containsAnyForContractFallbackTest(sourceNote, []string{"优集资金收入计算表", "合同资金收入表"}) {
+		t.Fatalf("source_note should disclose attempted contract source, got %q", sourceNote)
 	}
 	spec, ok := res.Data["query_spec"].(map[string]any)
 	if !ok {
@@ -93,4 +100,139 @@ func TestContractDimensionFailureFallsBackExplicitlyInsteadOfSilentlyHijacking(t
 	if got := spec["query_family"]; got != QueryFamilyContractDimension {
 		t.Fatalf("query_family = %v, want %v", got, QueryFamilyContractDimension)
 	}
+}
+
+func TestContractDimensionARAPFailureStopsAtStrictContractSource(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "contract-arap-source-fallback.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
+		`CREATE TABLE fin_fund_income (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, received_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL, account_code TEXT)`,
+		`CREATE TABLE journal (company TEXT, period TEXT, voucher_date TEXT, voucher_no TEXT, account_code TEXT, account_name TEXT, summary TEXT, direction TEXT, amount REAL, debit_amount REAL, credit_amount REAL, counterparty TEXT)`,
+		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, credit_amount REAL, debit_amount REAL, counterparty_name TEXT, summary TEXT)`,
+		`CREATE TABLE income_statement (company TEXT, period TEXT, item_name TEXT, current_amount REAL, cumulative_amount REAL)`,
+		`CREATE TABLE balance_detail (company TEXT, year INTEGER, period TEXT, account_code TEXT, account_name TEXT, opening_debit REAL, opening_credit REAL, current_debit REAL, current_credit REAL, closing_debit REAL, closing_credit REAL)`,
+		`CREATE TABLE balance_sheet (company TEXT, period TEXT, account_code TEXT, account_name TEXT, opening_balance REAL, closing_balance REAL)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-OTHER-001', '其他客户有限公司', '其他项目')`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty) VALUES
+		 ('测试公司','2026-03','2026-03-08','记-AP-001','220201','应付账款','收到律师服务发票','贷',12000,0,12000,'北京市中闻（南京）律师事务所')`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty) VALUES
+		 ('测试公司','2026-03','2026-03-08','记-AP-001','660201','管理费用','收到律师服务发票','借',12000,12000,0,'北京市中闻（南京）律师事务所')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("北京市中闻（南京）律师事务所2026年3月应付账款多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "合同口径当前不能直接回答") {
+		t.Fatalf("message should disclose strict contract miss, got: %s", res.Message)
+	}
+	if strings.Contains(res.Message, "期末余额 12000.00") {
+		t.Fatalf("message should not expose financial fallback amount in strict contract mode, got: %s", res.Message)
+	}
+	sourceNote, _ := res.Data["source_note"].(string)
+	if !strings.Contains(sourceNote, "《合同信息表》") || !containsAnyForContractFallbackTest(sourceNote, []string{"优集成本计算表", "合同成本结算表"}) {
+		t.Fatalf("source_note should disclose attempted contract payable source, got %q", sourceNote)
+	}
+	if strings.Contains(sourceNote, "《序时帐》") {
+		t.Fatalf("source_note should not claim journal source when strict contract answer did not use it, got %q", sourceNote)
+	}
+	primary, ok := res.Data["primary_source_tables"].([]string)
+	if !ok || !containsBaseTableForContractFallbackTest(primary, "fin_cost_settlements") {
+		t.Fatalf("primary_source_tables = %#v, want contract cost table", res.Data["primary_source_tables"])
+	}
+}
+
+func TestExplicitFinancialARAPBypassesContractStrictSource(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "explicit-financial-arap.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
+		`CREATE TABLE fin_fund_income (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, received_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL, account_code TEXT)`,
+		`CREATE TABLE journal (company TEXT, period TEXT, voucher_date TEXT, voucher_no TEXT, account_code TEXT, account_name TEXT, summary TEXT, direction TEXT, amount REAL, debit_amount REAL, credit_amount REAL, counterparty TEXT)`,
+		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, credit_amount REAL, debit_amount REAL, counterparty_name TEXT, summary TEXT)`,
+		`CREATE TABLE income_statement (company TEXT, period TEXT, item_name TEXT, current_amount REAL, cumulative_amount REAL)`,
+		`CREATE TABLE balance_detail (company TEXT, year INTEGER, period TEXT, account_code TEXT, account_name TEXT, opening_debit REAL, opening_credit REAL, current_debit REAL, current_credit REAL, closing_debit REAL, closing_credit REAL)`,
+		`CREATE TABLE balance_sheet (company TEXT, period TEXT, account_code TEXT, account_name TEXT, opening_balance REAL, closing_balance REAL)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty) VALUES
+		 ('测试公司','2026-03','2026-03-08','记-AP-001','220201','应付账款','收到律师服务发票','贷',12000,0,12000,'北京市中闻（南京）律师事务所')`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty) VALUES
+		 ('测试公司','2026-03','2026-03-08','记-AP-001','660201','管理费用','收到律师服务发票','借',12000,12000,0,'北京市中闻（南京）律师事务所')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("北京市中闻（南京）律师事务所2026年3月账上应付账款多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "期末余额 12000.00") {
+		t.Fatalf("explicit financial AR/AP should return journal rollforward amount, got: %s", res.Message)
+	}
+	sourceNote, _ := res.Data["source_note"].(string)
+	if !strings.Contains(sourceNote, "《序时帐》") {
+		t.Fatalf("source_note should disclose financial journal source, got %q", sourceNote)
+	}
+	if strings.Contains(sourceNote, "优集资金收入计算表") || strings.Contains(sourceNote, "优集成本计算表") {
+		t.Fatalf("explicit financial AR/AP should not use contract workbook source, got %q", sourceNote)
+	}
+}
+
+func containsStringForContractFallbackTest(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsBaseTableForContractFallbackTest(items []string, want string) bool {
+	for _, item := range items {
+		if baseSourceTableName(item) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyForContractFallbackTest(s string, items []string) bool {
+	for _, item := range items {
+		if strings.Contains(s, item) {
+			return true
+		}
+	}
+	return false
 }

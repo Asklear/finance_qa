@@ -10,7 +10,13 @@ func shouldPreferContractAggregate(q string, intent Intent, family QueryFamily, 
 	if family != QueryFamilyCoreMetric {
 		return false
 	}
+	if shouldUseContractFirstARAP(q) {
+		return true
+	}
 	if intent == IntentARAPQuery || intent == IntentTaxQuery || intent == IntentAnalysis || intent == IntentHostPayload {
+		return false
+	}
+	if shouldUseExplicitFinancialAccountQuestion(q) {
 		return false
 	}
 	if metricKind == MetricKindUnknown || metricKind == MetricKindReceipts {

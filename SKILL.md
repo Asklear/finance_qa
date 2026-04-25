@@ -84,16 +84,14 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 3. 若存在 `host_summary_contract`，宿主摘要必须受它约束，不能脱离结构化字段自行重算。
 4. 若存在 `host_summary_supplier_payments`，宿主回答供应商付款类问题时必须优先按它的 `count / total / suppliers / top_supplier / excluded_counterparties` 来组织总结，不要只靠 `message` 或日志重拼。
 5. 若没有 `boss_reply`，再退回 `message`。
-6. 无论对老板是否展示，都要保留：
+6. Bridge 面向宿主返回的是已脱敏结构；宿主应保留并消费以下业务字段：
    - `success`
    - `answer_method`
    - `boss_reply`
    - `data`
-   - `executed_sql`
-   - `calculation_logs`
    - `host_summary_contract`
    - `host_summary_supplier_payments`
-   - `data.trace`
+   - `data.trace`（仅作为审计摘要；SQL 和内部字段可能已被 bridge 隐藏）
    - `data.intent_trace`
    - `data.query_spec`
    - `data.route_decision`
@@ -114,6 +112,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `bridge_meta`
    - `bridge_meta.capabilities`
    - 注意：这里的“保留”是给宿主、前端和审计链路保留，不等于对老板展示；老板可见回复必须只输出业务概念、金额、期间、口径和来源，不直接暴露数据库辅助字段。
+   - 若需要原始 SQL / 未脱敏 trace，只能在人类明确要求开发排错时通过本地 CLI 或日志查看，不能在老板问答中默认暴露。
 7. 若存在 `data.source_note`：
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
@@ -150,8 +149,8 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 再看 exit code
 7. 若存在 `data.contract_fallback_reason`：
    - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
-   - 宿主必须保留“已回退到财务账/流水口径”的事实
-   - 不能把回退后的金额继续表述成合同台账原生结果
+   - 若同时存在 `data.contract_answer_status=missing` 或 `data.source_priority=contract_strict`，表示系统已阻断自动回退；宿主只能说明合同口径缺口，不能自行改用财务账/流水下结论
+   - 只有当后端明确返回 `data.contract_fallback_target` 时，才可说明已经切换到对应非合同口径
 8. 若存在 `data.extraction_errors`：
    - 说明 `finance-host-data` 或自动 fallback 的宿主数据包提取不完整
    - 宿主不能把 `data.llm_payload` 视为完整证据继续生成确定性结论
@@ -162,8 +161,8 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 如果老板在问整公司或区间汇总的 `收入 / 营收 / 成本 / 利润 / 销售额`，先尝试 `fin_contracts + fin_fund_income + fin_cost_settlements`
    - 合同/项目汇总能回答时，优先按老板口径返回合同营收、合同成本、合同利润；可补充合同回款/开票
    - 合同/项目汇总是否能回答，由 `route_decision.probe_results` 的真实数据覆盖探测决定，不靠关键词硬猜
-   - 只有合同/项目汇总表答不全时，才回退到“先现金、再经营/财务”
-   - 一旦发生回退，宿主要明确说明“合同台账当前不能直接回答，以下改按财务账/流水口径回答”，不能静默换口径
+   - 合同/项目汇总表答不全时，默认返回“合同口径当前不能直接回答”，并停止自动回退，避免把非老板口径冒充合同口径
+   - 只有用户明确说“账上/科目余额/资产负债表/序时账/银行流水/实际到账/实际支出”等非合同口径时，才改查对应财务账或现金流水
    - 银行流水 / 实际到账 / 实际支出 / 净增加 / 回款 这类现金问题，不要强行先走合同汇总
    - `利润` 默认按 `收入 - 成本及费用 + 营业外收入 - 营业外支出`
    - 如果老板明确问 `净利润`，再单独按净利润回答，不要和“利润”混说
@@ -189,7 +188,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 客户合同默认先答“现金口径：到账/回款”，再答“财务口径：合同台账结算/开票”
    - 供应商合同默认先答“现金口径：实际付款”，再答“财务口径：合同成本”
    - 混合合同也要先现金、再财务，不能把两个口径揉成一段
-   - 如果合同台账当前不能直接回答，要保留 `data.contract_fallback_reason`，并显式说明已回退到财务账/流水口径
+   - 如果合同台账当前不能直接回答，要保留 `data.contract_fallback_reason`，并明确说明“未自动切到财务账或银行流水”；用户显式要求非合同口径后再查对应来源
    - 合同优先关键词、合同来源表映射都应视为可配置规则，不要假设是写死常量
 8. 证据不足：
    - 直接说“目前库里还不能硬判”

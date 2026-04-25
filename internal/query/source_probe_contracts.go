@@ -8,6 +8,10 @@ import (
 
 func (e *Engine) probeContractAggregate(ctx context.Context, rewrite BossQueryRewrite) SourceProbeResult {
 	switch rewrite.Metric {
+	case BossMetricARAP:
+		revenue := e.probeContractAmount(ctx, rewrite, "fin_fund_income", "settlement_amount", "合同应收")
+		cost := e.probeContractAmount(ctx, rewrite, "fin_cost_settlements", "settlement_amount", "合同应付")
+		return combineContractARAPProbe(rewrite, revenue, cost)
 	case BossMetricCost, BossMetricPayments:
 		return e.probeContractAmount(ctx, rewrite, "fin_cost_settlements", "settlement_amount", "成本")
 	case BossMetricProfit:
@@ -27,6 +31,31 @@ func (e *Engine) probeContractAggregate(ctx context.Context, rewrite BossQueryRe
 	default:
 		return e.probeContractAmount(ctx, rewrite, "fin_fund_income", "settlement_amount", "收入")
 	}
+}
+
+func combineContractARAPProbe(rewrite BossQueryRewrite, revenue, cost SourceProbeResult) SourceProbeResult {
+	result := SourceProbeResult{
+		Source:          BossSourceContractAggregate,
+		SemanticMatch:   revenue.SemanticMatch || cost.SemanticMatch,
+		Metric:          BossMetricARAP,
+		PeriodFrom:      rewrite.PeriodFrom,
+		PeriodTo:        rewrite.PeriodTo,
+		PrimaryTables:   dedupeStrings(append(revenue.PrimaryTables, cost.PrimaryTables...)),
+		SourceDocuments: combineProbeDocuments(revenue, cost),
+		CoverageStatus:  CoverageMissing,
+	}
+	result.RowCount = revenue.RowCount + cost.RowCount
+	if revenue.CanAnswer || cost.CanAnswer {
+		result.CanAnswer = true
+		if revenue.CoverageStatus == CoverageFull || cost.CoverageStatus == CoverageFull {
+			result.CoverageStatus = CoverageFull
+		} else {
+			result.CoverageStatus = CoveragePartial
+		}
+		return result
+	}
+	result.MissingReason = "合同应收/应付口径在请求期间 " + displayPeriod(rewrite.PeriodFrom, rewrite.PeriodTo) + " 没有匹配记录"
+	return result
 }
 
 func (e *Engine) probeContractAmount(ctx context.Context, rewrite BossQueryRewrite, tableName, amountColumn, label string) SourceProbeResult {
@@ -160,4 +189,23 @@ func countPeriodsInclusive(from, to string) int {
 		return 0
 	}
 	return (toYear-fromYear)*12 + (toMonth - fromMonth) + 1
+}
+
+func (e *Engine) hasAnyContractLedgerRows(ctx context.Context, tables []string) bool {
+	for _, tableName := range tables {
+		base := baseSourceTableName(tableName)
+		switch base {
+		case "fin_contracts", "fin_fund_income", "fin_cost_settlements":
+		default:
+			continue
+		}
+		if len(e.tableColumns(base)) == 0 {
+			continue
+		}
+		var count int
+		if err := e.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s", base)).Scan(&count); err == nil && count > 0 {
+			return true
+		}
+	}
+	return false
 }

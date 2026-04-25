@@ -112,8 +112,8 @@ func TestOrchestratorReturnsStructuredErrorWhenCapabilityMissing(t *testing.T) {
 	if !errors.As(err, &missing) {
 		t.Fatalf("error = %T, want *MissingCapabilityError", err)
 	}
-	if missing.Capability != query.SourceCapabilityOfficialARAP {
-		t.Fatalf("missing capability = %s, want %s", missing.Capability, query.SourceCapabilityOfficialARAP)
+	if missing.Capability != query.SourceCapabilityContractLedger {
+		t.Fatalf("missing capability = %s, want %s", missing.Capability, query.SourceCapabilityContractLedger)
 	}
 }
 

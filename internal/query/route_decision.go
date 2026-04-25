@@ -36,6 +36,11 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 		} else {
 			contractAnchor := e.getLatestContractPeriodAnchor()
 			rewrite = RewriteBossQuery(spec.NormalizedQuestion, contractAnchor)
+			if rewrite.Perspective == BossPerspectiveContractFirst {
+				from, to := extractContractQuestionPeriods(spec.NormalizedQuestion, contractAnchor)
+				rewrite.PeriodFrom = from
+				rewrite.PeriodTo = to
+			}
 			if resolvedEntity != "" {
 				rewrite.Entity = resolvedEntity
 			}
@@ -59,6 +64,13 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 	}
 
 	first := probes[0]
+	if first.Source == BossSourceContractAggregate && !first.CanAnswer && !e.hasAnyContractLedgerRows(ctx, first.PrimaryTables) {
+		decision.FallbackReason = first.MissingReason
+		spec.SourceConstraint = ""
+		spec.PreferContractAggregate = false
+		spec.RouteDecision = decision
+		return spec, decision
+	}
 	decision.SelectedSource = first.Source
 	decision.PrimaryTables = append([]string{}, first.PrimaryTables...)
 	decision.SupportingTables = append([]string{}, first.SupportingTables...)
@@ -85,6 +97,13 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 		}
 		if metricKind := metricKindFromBossMetric(rewrite.Metric); metricKind != MetricKindUnknown {
 			spec.MetricKind = metricKind
+		} else if rewrite.Metric == BossMetricARAP {
+			requested := detectRequestedMetrics(spec.OriginalQuestion)
+			if contractAggregateNeedsCostData(requested) {
+				spec.MetricKind = MetricKindCost
+			} else {
+				spec.MetricKind = MetricKindRevenue
+			}
 		}
 	}
 
@@ -94,6 +113,12 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 
 func shouldSkipBossProbeRouting(spec QuerySpec, rewrite BossQueryRewrite) bool {
 	if rewrite.Perspective == BossPerspectiveExplicitCash || rewrite.SourceConstraint == BossSourceBankStatement {
+		return false
+	}
+	if spec.QueryFamily == QueryFamilyHRCost {
+		return true
+	}
+	if rewrite.Metric == BossMetricARAP && rewrite.Perspective == BossPerspectiveContractFirst {
 		return false
 	}
 	switch spec.QueryFamily {

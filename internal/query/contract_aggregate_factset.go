@@ -15,9 +15,13 @@ func buildContractAggregateFactSet(spec QuerySpec, summary contractAggregateSumm
 		"executed_sql":      append([]string{}, summary.ExecutedSQL...),
 		"calculation_logs":  append([]string{}, summary.CalculationLogs...),
 		"coverage": map[string]any{
-			"收入": summary.HasRevenueCoverage,
-			"成本": summary.HasCostCoverage,
-			"利润": summary.HasRevenueCoverage && summary.HasCostCoverage,
+			"收入":     summary.HasRevenueCoverage,
+			"成本":     summary.HasCostCoverage,
+			"利润":     summary.HasRevenueCoverage && summary.HasCostCoverage,
+			"应收":     summary.HasRevenueCoverage,
+			"应付":     summary.HasCostCoverage,
+			"已开票未回款": summary.HasRevenueCoverage,
+			"已收票未付款": summary.HasCostCoverage,
 		},
 		"can_answer":      canAnswer,
 		"fallback_reason": fallbackReason,
@@ -44,6 +48,10 @@ func buildContractAggregateFactSet(spec QuerySpec, summary contractAggregateSumm
 	includeRevenue := contractAggregateIncludesMetric(summary.RequestedMetrics, "收入")
 	includeCost := contractAggregateIncludesMetric(summary.RequestedMetrics, "成本")
 	includeProfit := contractAggregateIncludesMetric(summary.RequestedMetrics, "利润")
+	includeReceivable := contractAggregateIncludesMetric(summary.RequestedMetrics, "应收")
+	includePayable := contractAggregateIncludesMetric(summary.RequestedMetrics, "应付")
+	includeInvoiceAR := contractAggregateIncludesMetric(summary.RequestedMetrics, "已开票未回款")
+	includeInvoiceAP := contractAggregateIncludesMetric(summary.RequestedMetrics, "已收票未付款")
 
 	if includeRevenue {
 		appendFact("contract_aggregate_revenue", summary.RevenueSettlement, summary.HasRevenueCoverage)
@@ -56,6 +64,20 @@ func buildContractAggregateFactSet(spec QuerySpec, summary contractAggregateSumm
 	if includeProfit {
 		appendFact("contract_aggregate_profit", summary.Profit, summary.HasRevenueCoverage && summary.HasCostCoverage)
 		appendFact("contract_aggregate_cash_net", summary.RevenueReceived-summary.CostPaid, summary.HasRevenueCoverage && summary.HasCostCoverage)
+	}
+	if includeReceivable {
+		appendFact("contract_aggregate_receivable", summary.RevenueReceivable, summary.HasRevenueCoverage)
+		appendFact("contract_aggregate_invoiced_unreceived", summary.RevenueInvoiceOpen, summary.HasRevenueCoverage)
+	}
+	if includePayable {
+		appendFact("contract_aggregate_payable", summary.CostPayable, summary.HasCostCoverage)
+		appendFact("contract_aggregate_invoiced_unpaid", summary.CostInvoiceOpen, summary.HasCostCoverage)
+	}
+	if includeInvoiceAR {
+		appendFact("contract_aggregate_invoiced_unreceived", summary.RevenueInvoiceOpen, summary.HasRevenueCoverage)
+	}
+	if includeInvoiceAP {
+		appendFact("contract_aggregate_invoiced_unpaid", summary.CostInvoiceOpen, summary.HasCostCoverage)
 	}
 
 	return FactSet{

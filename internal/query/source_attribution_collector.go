@@ -49,6 +49,24 @@ func contractAggregateTablesForMetric(metric string) []string {
 	}
 }
 
+func contractAggregateTablesForRequestedMetrics(spec QuerySpec, data map[string]any) []string {
+	requested := anySourceStringSlice(data["requested_metrics"])
+	if len(requested) == 0 {
+		return contractAggregateTablesForMetric(detectSourceMetric(spec, data))
+	}
+	tables := make([]string, 0, 2)
+	if contractAggregateNeedsRevenueData(requested) {
+		tables = append(tables, "fin_fund_income")
+	}
+	if contractAggregateNeedsCostData(requested) {
+		tables = append(tables, "fin_cost_settlements")
+	}
+	if len(tables) == 0 {
+		return contractAggregateTablesForMetric(detectSourceMetric(spec, data))
+	}
+	return dedupeSourceTables(tables...)
+}
+
 func detectSourceMetric(spec QuerySpec, data map[string]any) string {
 	if metric := strings.TrimSpace(anyToString(data["metric"])); metric != "" && metric != "核心指标" {
 		return metric

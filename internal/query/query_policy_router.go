@@ -8,6 +8,10 @@ import (
 
 func detectMetricKind(q string, cfg RuleConfig) MetricKind {
 	switch {
+	case shouldUseContractFirstARAP(q) && contractAggregateNeedsCostData([]string{detectContractARAPMetric(q)}):
+		return MetricKindCost
+	case shouldUseContractFirstARAP(q):
+		return MetricKindRevenue
 	case containsAny(q, []string{"回款", "到账", "收款"}):
 		return MetricKindReceipts
 	case containsAny(q, cfg.MetricKeywords(metricKeyProfit)):
@@ -42,6 +46,9 @@ func detectPerspectivePolicy(q string, intent Intent, needsContractDimension boo
 	if needsContractDimension {
 		return PerspectiveCashThenAccrual
 	}
+	if shouldUseContractFirstARAP(q) {
+		return PerspectiveCashThenAccrual
+	}
 	if intent == IntentARAPQuery || isOpeningPeriodQuestion(q) {
 		return PerspectiveOfficialThenEvidence
 	}
@@ -55,9 +62,29 @@ func detectPerspectivePolicy(q string, intent Intent, needsContractDimension boo
 }
 
 func isOpeningPeriodQuestion(q string) bool {
-	return containsAny(q, []string{"应收账款", "应付账款", "应收/应付", "期初", "期末", "已收发票未付款", "已开发票未收款"})
+	return isARAPQuestion(q) && shouldUseOfficialARAPQuestion(q)
 }
 
 func isAuthoritativeSourceQuestion(q string) bool {
-	return containsAny(q, []string{"应收账款", "应付账款", "科目余额", "期末余额", "期初"})
+	return isARAPQuestion(q) && shouldUseOfficialARAPQuestion(q)
+}
+
+func isARAPQuestion(q string) bool {
+	return containsAny(q, []string{
+		"应收账款", "应付账款", "应收/应付", "应收", "应付",
+		"已收发票未付款", "已收票未付款", "收到发票未付款",
+		"已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款",
+	})
+}
+
+func shouldUseOfficialARAPQuestion(q string) bool {
+	return containsAny(q, []string{
+		"科目余额", "发生额及余额", "余额表", "资产负债表",
+		"财务账", "会计账", "报表口径", "账上",
+		"期初", "期末", "期初余额", "期末余额", "余额",
+	})
+}
+
+func shouldUseContractFirstARAP(q string) bool {
+	return isARAPQuestion(q) && !shouldUseOfficialARAPQuestion(q)
 }

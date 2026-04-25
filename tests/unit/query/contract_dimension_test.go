@@ -377,14 +377,17 @@ func TestCompanyAggregateMetricFallsBackWhenContractSummaryMissingCoverage(t *te
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "已回退到现金+经营/财务口径") {
-		t.Fatalf("message should explain contract fallback, got: %s", res.Message)
+	if !strings.Contains(res.Message, "合同口径当前不能直接回答") {
+		t.Fatalf("message should stop at strict contract source, got: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "先说现金口径") {
-		t.Fatalf("message should fall back to dual perspective core metric, got: %s", res.Message)
+	if strings.Contains(res.Message, "先说现金口径") || strings.Contains(res.Message, "已回退到现金+经营/财务口径") {
+		t.Fatalf("message should not auto fallback to dual perspective core metric, got: %s", res.Message)
 	}
 	if got := res.Data["contract_fallback_reason"]; got == nil {
 		t.Fatalf("contract_fallback_reason missing: %+v", res.Data)
+	}
+	if got, _ := res.Data["contract_answer_status"].(string); got != "missing" {
+		t.Fatalf("contract_answer_status = %q, want missing", got)
 	}
 }
 

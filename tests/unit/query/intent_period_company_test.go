@@ -218,7 +218,7 @@ func TestBuildQuerySpecCapturesReadinessAndOpeningSemantics(t *testing.T) {
 		t.Fatalf("readiness period = %s~%s, want 2026-03~2026-03", readiness.PeriodFrom, readiness.PeriodTo)
 	}
 
-	arap := query.BuildQuerySpec("2026年3月应付账款多少（已收发票未付款）？", now)
+	arap := query.BuildQuerySpec("2026年3月账上应付账款多少（已收发票未付款）？", now)
 	if arap.QueryFamily != query.QueryFamilyARAP {
 		t.Fatalf("ARAP QueryFamily = %s, want %s", arap.QueryFamily, query.QueryFamilyARAP)
 	}
@@ -263,7 +263,7 @@ func TestPlanQuerySpecUsesMetricSpecificSourceStrategies(t *testing.T) {
 		t.Fatalf("revenue plan capabilities = %+v, want contract ledger + cash receipts + accrual revenue", revenuePlan.Capabilities)
 	}
 
-	arapPlan := query.PlanQuerySpec(query.BuildQuerySpec("2026年3月应收账款多少？", now))
+	arapPlan := query.PlanQuerySpec(query.BuildQuerySpec("2026年3月账上应收账款多少？", now))
 	if !arapPlan.Requires(query.SourceCapabilityOfficialARAP) || !arapPlan.Requires(query.SourceCapabilityOpenItemEvidence) {
 		t.Fatalf("AR/AP plan capabilities = %+v, want official balance + open-item evidence", arapPlan.Capabilities)
 	}

@@ -28,6 +28,18 @@ func buildContractAggregateMetricMap(selection contractAggregateSelection, summa
 	if selection.IncludeProfit {
 		metrics["利润"] = round2(summary.Profit)
 	}
+	if selection.IncludeReceivable {
+		metrics["应收"] = round2(summary.RevenueReceivable)
+	}
+	if selection.IncludePayable {
+		metrics["应付"] = round2(summary.CostPayable)
+	}
+	if selection.IncludeInvoiceAR {
+		metrics["已开票未回款"] = round2(summary.RevenueInvoiceOpen)
+	}
+	if selection.IncludeInvoiceAP {
+		metrics["已收票未付款"] = round2(summary.CostInvoiceOpen)
+	}
 	return metrics
 }
 
@@ -43,9 +55,31 @@ func buildContractAggregatePayloadSummary(selection contractAggregateSelection, 
 		payload["revenue_received"] = round2(summary.RevenueReceived)
 		payload["invoice_amount"] = round2(summary.RevenueInvoiced)
 	}
+	if selection.IncludeReceivable {
+		payload["revenue_settlement"] = round2(summary.RevenueSettlement)
+		payload["revenue_received"] = round2(summary.RevenueReceived)
+		payload["receivable_amount"] = round2(summary.RevenueReceivable)
+		payload["invoiced_unreceived_amount"] = round2(summary.RevenueInvoiceOpen)
+	}
+	if selection.IncludeInvoiceAR {
+		payload["revenue_received"] = round2(summary.RevenueReceived)
+		payload["invoice_amount"] = round2(summary.RevenueInvoiced)
+		payload["invoiced_unreceived_amount"] = round2(summary.RevenueInvoiceOpen)
+	}
 	if selection.IncludeCost {
 		payload["cost_settlement"] = round2(summary.CostSettlement)
 		payload["cost_paid"] = round2(summary.CostPaid)
+	}
+	if selection.IncludePayable {
+		payload["cost_settlement"] = round2(summary.CostSettlement)
+		payload["cost_paid"] = round2(summary.CostPaid)
+		payload["payable_amount"] = round2(summary.CostPayable)
+		payload["invoiced_unpaid_amount"] = round2(summary.CostInvoiceOpen)
+	}
+	if selection.IncludeInvoiceAP {
+		payload["cost_paid"] = round2(summary.CostPaid)
+		payload["invoice_amount"] = round2(summary.CostInvoiced)
+		payload["invoiced_unpaid_amount"] = round2(summary.CostInvoiceOpen)
 	}
 	if selection.IncludeProfit {
 		payload["profit"] = round2(summary.Profit)
@@ -66,6 +100,18 @@ func buildContractAggregateCoverage(selection contractAggregateSelection, summar
 	if selection.IncludeProfit {
 		coverage["利润"] = summary.HasRevenueCoverage && summary.HasCostCoverage
 	}
+	if selection.IncludeReceivable {
+		coverage["应收"] = summary.HasRevenueCoverage
+	}
+	if selection.IncludePayable {
+		coverage["应付"] = summary.HasCostCoverage
+	}
+	if selection.IncludeInvoiceAR {
+		coverage["已开票未回款"] = summary.HasRevenueCoverage
+	}
+	if selection.IncludeInvoiceAP {
+		coverage["已收票未付款"] = summary.HasCostCoverage
+	}
 	return coverage
 }
 
@@ -82,12 +128,32 @@ func buildContractAggregateMoneyView(selection contractAggregateSelection, summa
 		view["付款"] = round2(summary.CostPaid)
 	case selection.IncludeRevenue && !selection.IncludeCost && !selection.IncludeProfit:
 		view["到账"] = round2(summary.RevenueReceived)
+	case selection.IncludeReceivable && !selection.IncludePayable:
+		view["已到账"] = round2(summary.RevenueReceived)
+	case selection.IncludePayable && !selection.IncludeReceivable:
+		view["已付款"] = round2(summary.CostPaid)
+	case selection.IncludeInvoiceAR && !selection.IncludeInvoiceAP:
+		view["已到账"] = round2(summary.RevenueReceived)
+	case selection.IncludeInvoiceAP && !selection.IncludeInvoiceAR:
+		view["已付款"] = round2(summary.CostPaid)
 	default:
 		if selection.IncludeRevenue {
 			view["回款"] = round2(summary.RevenueReceived)
 		}
+		if selection.IncludeReceivable {
+			view["已到账"] = round2(summary.RevenueReceived)
+		}
 		if selection.IncludeCost {
 			view["付款"] = round2(summary.CostPaid)
+		}
+		if selection.IncludePayable {
+			view["已付款"] = round2(summary.CostPaid)
+		}
+		if selection.IncludeInvoiceAR {
+			view["已到账"] = round2(summary.RevenueReceived)
+		}
+		if selection.IncludeInvoiceAP {
+			view["已付款"] = round2(summary.CostPaid)
 		}
 		if selection.IncludeProfit || (selection.IncludeRevenue && selection.IncludeCost) {
 			view["净现金"] = round2(summary.RevenueReceived - summary.CostPaid)
@@ -109,6 +175,20 @@ func buildContractAggregateAccountView(selection contractAggregateSelection, sum
 	}
 	if selection.IncludeProfit {
 		view["利润"] = round2(summary.Profit)
+	}
+	if selection.IncludeReceivable {
+		view["合同应收"] = round2(summary.RevenueReceivable)
+		view["已开票未回款"] = round2(summary.RevenueInvoiceOpen)
+	}
+	if selection.IncludePayable {
+		view["合同应付"] = round2(summary.CostPayable)
+		view["已收票未付款"] = round2(summary.CostInvoiceOpen)
+	}
+	if selection.IncludeInvoiceAR {
+		view["已开票未回款"] = round2(summary.RevenueInvoiceOpen)
+	}
+	if selection.IncludeInvoiceAP {
+		view["已收票未付款"] = round2(summary.CostInvoiceOpen)
 	}
 	return view
 }

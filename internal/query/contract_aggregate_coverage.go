@@ -20,6 +20,22 @@ func contractAggregateCanAnswer(requestedMetrics []string, summary contractAggre
 			if !(summary.HasRevenueCoverage && summary.HasCostCoverage) {
 				return false
 			}
+		case "应收":
+			if !summary.HasRevenueCoverage {
+				return false
+			}
+		case "应付":
+			if !summary.HasCostCoverage {
+				return false
+			}
+		case "已开票未回款":
+			if !summary.HasRevenueCoverage {
+				return false
+			}
+		case "已收票未付款":
+			if !summary.HasCostCoverage {
+				return false
+			}
 		}
 	}
 	return len(requestedMetrics) > 0
@@ -44,10 +60,26 @@ func contractAggregateFallbackReason(requestedMetrics []string, summary contract
 			if !summary.HasCostCoverage {
 				missing = append(missing, "合同成本")
 			}
+		case "应收":
+			if !summary.HasRevenueCoverage {
+				missing = append(missing, "合同应收")
+			}
+		case "应付":
+			if !summary.HasCostCoverage {
+				missing = append(missing, "合同应付")
+			}
+		case "已开票未回款":
+			if !summary.HasRevenueCoverage {
+				missing = append(missing, "已开票未回款")
+			}
+		case "已收票未付款":
+			if !summary.HasCostCoverage {
+				missing = append(missing, "已收票未付款")
+			}
 		}
 	}
 	if len(missing) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("合同/项目汇总表当前缺少%s，已回退到现金+经营/财务口径", joinWithComma(dedupeStrings(missing)))
+	return fmt.Sprintf("合同/项目汇总表当前缺少%s", joinWithComma(dedupeStrings(missing)))
 }

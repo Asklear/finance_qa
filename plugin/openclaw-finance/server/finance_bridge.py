@@ -291,6 +291,7 @@ def bridge_capabilities():
         "route_decision": True,
         "probe_results": True,
         "source_attribution": True,
+        "contract_strict_missing": True,
         "exposed_tools": [
             "finance-query",
             "finance-host-data",
@@ -316,6 +317,7 @@ def bridge_capabilities():
             "source_note",
             "source_summary",
             "contract_fallback_reason",
+            "contract_answer_status",
         ],
     }
 
@@ -448,6 +450,128 @@ def summarize_db_target(db_target):
     return "configured"
 
 
+SOURCE_TABLE_DOCUMENT_LABELS = [
+    ("tenant_uhub.fin_fund_income", "《优集资金收入计算表-副本.xlsx》"),
+    ("tenant_uhub.fin_cost_settlements", "《优集成本计算表-4.23-池.xlsx》"),
+    ("tenant_uhub.fin_contracts", "《合同信息表》"),
+    ("tenant_uhub.fin_revenue_settlements", "《收入结算表（已废弃）》"),
+    ("tenant_uhub.bank_statement", "《银行流水》"),
+    ("tenant_uhub.journal", "《序时账》"),
+    ("tenant_uhub.balance_detail", "《科目余额表》"),
+    ("tenant_uhub.balance_sheet", "《资产负债表》"),
+    ("tenant_uhub.income_statement", "《利润表》"),
+    ("fin_fund_income", "《优集资金收入计算表-副本.xlsx》"),
+    ("fin_cost_settlements", "《优集成本计算表-4.23-池.xlsx》"),
+    ("fin_contracts", "《合同信息表》"),
+    ("fin_revenue_settlements", "《收入结算表（已废弃）》"),
+    ("bank_statement", "《银行流水》"),
+    ("journal", "《序时账》"),
+    ("balance_detail", "《科目余额表》"),
+    ("balance_sheet", "《资产负债表》"),
+    ("income_statement", "《利润表》"),
+]
+
+HIDDEN_RESPONSE_KEYS = {
+    "id",
+    "contract_id",
+    "contract_ids",
+    "account_code",
+    "account_codes",
+    "subject_code",
+    "subject_codes",
+    "source_report_type",
+    "source_sheet_name",
+    "counterparty_account",
+    "counterparty_account_no",
+    "counterparty_bank_account",
+    "bank_account",
+    "bank_account_no",
+    "account_no",
+    "rowid",
+    "row_id",
+    "executed_sql",
+    "sql",
+    "raw_sql",
+    "query_sql",
+}
+
+TECHNICAL_TRACE_MARKERS = (
+    "select ",
+    " from ",
+    " join ",
+    " where ",
+    "account_code",
+    "contract_id",
+    "source_report_type",
+    "source_sheet_name",
+)
+
+
+def source_label_for_table(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for raw, label in SOURCE_TABLE_DOCUMENT_LABELS:
+        if raw == text or text.endswith("." + raw) or raw in text:
+            return label
+    return humanize_source_text(text)
+
+
+def humanize_source_tables(values):
+    labels = []
+    for item in values or []:
+        label = source_label_for_table(item)
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def humanize_source_text(value):
+    text = str(value or "")
+    for raw, label in SOURCE_TABLE_DOCUMENT_LABELS:
+        if "." in raw:
+            text = text.replace(raw, label)
+            continue
+        pattern = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(raw) + r"(?![A-Za-z0-9_])")
+        text = pattern.sub(label, text)
+    return text
+
+
+def sanitize_bridge_string(value):
+    text = humanize_source_text(value)
+    lowered = text.lower()
+    if any(marker in lowered for marker in TECHNICAL_TRACE_MARKERS):
+        return "[内部计算过程已隐藏]"
+    text = re.sub(r"\bC\d{3,}\b", "[合同辅助编号已隐藏]", text)
+    return text
+
+
+def sanitize_bridge_payload(value, key_hint=""):
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            key_text = str(key or "")
+            key_lower = key_text.lower()
+            if key_lower in HIDDEN_RESPONSE_KEYS or key_lower.endswith("_id"):
+                continue
+            if key_lower in ("source_tables", "primary_tables"):
+                labels = humanize_source_tables(item if isinstance(item, list) else [item])
+                if labels:
+                    cleaned[key_text] = labels
+                    cleaned.setdefault("source_documents", labels)
+                continue
+            cleaned_item = sanitize_bridge_payload(item, key_lower)
+            if key_lower == "source_documents" and not cleaned_item and cleaned.get("source_documents"):
+                continue
+            cleaned[key_text] = cleaned_item
+        return cleaned
+    if isinstance(value, list):
+        return [sanitize_bridge_payload(item, key_hint) for item in value]
+    if isinstance(value, str):
+        return sanitize_bridge_string(value)
+    return value
+
+
 def normalize_exposed_fields(data):
     data = data or {}
     exposed = {
@@ -462,6 +586,7 @@ def normalize_exposed_fields(data):
         "source_note": data.get("source_note") or "",
         "source_summary": data.get("source_summary") or "",
         "contract_fallback_reason": data.get("contract_fallback_reason") or "",
+        "contract_answer_status": data.get("contract_answer_status") or "",
     }
     data["exposed_fields"] = exposed
     return data
@@ -505,10 +630,45 @@ def is_receipt_question(query):
     return any(keyword in text for keyword in keywords)
 
 
+def is_contract_strict_missing(data):
+    status = str((data or {}).get("contract_answer_status") or "").strip()
+    source_priority = str((data or {}).get("source_priority") or "").strip()
+    return status == "missing" or (
+        bool((data or {}).get("contract_source_required"))
+        and source_priority == "contract_strict"
+    )
+
+
+def build_contract_strict_missing_summary(data):
+    data = data or {}
+    source_tables = data.get("source_tables") or data.get("source_primary_tables") or []
+    if not isinstance(source_tables, list):
+        source_tables = [source_tables]
+    source_documents = data.get("source_documents") or humanize_source_tables(source_tables)
+    reason = str(data.get("contract_fallback_reason") or data.get("message") or "").strip()
+    if not reason:
+        reason = "合同/项目台账在请求期间没有足够记录"
+    source_note = str(data.get("source_note") or data.get("source_summary") or "").strip()
+    if not source_note and source_documents:
+        source_note = "本次尝试的合同口径来源：" + "、".join(str(item) for item in source_documents if item)
+    return {
+        "kind": "contract_strict_missing",
+        "period": data.get("period"),
+        "entity": data.get("entity") or "",
+        "reason": reason,
+        "source_note": source_note,
+        "source_documents": source_documents,
+        "safe_to_quote_message": True,
+    }
+
+
 def build_host_summary_contract(payload, query):
     data = payload.get("data") or {}
     if payload.get("answer_method") == "llm_payload" or not payload.get("success"):
         return None
+
+    if is_contract_strict_missing(data):
+        return build_contract_strict_missing_summary(data)
 
     query_spec = data.get("query_spec") or {}
     query_family = str(query_spec.get("query_family") or "").strip()
@@ -704,6 +864,20 @@ def build_boss_reply(payload, query):
             "建议": "请补充时间和对象（如客户/项目/月份）；或让宿主LLM基于 llm_payload 给最终口径。",
         }
 
+    if summary_contract and summary_contract.get("kind") == "contract_strict_missing":
+        period = summary_contract.get("period") or data.get("period") or "当前期间"
+        entity = str(summary_contract.get("entity") or "").strip()
+        entity_prefix = f"{entity}" if entity else ""
+        reason = str(summary_contract.get("reason") or "合同/项目台账在请求期间没有足够记录").strip()
+        return {
+            "结论": f"{entity_prefix}{period}合同口径当前不能直接回答：{reason}。",
+            "原因": append_source_note(
+                "系统已经按合同/项目台账优先探测，但没有足够记录支撑确定性金额；为避免把非老板口径冒充合同口径，本次未自动切到财务账或银行流水。",
+                summary_contract.get("source_note"),
+            ),
+            "建议": "如果你要看非合同口径，请明确说“账上/科目余额/资产负债表/序时账”，或明确说“银行流水/实际到账/实际支出”。",
+        }
+
     if summary_contract and summary_contract.get("kind") == "counterparty_receipts_with_subperiod":
         entity = summary_contract.get("entity") or "该主体"
         total_amount = float(summary_contract.get("total_amount", 0))
@@ -830,6 +1004,52 @@ def build_boss_reply(payload, query):
         if not requested_set and metric:
             requested_set.add(metric)
 
+        if requested_set == {"应收"} or requested_set == {"应收账款"}:
+            contract_summary = summary_contract.get("contract_summary") or {}
+            received = float(first_float(cash_view.get("已到账"), cash_view.get("到账"), cash_view.get("回款"), contract_summary.get("revenue_received"), 0) or 0)
+            settlement = float(first_float(book_view.get("营收"), contract_summary.get("revenue_settlement"), 0) or 0)
+            receivable = float(first_float(book_view.get("合同应收"), contract_summary.get("receivable_amount"), 0) or 0)
+            invoice_open = float(first_float(book_view.get("已开票未回款"), contract_summary.get("invoiced_unreceived_amount"), 0) or 0)
+            return {
+                "结论": f"{period}按合同/项目老板口径：合同应收 {receivable:.2f} 元。",
+                "原因": source_reason(f"合同应收来自收入计算表的结算额与到账额差额；补充看，合同结算 {settlement:.2f} 元、已到账 {received:.2f} 元，其中已开票未回款 {invoice_open:.2f} 元。"),
+                "建议": "如果要继续追明细，优先按客户/项目拆合同应收和已开票未回款。",
+            }
+
+        if requested_set == {"应付"} or requested_set == {"应付账款"}:
+            contract_summary = summary_contract.get("contract_summary") or {}
+            paid = float(first_float(cash_view.get("已付款"), cash_view.get("付款"), contract_summary.get("cost_paid"), 0) or 0)
+            cost = float(first_float(book_view.get("合同成本"), contract_summary.get("cost_settlement"), 0) or 0)
+            payable = float(first_float(book_view.get("合同应付"), contract_summary.get("payable_amount"), 0) or 0)
+            invoice_open = float(first_float(book_view.get("已收票未付款"), contract_summary.get("invoiced_unpaid_amount"), 0) or 0)
+            return {
+                "结论": f"{period}按合同/项目老板口径：合同应付 {payable:.2f} 元。",
+                "原因": source_reason(f"合同应付来自成本计算表的合同成本与已付款差额；补充看，合同成本 {cost:.2f} 元、已付款 {paid:.2f} 元，其中已收票未付款 {invoice_open:.2f} 元。"),
+                "建议": "如果要继续追付款优先级，建议按供应商/项目拆合同应付和已收票未付款。",
+            }
+
+        if requested_set in ({"已开票未回款"}, {"已开票未付款"}, {"已开票未收款"}):
+            contract_summary = summary_contract.get("contract_summary") or {}
+            invoice = float(first_float(book_view.get("已开票"), contract_summary.get("invoice_amount"), 0) or 0)
+            received = float(first_float(cash_view.get("已到账"), cash_view.get("到账"), contract_summary.get("revenue_received"), 0) or 0)
+            invoice_open = float(first_float(book_view.get("已开票未回款"), contract_summary.get("invoiced_unreceived_amount"), 0) or 0)
+            return {
+                "结论": f"{period}按合同/项目老板口径：已开票未回款 {invoice_open:.2f} 元。",
+                "原因": source_reason(f"这是收入侧口径，按收入计算表的已开票金额减已到账金额统计；补充看，已开票 {invoice:.2f} 元、已到账 {received:.2f} 元。"),
+                "建议": "如果要继续催收，建议按客户/项目拆出已开票未回款明细。",
+            }
+
+        if requested_set in ({"已收票未付款"}, {"收到发票未付款"}):
+            contract_summary = summary_contract.get("contract_summary") or {}
+            invoice = float(first_float(book_view.get("已收票"), contract_summary.get("invoice_amount"), 0) or 0)
+            paid = float(first_float(cash_view.get("已付款"), cash_view.get("付款"), contract_summary.get("cost_paid"), 0) or 0)
+            invoice_open = float(first_float(book_view.get("已收票未付款"), contract_summary.get("invoiced_unpaid_amount"), 0) or 0)
+            return {
+                "结论": f"{period}按合同/项目老板口径：已收票未付款 {invoice_open:.2f} 元。",
+                "原因": source_reason(f"这是成本侧口径，按成本计算表的已收票/开票金额减已付款金额统计；补充看，已收票/开票 {invoice:.2f} 元、已付款 {paid:.2f} 元。"),
+                "建议": "如果要继续排付款计划，建议按供应商/项目拆出已收票未付款明细。",
+            }
+
         if requested_set == {"收入"}:
             received = float(first_float(cash_view.get("到账"), cash_view.get("回款"), 0) or 0)
             revenue = float(first_float(book_view.get("营收"), 0) or 0)
@@ -858,6 +1078,18 @@ def build_boss_reply(payload, query):
                 "结论": f"{period}先看合同现金口径：净现金 {cash_net:.2f} 元（回款 {received:.2f} 元，付款 {paid:.2f} 元）；再看合同经营口径：合同利润 {profit:.2f} 元。",
                 "原因": source_reason("老板汇总问题已优先走合同收入+成本汇总，利润不再退回普通利润表口径。"),
                 "建议": "如果要继续拆利润差异，可以再追问回款、付款或具体合同清单。",
+            }
+
+        if requested_set and requested_set.issubset({"收入", "营收", "销售额", "gmv", "GMV", "成本"}):
+            received = float(first_float(cash_view.get("回款"), cash_view.get("到账"), 0) or 0)
+            paid = float(first_float(cash_view.get("付款"), 0) or 0)
+            cash_net = float(first_float(cash_view.get("净现金"), received - paid) or 0)
+            revenue = float(first_float(book_view.get("营收"), 0) or 0)
+            cost = float(first_float(book_view.get("合同成本"), 0) or 0)
+            return {
+                "结论": f"{period}先看合同现金口径：回款 {received:.2f} 元、付款 {paid:.2f} 元、净现金 {cash_net:.2f} 元；再看合同经营口径：营收 {revenue:.2f} 元、合同成本 {cost:.2f} 元。",
+                "原因": source_reason("老板汇总问题已优先走合同汇总表；本次只返回已请求的收入/成本指标，不补未请求的利润占位值。"),
+                "建议": "如果还要看合同利润，可以继续追问利润；如果要拆明细，可以按客户、供应商、项目或月份继续追问。",
             }
 
         received = float(first_float(cash_view.get("回款"), cash_view.get("到账"), 0) or 0)
@@ -1072,10 +1304,12 @@ def handle_call_tool(name, arguments):
         if not query:
             raise ValueError("query is required")
         payload = run_finance_query(query)
+        payload = sanitize_bridge_payload(payload)
         return text_result(json.dumps(payload, ensure_ascii=False, indent=2))
 
     if name == "finance-host-data":
         payload = run_host_data(arguments or {})
+        payload = sanitize_bridge_payload(payload)
         return text_result(json.dumps(payload, ensure_ascii=False, indent=2))
 
     if name == "finance-upload":

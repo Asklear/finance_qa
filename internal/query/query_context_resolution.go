@@ -40,6 +40,9 @@ func (e *Engine) resolveQueryEntity(q string, spec QuerySpec) string {
 	if shouldResolveEntityDeeply(spec) {
 		entity = e.extractNamedEntity(q)
 	}
+	if looksLikeBossRewriteNonEntity(entity) {
+		return ""
+	}
 	return entity
 }
 

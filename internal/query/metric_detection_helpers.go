@@ -19,6 +19,9 @@ func isGenericMetricEntity(entity string) bool {
 func detectRequestedMetrics(q string) []string {
 	metrics := make([]string, 0, 3)
 	cfg := getRuleConfig()
+	if side := detectContractARAPMetric(q); side != "" {
+		return []string{side}
+	}
 	if containsAny(q, cfg.MetricKeywords(metricKeyRevenue)) {
 		metrics = append(metrics, "收入")
 	}
@@ -35,6 +38,21 @@ func detectRequestedMetrics(q string) []string {
 		metrics = append(metrics, detectCoreMetric(q))
 	}
 	return metrics
+}
+
+func detectContractARAPMetric(q string) string {
+	switch {
+	case containsAny(q, []string{"已收发票未付款", "已收票未付款", "收到发票未付款", "供应商发票未付款"}):
+		return "已收票未付款"
+	case containsAny(q, []string{"已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款"}):
+		return "已开票未回款"
+	case containsAny(q, []string{"应付账款", "应付", "已收发票未付款", "已收票未付款", "收到发票未付款", "供应商发票未付款"}):
+		return "应付"
+	case containsAny(q, []string{"应收账款", "应收", "已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款"}):
+		return "应收"
+	default:
+		return ""
+	}
 }
 
 func detectCoreMetric(q string) string {

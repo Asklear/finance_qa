@@ -82,6 +82,36 @@ func TestCompanyAggregateMetricPrimarySourceTablesPreferMetricTableOverContractD
 	}
 }
 
+func TestCompanyAggregateMultiMetricSourceNoteIncludesRevenueAndCostWorkbooks(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2025年10月收入、成本、利润分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	primary, ok := res.Data["primary_source_tables"].([]string)
+	if !ok {
+		t.Fatalf("primary_source_tables missing: %#v", res.Data["primary_source_tables"])
+	}
+	if !containsString(primary, "tenant_uhub.fin_fund_income") || !containsString(primary, "tenant_uhub.fin_cost_settlements") {
+		t.Fatalf("primary_source_tables should include revenue and cost tables, got %#v", primary)
+	}
+
+	sourceNote, _ := res.Data["source_note"].(string)
+	if !containsAll(sourceNote, "优集资金收入计算表-副本.xlsx", "优集成本计算表-4.23-池.xlsx") {
+		t.Fatalf("source_note should include both revenue and cost workbook lineage, got %q", sourceNote)
+	}
+	if !strings.Contains(sourceNote, "补充参考：《合同信息表》") {
+		t.Fatalf("source_note should keep contract table as supporting source, got %q", sourceNote)
+	}
+}
+
 func extractSourcePartitionsForTest(t *testing.T, v any) []map[string]any {
 	t.Helper()
 

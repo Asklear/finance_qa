@@ -76,7 +76,7 @@ func shouldBypassDualPerspective(q, entity string) bool {
 
 func shouldUseHRBreakdown(q string, cfg RuleConfig) bool {
 	asksBreakdown := containsAny(q, cfg.HRBreakdownKeywords())
-	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) && asksBreakdown {
+	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) && (asksBreakdown || containsAny(q, []string{"多少", "是多少", "合计", "金额", "成本", "费用", "余额"})) {
 		return true
 	}
 	return containsAny(q, []string{"工资", "社保", "公积金"}) && containsAny(q, []string{"多少", "明细", "分别", "合计", "成本"})
@@ -92,6 +92,6 @@ func metricQuestionKeywords(cfg RuleConfig) []string {
 
 func counterpartyMetricKeywords(cfg RuleConfig) []string {
 	keywords := append([]string{}, metricQuestionKeywords(cfg)...)
-	keywords = append(keywords, "回款", "到账", "收款", "费用", "支出", "付款", "付了", "支付")
+	keywords = append(keywords, "回款", "到账", "收款", "费用", "支出", "付款", "付了", "支付", "应收", "应付", "应收账款", "应付账款", "已开票未回款", "已收票未付款")
 	return dedupeStrings(keywords)
 }
