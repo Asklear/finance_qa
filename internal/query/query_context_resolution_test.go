@@ -3,6 +3,7 @@ package query
 import (
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -23,8 +24,51 @@ func TestResolveQueryRoutingPromotesContractPriorityToContractDimension(t *testi
 	if route.spec.QueryFamily != QueryFamilyContractDimension {
 		t.Fatalf("query_family = %s, want %s", route.spec.QueryFamily, QueryFamilyContractDimension)
 	}
+	if route.spec.PeriodFrom != "2026-01" || route.spec.PeriodTo != "2026-03" {
+		t.Fatalf("period = %s~%s, want 2026-01~2026-03", route.spec.PeriodFrom, route.spec.PeriodTo)
+	}
 	if !route.hasRealEntity {
 		t.Fatalf("expected hasRealEntity=true")
+	}
+}
+
+func TestResolveQueryRoutingTreatsExplicitBankCashAsCompanyCash(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("2026年3月银行卡实际到账多少？")
+	if route.spec.SourceConstraint != BossSourceBankStatement {
+		t.Fatalf("source_constraint = %q, want %q", route.spec.SourceConstraint, BossSourceBankStatement)
+	}
+	if route.spec.QueryFamily == QueryFamilyCounterparty {
+		t.Fatalf("query_family = %s, want non-counterparty company cash route", route.spec.QueryFamily)
+	}
+	if route.entity != "" || route.hasRealEntity {
+		t.Fatalf("entity = %q hasRealEntity=%t, want no business entity", route.entity, route.hasRealEntity)
+	}
+}
+
+func TestExplicitBankCashReceiptQueryAnswersFromBankStatement(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月银行卡实际到账多少？")
+	if !res.Success {
+		t.Fatalf("query success = false, message=%s", res.Message)
+	}
+	if !strings.Contains(res.Message, "实际到账 1200.00 元") {
+		t.Fatalf("message = %q, want actual receipt amount", res.Message)
+	}
+	if !strings.Contains(res.Message, "来源：《银行流水》") {
+		t.Fatalf("message = %q, want bank source disclosure", res.Message)
 	}
 }
 
@@ -152,6 +196,8 @@ func buildQueryContextResolutionDB(t *testing.T) string {
 		 VALUES ('测试公司','2026-03','2026-03-31','V-READY-1','6401','主营业务成本','林悦3月成本确认','借',500,500,0,'南京林悦智能科技有限公司')`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
 		 VALUES ('测试公司','2026-03-20','南京林悦智能科技有限公司','合同款',500,0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('测试公司','2026-03-21','招商银行','收款',0,1200)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

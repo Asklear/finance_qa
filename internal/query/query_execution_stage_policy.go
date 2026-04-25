@@ -40,11 +40,27 @@ func resolveOperationalExecutionStages(ctx queryExecutionContext) []executionSta
 
 func resolveSourceExecutionStages(ctx queryExecutionContext) []executionStage {
 	builder := newExecutionStagePlanBuilder(4)
+	if shouldUseDirectBankCashFlow(ctx) {
+		builder.add(executionStageDirectBankCashFlow)
+	}
 	if shouldUseOrchestratorForSpec(ctx.spec) {
 		builder.add(executionStageOrchestrator)
 	}
 	builder.addAll(resolveLegacySourceFallbackStages(ctx)...)
 	return builder.stagesOrEmpty()
+}
+
+func shouldUseDirectBankCashFlow(ctx queryExecutionContext) bool {
+	if shouldUseReconciliation(ctx.q) {
+		return false
+	}
+	if ctx.hasRealEntity {
+		return false
+	}
+	if ctx.spec.SourceConstraint != BossSourceBankStatement {
+		return false
+	}
+	return ctx.spec.BossRewrite.Perspective == BossPerspectiveExplicitCash
 }
 
 func resolveLegacySourceFallbackStages(ctx queryExecutionContext) []executionStage {

@@ -69,6 +69,20 @@ func (e *Engine) applyQueryPriorityAdjustments(q string, intent Intent, spec Que
 	return spec, entity, hasRealEntity, anchor
 }
 
+func normalizeExplicitCashCompanyRoute(q string, spec QuerySpec, entity string, hasRealEntity bool, cfg RuleConfig) (QuerySpec, string, bool) {
+	if spec.SourceConstraint != BossSourceBankStatement || spec.BossRewrite.Perspective != BossPerspectiveExplicitCash {
+		return spec, entity, hasRealEntity
+	}
+	if !looksLikeBossRewriteNonEntity(entity) {
+		return spec, entity, hasRealEntity
+	}
+	entity = ""
+	spec.Entity = ""
+	spec.QueryFamily = detectQueryFamily(q, spec.Intent, "", spec.PeriodFrom, spec.PeriodTo, cfg, spec.NeedsContractDimension)
+	spec = applyQuerySpecPolicy(spec, deriveQuerySpecPolicy(spec, cfg))
+	return spec, entity, false
+}
+
 func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 	q := e.normalizeQuestionAndResolveCompany(question)
 	cfg := getRuleConfig()
@@ -80,10 +94,12 @@ func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 	spec = reconcileQuerySpec(spec, entity, cfg)
 	entity = spec.Entity
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
+	spec, entity, hasRealEntity = normalizeExplicitCashCompanyRoute(q, spec, entity, hasRealEntity, cfg)
 	spec, entity, hasRealEntity, anchor = e.applyQueryPriorityAdjustments(q, intent, spec, entity, hasRealEntity, anchor)
 	spec, _ = e.decideBossRoute(context.Background(), spec)
 	entity = spec.Entity
 	hasRealEntity = e.isRealBusinessEntity(q, entity)
+	spec, entity, hasRealEntity = normalizeExplicitCashCompanyRoute(q, spec, entity, hasRealEntity, cfg)
 
 	return resolvedQueryRouting{
 		normalizedQuestion: q,

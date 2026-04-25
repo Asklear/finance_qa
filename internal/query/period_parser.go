@@ -120,7 +120,7 @@ func extractExplicitMonthRange(q string) (string, string, bool) {
 }
 
 func extractYearCumulativeRange(q string, anchorYear, anchorMonth int) (string, string, bool) {
-	yearCumulativeRe := regexp.MustCompile(`(20\d{2})年\s*(?:累计|年内|累计销售额|累计收入|累计营收|累计回款)`)
+	yearCumulativeRe := regexp.MustCompile(`(20\d{2})年?\s*(?:累计|年内|累计销售额|累计收入|累计营收|累计回款)`)
 	if m := yearCumulativeRe.FindStringSubmatch(q); len(m) == 2 {
 		y := mustAtoi(m[1])
 		endMonth := 12
