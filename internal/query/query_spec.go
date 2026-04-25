@@ -65,6 +65,7 @@ type QuerySpec struct {
 	OpeningPeriodAware          bool
 	BossRewrite                 BossQueryRewrite
 	SourceConstraint            string
+	RouteDecision               RouteDecision
 	LexiconProfile              string
 }
 

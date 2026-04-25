@@ -1,0 +1,125 @@
+package query
+
+import (
+	"context"
+	"strings"
+)
+
+type RouteDecision struct {
+	SelectedSource   string
+	PrimaryTables    []string
+	SupportingTables []string
+	ProbeResults     []SourceProbeResult
+	FallbackReason   string
+}
+
+func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec, RouteDecision) {
+	rewrite := spec.BossRewrite
+	resolvedEntity := strings.TrimSpace(spec.Entity)
+	if rewrite.Metric == "" || rewrite.Metric == BossMetricUnknown {
+		return spec, RouteDecision{}
+	}
+	if shouldSkipBossProbeRouting(spec, rewrite) {
+		return spec, RouteDecision{}
+	}
+
+	if rewrite.Perspective == BossPerspectiveContractFirst || rewrite.RequiresSourceProbe {
+		contractAnchor := e.getLatestContractPeriodAnchor()
+		rewrite = RewriteBossQuery(spec.NormalizedQuestion, contractAnchor)
+		if resolvedEntity != "" {
+			rewrite.Entity = resolvedEntity
+		}
+		spec.BossRewrite = rewrite
+		if resolvedEntity == "" && strings.TrimSpace(rewrite.Entity) != "" {
+			spec.Entity = strings.TrimSpace(rewrite.Entity)
+		}
+		if strings.TrimSpace(rewrite.PeriodFrom) != "" && strings.TrimSpace(rewrite.PeriodTo) != "" {
+			spec.PeriodFrom = rewrite.PeriodFrom
+			spec.PeriodTo = rewrite.PeriodTo
+			spec.SubPeriod = rewrite.SubPeriod
+			spec.TimeScope = detectTimeScope(spec.NormalizedQuestion, spec.PeriodFrom, spec.PeriodTo, contractAnchor)
+		}
+	}
+
+	probes := e.ProbeBossSources(ctx, rewrite)
+	decision := RouteDecision{ProbeResults: probes}
+	if len(probes) == 0 {
+		return spec, decision
+	}
+
+	first := probes[0]
+	decision.SelectedSource = first.Source
+	decision.PrimaryTables = append([]string{}, first.PrimaryTables...)
+	decision.SupportingTables = append([]string{}, first.SupportingTables...)
+	if !first.CanAnswer && strings.TrimSpace(first.MissingReason) != "" {
+		decision.FallbackReason = first.MissingReason
+	}
+
+	switch first.Source {
+	case BossSourceBankStatement:
+		spec.SourceConstraint = BossSourceBankStatement
+		spec.PreferContractAggregate = false
+		spec.NeedsContractDimension = false
+	case BossSourceContractAggregate:
+		spec.SourceConstraint = BossSourceContractAggregate
+		spec.PerspectivePolicy = PerspectiveCashThenAccrual
+		if shouldRouteContractProbeAsDimension(rewrite) {
+			spec.QueryFamily = QueryFamilyContractDimension
+			spec.NeedsContractDimension = true
+			spec.PreferContractAggregate = false
+		} else {
+			spec.QueryFamily = QueryFamilyCoreMetric
+			spec.NeedsContractDimension = false
+			spec.PreferContractAggregate = true
+		}
+		if metricKind := metricKindFromBossMetric(rewrite.Metric); metricKind != MetricKindUnknown {
+			spec.MetricKind = metricKind
+		}
+	}
+
+	spec.RouteDecision = decision
+	return spec, decision
+}
+
+func shouldSkipBossProbeRouting(spec QuerySpec, rewrite BossQueryRewrite) bool {
+	if rewrite.Perspective == BossPerspectiveExplicitCash || rewrite.SourceConstraint == BossSourceBankStatement {
+		return false
+	}
+	switch spec.QueryFamily {
+	case QueryFamilyARAP, QueryFamilyReadiness, QueryFamilyReconciliation, QueryFamilyHRCost:
+		return true
+	}
+	switch rewrite.Metric {
+	case BossMetricARAP, BossMetricTax, BossMetricHRCost, BossMetricHealth:
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldRouteContractProbeAsDimension(rewrite BossQueryRewrite) bool {
+	if rewrite.Scope == BossScopeEntity || rewrite.Scope == BossScopeContract {
+		return true
+	}
+	switch rewrite.Metric {
+	case BossMetricReceipts, BossMetricPayments, BossMetricInvoice:
+		return strings.TrimSpace(rewrite.Entity) != ""
+	default:
+		return false
+	}
+}
+
+func metricKindFromBossMetric(metric BossMetric) MetricKind {
+	switch metric {
+	case BossMetricRevenue:
+		return MetricKindRevenue
+	case BossMetricCost, BossMetricPayments:
+		return MetricKindCost
+	case BossMetricProfit:
+		return MetricKindProfit
+	case BossMetricReceipts:
+		return MetricKindReceipts
+	default:
+		return MetricKindUnknown
+	}
+}

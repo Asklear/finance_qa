@@ -42,6 +42,9 @@ func buildQuerySpecEnvelope(spec QuerySpec) map[string]any {
 	if spec.BossRewrite.Metric != "" {
 		envelope["boss_rewrite"] = buildBossRewriteEnvelope(spec.BossRewrite)
 	}
+	if spec.RouteDecision.SelectedSource != "" || len(spec.RouteDecision.ProbeResults) > 0 {
+		envelope["route_decision"] = buildRouteDecisionEnvelope(spec.RouteDecision)
+	}
 	return envelope
 }
 
@@ -58,6 +61,37 @@ func buildBossRewriteEnvelope(rewrite BossQueryRewrite) map[string]any {
 		"source_constraint":     rewrite.SourceConstraint,
 		"requires_source_probe": rewrite.RequiresSourceProbe,
 	}
+}
+
+func buildRouteDecisionEnvelope(decision RouteDecision) map[string]any {
+	return map[string]any{
+		"selected_source":   decision.SelectedSource,
+		"primary_tables":    append([]string{}, decision.PrimaryTables...),
+		"supporting_tables": append([]string{}, decision.SupportingTables...),
+		"fallback_reason":   decision.FallbackReason,
+		"probe_results":     buildProbeResultEnvelopes(decision.ProbeResults),
+	}
+}
+
+func buildProbeResultEnvelopes(probes []SourceProbeResult) []map[string]any {
+	out := make([]map[string]any, 0, len(probes))
+	for _, probe := range probes {
+		out = append(out, map[string]any{
+			"source":            probe.Source,
+			"semantic_match":    probe.SemanticMatch,
+			"can_answer":        probe.CanAnswer,
+			"coverage_status":   probe.CoverageStatus,
+			"metric":            probe.Metric,
+			"period_from":       probe.PeriodFrom,
+			"period_to":         probe.PeriodTo,
+			"row_count":         probe.RowCount,
+			"missing_reason":    probe.MissingReason,
+			"primary_tables":    append([]string{}, probe.PrimaryTables...),
+			"supporting_tables": append([]string{}, probe.SupportingTables...),
+			"source_documents":  append([]string{}, probe.SourceDocuments...),
+		})
+	}
+	return out
 }
 
 func applyQuerySpecOverrides(spec QuerySpec, data map[string]any) QuerySpec {
@@ -95,7 +129,16 @@ func finalizeQueryResult(ctx queryExecutionContext, r Result) Result {
 		r.Data = map[string]any{}
 	}
 	r.Data["intent_trace"] = ctx.traceMap
-	r.Data["query_spec"] = buildQuerySpecEnvelope(applyQuerySpecOverrides(ctx.spec, r.Data))
+	finalSpec := applyQuerySpecOverrides(ctx.spec, r.Data)
+	r.Data["query_spec"] = buildQuerySpecEnvelope(finalSpec)
+	if finalSpec.RouteDecision.SelectedSource != "" || len(finalSpec.RouteDecision.ProbeResults) > 0 {
+		r.Data["route_decision"] = buildRouteDecisionEnvelope(finalSpec.RouteDecision)
+		if reason := strings.TrimSpace(finalSpec.RouteDecision.FallbackReason); reason != "" {
+			if _, exists := r.Data["contract_fallback_reason"]; !exists {
+				r.Data["contract_fallback_reason"] = reason
+			}
+		}
+	}
 	if ctx.engine != nil {
 		r = ctx.engine.annotateSourceAttribution(ctx.spec, r)
 	}

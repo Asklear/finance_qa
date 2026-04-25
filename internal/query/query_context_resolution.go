@@ -1,6 +1,9 @@
 package query
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type resolvedQueryRouting struct {
 	normalizedQuestion string
@@ -78,6 +81,9 @@ func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 	entity = spec.Entity
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
 	spec, entity, hasRealEntity, anchor = e.applyQueryPriorityAdjustments(q, intent, spec, entity, hasRealEntity, anchor)
+	spec, _ = e.decideBossRoute(context.Background(), spec)
+	entity = spec.Entity
+	hasRealEntity = e.isRealBusinessEntity(q, entity)
 
 	return resolvedQueryRouting{
 		normalizedQuestion: q,
