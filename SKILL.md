@@ -5,7 +5,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 # finance_qa 宿主问答契约
 
-目标：让 OpenClaw / Claude / 宿主 Agent 用最少上下文稳定调用本仓库能力，直接回答老板问题；主 skill 只保留老板问答所需的调用契约和财务口径约束，避免污染宿主问答上下文。
+目标：让 OpenClaw / Claude / 宿主 Agent 用最少上下文稳定调用本仓库能力，直接回答老板问题；研发测试、部署、验收和全量运维命令不放在主 skill 里，避免污染宿主问答上下文。
 
 ## 0. 契约版本
 
@@ -113,6 +113,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `data.tax_inclusion_note`
    - `bridge_meta`
    - `bridge_meta.capabilities`
+   - 注意：这里的“保留”是给宿主、前端和审计链路保留，不等于对老板展示；老板可见回复必须只输出业务概念、金额、期间、口径和来源，不直接暴露数据库辅助字段。
 7. 若存在 `data.source_note`：
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
@@ -201,6 +202,11 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 10. 序时账汇总结果：
    - 只要结果来自 `journal` / 序时账汇总，必须附带“是否含税”的说明
    - 默认解释为：按凭证入账金额统计，不主动剔税；若税额未单独拆分，通常视为含税口径
+11. 老板可见字段净化：
+   - 不向老板原样返回任何数据库 id、内部编号、科目代码、表名字段名或技术辅助字段，例如 `id`、`contract_id`、`account_code`、`subject_code`、`source_report_type`、`source_sheet_name`、`bridge_meta`、`trace`、`executed_sql`
+   - 如果底层结果含有这些字段，必须翻译成财务概念后再说：`contract_id` 对应“具体合同/项目（客户 + 合同内容）”，`account_code/subject_code` 对应“会计科目/收入成本费用类别”，`source_report_type/source_sheet_name` 对应“来源文件和工作表”
+   - 对老板可说“林悦这个供应商的技术服务成本”“飞未云科这个客户的合同收入”“来源是《优集资金收入计算表》的【26年Q1收入明细】”，不要说“contract_id=C007”“account_code=6401”“source_report_type=contract_fund_income”
+   - 只有当用户明确要求 SQL、字段、调试信息或开发排错时，才可以展示这些内部字段，并且要说明它们是系统辅助字段，不是老板经营结论
 
 ## 6. 绝对红线
 
@@ -217,7 +223,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 11. 不能把“利润”和“净利润”混成同一个字段解释
 12. 不能对序时账汇总结果省略含税/未剔税提示
 13. 不能忽略 `data.tax_inclusion` / `data.tax_inclusion_note` 后自行改写税口径
-14. 不能在老板可见回复中输出 `id`、`contract_id`、`account_code`、`source_report_type`、`source_sheet_name`、SQL、trace 字段名等数据库辅助字段；如确需说明，必须翻译成老板能懂的财务概念和来源 Excel
+14. 不能在老板可见回复中输出数据库 id、合同编号、科目代码、表名字段名、SQL、trace 字段名等技术辅助字段；如确需说明，必须翻译成老板能懂的财务概念和来源 Excel
 15. 不能把 `route_decision` / `probe_results` 原样贴给老板；它们只用于宿主判断口径优先级和回退原因
 
 ## 7. 最小调用示例
@@ -275,4 +281,4 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 3. 发布到 Claude / OpenClaw 时，必须保留相对路径 `docs/SKILL_APPENDIX_FULL.md`
 4. 附录会区分：
    - 已通过 bridge 暴露给宿主的工具/结果结构
-   - 仓库内已实现但不适合直接注入老板问答上下文的能力边界
+   - 仓库内已实现但默认不桥接暴露的 CLI / 维护能力

@@ -5,7 +5,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 # finance_qa Agent 调用手册（桥接暴露 + 仓库功能全景）
 
-本文档目标：把“当前已通过 bridge 暴露给 OpenClaw / Claude 的能力”和“仓库内已实现但不适合直接注入老板问答上下文的能力边界”同时说清，避免宿主误判可调用范围。
+本文档目标：把“当前已通过 bridge 暴露给 OpenClaw / Claude 的能力”和“仓库内已实现但默认不桥接暴露的能力边界”同时说清，避免宿主误判可调用范围。
 
 ## 0. 附录状态
 
@@ -27,8 +27,8 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 说明：
 
-1. 本附录面向宿主问答与财务规则，默认只注入回答老板所需的上下文。
-2. 若人类操作者明确要求仓库维护细节，应另查 `README.md` 或对应说明，不要默认把这些内容注入老板问答上下文。
+1. 本附录面向宿主问答与财务规则，不收录研发测试、发布验收、部署脚本等开发信息。
+2. 若人类操作者明确要求仓库维护细节，应另查 `README.md`、`tests/README.md`、CLI `--help` 或对应脚本，不要默认把这些内容注入老板问答上下文。
 
 ## 2. 过程暴露要求
 
@@ -77,6 +77,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 41. `bridge_meta.skill_appendix_exists`
 
 说明：即使结果无法直接回答，也要尽量保留完整中间过程。若底层已经产出更完整的 trace、证据等级、规则链路或 SQL 解析结果，接口层应原样透出，不要裁剪。
+重要边界：过程暴露是给宿主、前端和审计链路使用，不等于对老板展示。老板可见回复必须经过字段净化，只输出业务概念、金额、期间、口径和来源，不原样暴露数据库辅助字段。
 补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序。
 
 ## 3. 宿主运行接口（按需）
@@ -450,7 +451,42 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 4. 管理动作：给 1-2 条可执行建议（催收、控费、回款跟进、税务检查等）。
 5. 过程可追溯：接口里保留 `executed_sql` / `calculation_logs`，但对老板默认折叠展示。
 
-## 12.2 宿主消费 `tax_inclusion` 规则
+## 12.2 老板可见字段净化（强制）
+
+对老板的自然语言回复里，不允许原样输出数据库 id、内部编号、科目代码、表名字段名或技术辅助字段。
+
+禁止直接展示的典型字段包括：
+
+1. `id`
+2. `contract_id`
+3. `account_code`
+4. `subject_code`
+5. `source_report_type`
+6. `source_sheet_name`
+7. `bridge_meta`
+8. `trace`
+9. `executed_sql`
+10. `calculation_logs`
+11. `intent_trace`
+12. `route_decision`
+13. `probe_results`
+
+这些字段只能在接口 JSON、审计链路、调试日志或用户明确要求“看 SQL/字段/调试信息”时展示。默认老板回复必须翻译为财务概念：
+
+1. `contract_id`：翻译成“具体合同/项目”，优先用客户/供应商名称 + 合同内容表达。
+2. `account_code` / `subject_code`：翻译成“会计科目、收入类别、成本类别、费用类别、应收/应付类别”，不要只给科目编码。
+3. `source_report_type`：翻译成“合同资金收入表、合同成本结算表、序时账、银行流水、利润表、资产负债表”等来源概念。
+4. `source_sheet_name`：只在说明来源时使用自然语言，例如“来源：《优集资金收入计算表》的【26年Q1收入明细】”，不要说字段名。
+5. `bridge_meta` / `trace` / `executed_sql` / `route_decision`：只作为系统审计信息保留，不进入老板主回复。
+
+示例：
+
+1. 不说：`contract_id=C007 的 account_code=6401 成本为 51.9 万`
+2. 改说：`林悦这个供应商的技术服务成本，3 月合同/项目口径约 51.9 万`
+3. 不说：`source_report_type=contract_fund_income`
+4. 改说：`主要来源是《优集资金收入计算表》的【26年Q1收入明细】`
+
+## 12.3 宿主消费 `tax_inclusion` 规则
 
 宿主在解析 `finance-query` 返回时，对税口径字段必须按下面顺序处理：
 

@@ -197,7 +197,7 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 	switch kind {
 	case contractWorkbookRevenueCost:
 		if containsString(f.GetSheetList(), "收入-月度结算") {
-			rows, err := f.GetRows("收入-月度结算")
+			rows, err := readContractSheetRows(f, "收入-月度结算")
 			if err != nil {
 				return contractImportBundle{}, fmt.Errorf("read 收入-月度结算: %w", err)
 			}
@@ -206,7 +206,7 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 			bundle.ContractSourceSheets = append(bundle.ContractSourceSheets, "收入-月度结算")
 		}
 		if containsString(f.GetSheetList(), "成本-月度结算") {
-			rows, err := f.GetRows("成本-月度结算")
+			rows, err := readContractSheetRows(f, "成本-月度结算")
 			if err != nil {
 				return contractImportBundle{}, fmt.Errorf("read 成本-月度结算: %w", err)
 			}
@@ -216,7 +216,7 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 		}
 	case contractWorkbookFund:
 		for _, sheetName := range fundQuarterSheetNames(f.GetSheetList()) {
-			rows, err := f.GetRows(sheetName)
+			rows, err := readContractSheetRows(f, sheetName)
 			if err != nil {
 				return contractImportBundle{}, fmt.Errorf("read %s: %w", sheetName, err)
 			}
@@ -279,6 +279,64 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 	bundle.ContractSourceSheets = dedupeContractStrings(bundle.ContractSourceSheets)
 	bundle.TotalRecordCount = len(bundle.RevenueRows) + len(bundle.CostRows) + len(bundle.FundRows)
 	return bundle, nil
+}
+
+func readContractSheetRows(f *excelize.File, sheetName string) ([][]string, error) {
+	rows, err := f.GetRows(sheetName)
+	if err != nil {
+		return nil, err
+	}
+	mergedCells, err := f.GetMergeCells(sheetName)
+	if err != nil {
+		return nil, err
+	}
+	for _, mergedCell := range mergedCells {
+		startCol, startRow, err := excelize.CellNameToCoordinates(mergedCell.GetStartAxis())
+		if err != nil {
+			return nil, err
+		}
+		endCol, endRow, err := excelize.CellNameToCoordinates(mergedCell.GetEndAxis())
+		if err != nil {
+			return nil, err
+		}
+		// Horizontal header merges (for example "1月" spanning quantity/amount columns)
+		// should stay anchored at the first column; duplicating them creates fake months.
+		if endRow <= startRow {
+			continue
+		}
+		value := strings.TrimSpace(mergedCell.GetCellValue())
+		if value == "" {
+			value = cellValue(cellRow(rows, startRow-1), startCol-1)
+		}
+		rows = fillMergedCellRange(rows, startRow, endRow, startCol, endCol, value)
+	}
+	return rows, nil
+}
+
+func fillMergedCellRange(rows [][]string, startRow, endRow, startCol, endCol int, value string) [][]string {
+	if startRow <= 0 || endRow < startRow || startCol <= 0 || endCol < startCol {
+		return rows
+	}
+	if len(rows) < endRow {
+		grown := make([][]string, endRow)
+		copy(grown, rows)
+		rows = grown
+	}
+	for rowIdx := startRow - 1; rowIdx <= endRow-1; rowIdx++ {
+		row := ensureRowLength(rows[rowIdx], endCol)
+		for colIdx := startCol - 1; colIdx <= endCol-1; colIdx++ {
+			row[colIdx] = value
+		}
+		rows[rowIdx] = row
+	}
+	return rows
+}
+
+func cellRow(rows [][]string, idx int) []string {
+	if idx < 0 || idx >= len(rows) {
+		return nil
+	}
+	return rows[idx]
 }
 
 func parseRevenueSettlementRows(sheetName string, rows [][]string) []contractRevenueSettlementRow {
