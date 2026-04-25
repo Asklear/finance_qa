@@ -5,21 +5,25 @@
 
 ## 一、核心特色能力
 
-### 1. 绝对可靠的数据血缘
-摒弃了解析不可控报表的低效路线，系统将最细粒度的**“序时帐”**作为唯一的、确定的数据源，自底向上构建业务：
+### 1. 老板口径优先的数据血缘
+系统既保留底层“序时帐 / 银行流水 / 科目余额 / 利润表 / 资产负债表”的可追溯证据，也优先使用财务专家按老板意图整理后的合同维度台账：
+- **老板口径主源**：收入、销售额、营收、成本、利润、客户、供应商、项目、合同类问题，优先探测 `fin_contracts + fin_fund_income + fin_cost_settlements`。
+- **底层财务证据**：当合同/专家表无法覆盖问题时，再回退到银行流水、序时帐、科目余额、利润表和资产负债表。
 - **全格式兼容**：内建 `Python/xlrd` 回落机制，支持老式用友/金蝶产生的 OLE2 腐败文件，并实现了**全自动多页签 (Multi-sheet) 遍历解析**。
 - **智能期间识别**：支持复合期间报表（如 `2026.01-2026.02`）的无损提取与分录重组。
-- **财务演算引擎**：`calculator.go` 自动利用财务准则聚沙成塔，无需人工结果表即可复现科目余额表与利润逻辑。
+- **财务演算引擎**：`calculator.go` 自动利用财务准则聚沙成塔，可复核科目余额表与利润逻辑。
 
-### 2. 可切换的双视角核算
-为了调和业务老板（看现金）与审计财务（看税表）的视角差距，系统提供可切换的双视角分析能力：
-* **业务现金流口径(看钱)**：不看纸面报表，直穿 1001/1002 银行科目，排除全部虚拟预提等粉饰动作，告诉你真金白银花哪里了。
-* **财务做账口径(看利润)**：严守权责发生制，精准复现次月摊销与年底税前红字冲账影响账面记录的原因。
+### 2. 老板口径优先 + 双视角兜底
+系统不再把所有核心指标默认拆成“现金/财务账”两套口径。当前顺序是：
+* **合同/专家表口径(老板默认口径)**：优先回答收入、销售额、营收、成本、利润、客户、供应商、项目和合同问题，并返回来源 Excel 说明。
+* **业务现金流口径(明确问钱/到账/付款/银行卡时优先)**：直查银行流水，回答实际到账、实际支出、回款、付款、净增加等问题。
+* **财务做账口径(经营/财务补充或兜底)**：严守权责发生制，用序时帐、利润表、科目余额等解释经营确认、应收应付、税额和利润差异。
 
 ## 核心能力
 
 - **三位一体身份核验 (Trinity Identity Detector)**：系统不再盲目识别动词，而是通过**银行现金流向（In/Out）**、**会计科目归属（AR/AP）**及**税务特征（进项/销项）**三位一体交叉核验，自动锁定实体身为“客户”、“供应商”或“项目”。
 - **Intent Router V2（可解释路由）**：查询入口统一走 V2 路由，返回 `intent_trace`（命中规则、得分、最终意图、置信度），支持冲突裁决和最小置信度回退。
+- **老板问题改写与轻量探测**：先把自然语言问题改写为期间、指标、实体、粒度、口径等意图槽位，再利用表/字段注释和少量真实数据探测，判断合同/专家表是否能直接回答。
 - **数据库辅助识别 (DB-Assisted Recognition)**：集成动态回溯算法，解决口语化提问（如“飞未云科多少钱”）中由于缺少后缀、动词导致的解析难题。
 - **审计穿透挖掘 (Summary Penetration)**：自动扫描序时账摘要字段，提取银行流水中缺失的往来单位信息。
 - **自动日期锚定 (Dynamic Anchoring)**：智能识别数据库最新业务月份，确保模糊时间查询（如“今年”、“本月”）准确命中。
@@ -164,7 +168,7 @@ func main() {
 	}
 
 	// 2. 将自然语言问题直接喂入 query 分析树
-	// 解析器会自动执行：NLP实体提取 -> 时间轴降维 -> 业务归一化 -> SQLite计算映射
+	// 解析器会自动执行：实体/期间/指标识别 -> 老板口径改写 -> 数据源轻量探测 -> PostgreSQL 查询或兜底数据包
 	res := engine.Query("今年合作伙伴A客户销售额是多少")
 
 	// 3. 处理结果 (res 包含 Success / Message / Data / SQL)
@@ -200,9 +204,9 @@ func main() {
 
 ### 2. 逻辑分层
 *   **接入层 (Parser & Ingest)**：处理各版本用友、金蝶及银行导出的 Excel 原始数据。具备自动脱敏、元数据提取（日期/公司识别）及数据清洗能力。
-*   **持久层 (DB & Dimensions)**：基于 SQLite。采用多维模型（Dimensions）管理财务周期，支持快速切换公司与会计月份。
-*   **计算层 (Accounting)**：核心业务大脑。实现了从“序时账”自动平衡“科目余额表”及“利润表”的算法，支持“钱（现金流）”与“账（权责发生制）”的双口径核算。
-*   **查询层 (Query)**：混合式自然语言引擎。集成业务规则库、正则表达式匹配与 Intent Router V2；当规则计算无法稳定回答时，返回 `llm_payload` 给上层 Agent 做最终判别（本仓库不直接调用宿主 LLM）。
+*   **持久层 (DB & Dimensions)**：PostgreSQL 优先，默认使用 `tenant_uhub` 等业务 schema；仅在显式传入 SQLite 路径时走本地兼容模式。采用多维模型（Dimensions）管理财务周期，支持快速切换公司与会计月份。
+*   **计算层 (Accounting)**：核心业务大脑。实现了从“序时账”自动平衡“科目余额表”及“利润表”的算法，并支持合同/专家表老板口径、现金流口径、权责发生制口径之间的可解释回退。
+*   **查询层 (Query)**：混合式自然语言引擎。集成业务规则库、正则表达式匹配、Intent Router V2、老板问题改写、数据源能力目录和轻量探测；当规则计算无法稳定回答时，返回 `llm_payload` 给上层 Agent 做最终判别（本仓库不直接调用宿主 LLM）。
 
 ### 2. 目录结构
 ```text
@@ -299,11 +303,13 @@ go test ./tests/integration/... -count=1
 6. `trace.executed_sql`
 7. `trace.calculation_logs`
 
-核心指标（收入/成本/利润/销售额）默认按“先现金、再经营”输出：
+老板核心指标（收入/营收/销售额/成本/利润/客户/供应商/项目/合同）默认按“合同/专家表优先”输出：
 
-1. 默认同时返回 `money_view` / `account_view` / `metrics`，回答顺序先现金收付，再补经营确认。
-2. 当问题继续追问 `差异原因`、`为什么不一样`、`回款和利润差异` 时，再展开 `cash_flow`、`difference_bridge` 与 `profit_cash_bridge`。
-3. 如果问题明确在问某个客户、供应商、员工或项目，优先返回主体审计结果，不强行改成整月汇总双口径。
+1. 先探测 `fin_contracts + fin_fund_income + fin_cost_settlements` 是否能回答老板问题；能回答时，以这些表作为主要口径。
+2. 合同/专家表不能覆盖时，再明确回退到现金流水口径或经营/财务账口径，不把回退结果伪装成合同口径。
+3. 问题明确包含 `银行`、`银行卡`、`到账`、`实际收款`、`实际支出`、`回款`、`付款` 等现金语义时，优先走银行流水。
+4. 当问题继续追问 `差异原因`、`为什么不一样`、`回款和利润差异` 时，再展开 `cash_flow`、`difference_bridge` 与 `profit_cash_bridge`。
+5. 老板可见回答必须翻译成财务概念与 Excel 来源，不展示数据库 ID、科目代码、SQL、`route_decision`、`probe_results` 等辅助字段。
 
 桥接层（`plugin/openclaw-finance/server/finance_bridge.py`）会额外补充：
 
@@ -311,12 +317,20 @@ go test ./tests/integration/... -count=1
 2. `data.exposed_fields.hr_breakdown`
 3. `data.exposed_fields.arithmetic_checks`
 4. `data.exposed_fields.intent_trace`
-5. `bridge_meta.skill_contract_version`
-6. `bridge_meta.protocol_version`（当前 `v2`）
-7. `bridge_meta.capabilities`
-8. `bridge_meta.skill_appendix_relative_path`
-9. `bridge_meta.skill_appendix_path`
-10. `bridge_meta.skill_appendix_exists`
+5. `data.query_spec`
+6. `data.route_decision`
+7. `data.route_decision.probe_results`
+8. `data.source_note`
+9. `data.source_documents`
+10. `data.primary_source_tables`
+11. `data.supporting_source_documents`
+12. `bridge_meta.skill_contract_version`
+13. `bridge_meta.protocol_version`（当前 `v2`）
+14. `bridge_meta.capabilities`
+15. `bridge_meta.capabilities.exposed_tools`
+16. `bridge_meta.skill_appendix_relative_path`
+17. `bridge_meta.skill_appendix_path`
+18. `bridge_meta.skill_appendix_exists`
 
 说明：桥接层不再读取/注入 `SKILL.md` 或 appendix 的正文规则，skill 仍由宿主（OpenClaw/Claude Code）skills 机制加载；但桥接层会读取 `SKILL.md` 顶部的契约版本标记，校验 appendix 相对路径是否存在，并把这些元数据写回响应。
 当前推荐使用“核心版 SKILL + 附录”：
@@ -324,6 +338,9 @@ go test ./tests/integration/... -count=1
 1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）
 2. 详细规则：`docs/SKILL_APPENDIX_FULL.md`（按需查阅）
 3. 发布到 Claude Code / OpenClaw 时，需保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 这条相对路径
+4. 线上 OpenClaw 当前路径：`/root/.openclaw/skills/finance/SKILL.md` 与 `/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+5. 线上 Claude Code 当前路径：`/root/.claude/skills/finance/SKILL.md` 与 `/root/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+6. 旧路径 `/root/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标
 
 ## 七、Agent 对接能力矩阵
 
@@ -333,17 +350,23 @@ go test ./tests/integration/... -count=1
    - `finance-query` → `financeqa query`
    - `finance-host-data` → `financeqa host-data`
    - `finance-upload` → `financeqa import`（单文件）
-2. 直接 CLI/SDK（桥接未封装）：
-   - `financeqa sync`（目录批量导入）
-   - `financeqa dimensions ...`（维度导入导出与规则管理）
+   - `finance-sync` → `financeqa sync`（目录批量导入）
+   - `finance-dimensions` → `financeqa dimensions ...`（维度导入导出与规则管理）
+2. 直接 CLI/SDK（显式维护时使用）：
    - `financeqa config show`
    - `financeqa keywords intents`
    - Go SDK：`query.NewEngine / Engine.Query / Engine.HostLLMPayload`
+3. OpenClaw/Claude 调 MCP bridge 时，`finance-query` 的推荐调用格式是：
+
+```json
+{"action":"call","name":"finance-query","arguments":{"query":"2026年Q1利润多少？"}}
+```
 
 ## 八、回答红线（不能犯）
 
 1. 不能把“银行到账”直接当“当月收入确认”。
 2. 不能把供应商付款/工资/税费误归因成收入差异。
 3. 不能在证据不足时编造结算月份、合同归属或开票归属。
-4. 不能只回一个数字，必须保留过程字段（`executed_sql`、`calculation_logs`、`trace`）。
+4. 面向老板不能只回一个数字，必须保留口径、期间、主要来源和必要解释；但不要展示老板看不懂的数据库辅助字段。
 5. 不能只看 CLI 退出码；业务失败时仍要先解析 stdout 的结构化 JSON（其中可能含 `llm_payload`）。
+6. 接口层可以保留 `executed_sql`、`calculation_logs`、`trace`、`route_decision` 等调试字段，但宿主给老板总结时必须转成业务语言。
