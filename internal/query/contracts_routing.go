@@ -12,7 +12,34 @@ func shouldUseContractDimension(question string) bool {
 	if !strings.Contains(q, "合同") {
 		return false
 	}
+	if shouldUseCompanyScopeContractAggregate(q) {
+		return false
+	}
 	return containsAny(q, contractPriorityKeywords())
+}
+
+func shouldUseCompanyScopeContractAggregate(question string) bool {
+	q := strings.TrimSpace(question)
+	if !containsAny(q, []string{"合同", "项目"}) {
+		return false
+	}
+	entity := extractNamedEntityFromQuestion(q)
+	if looksLikeBossRewriteNonEntity(entity) {
+		entity = ""
+	}
+	if isRealishQueryEntity(entity) {
+		return false
+	}
+	if shouldUseExplicitFinancialAccountQuestion(q) {
+		return false
+	}
+	metric := detectBossMetric(q)
+	if isBossContractFirstMetric(metric) {
+		return true
+	}
+	return containsAny(q, []string{
+		"结算", "执行", "情况", "多少", "有哪些", "哪些", "明细", "列表", "分别", "汇总", "统计",
+	})
 }
 
 func contractPriorityKeywords() []string {

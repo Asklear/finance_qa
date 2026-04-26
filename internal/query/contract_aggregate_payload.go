@@ -81,11 +81,26 @@ func buildContractAggregatePayloadSummary(selection contractAggregateSelection, 
 		payload["cost_paid"] = round2(summary.CostPaid)
 		payload["invoice_amount"] = round2(summary.CostInvoiced)
 		payload["invoiced_unpaid_amount"] = round2(summary.CostInvoiceOpen)
+		payload["invoice_unpaid_items"] = buildCostInvoiceOpenItemPayload(summary.CostInvoiceOpenItems)
 	}
 	if selection.IncludeProfit {
 		payload["profit"] = round2(summary.Profit)
 		payload["revenue_received"] = round2(summary.RevenueReceived)
 		payload["cost_paid"] = round2(summary.CostPaid)
+	}
+	return payload
+}
+
+func buildCostInvoiceOpenItemPayload(items []contractAggregateOpenItem) []map[string]any {
+	payload := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, map[string]any{
+			"supplier_name":    item.CustomerName,
+			"contract_content": item.ContractContent,
+			"invoice_amount":   round2(item.InvoiceAmount),
+			"paid_amount":      round2(item.ReceivedAmount),
+			"open_amount":      round2(item.OpenAmount),
+		})
 	}
 	return payload
 }

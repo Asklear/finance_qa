@@ -181,6 +181,92 @@ func TestReceivedInvoiceUnpaidQuestionUsesSupplierInvoiceGap(t *testing.T) {
 	}
 }
 
+func TestCompanyScopeContractInvoiceUnpaidQuestionDoesNotRequireSpecificContractSubject(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月已开票未付款的合同有哪些")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(300) {
+		t.Fatalf("total = %v, want supplier invoice unpaid 300", got)
+	}
+	if strings.Contains(res.Message, "没有识别到合同/项目主体") || strings.Contains(res.Message, "合同口径当前不能直接回答") {
+		t.Fatalf("company-scope contract invoice unpaid question should not require a specific subject, got %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "已收票未付款") || !strings.Contains(res.Message, "测试供应商") || !strings.Contains(res.Message, "测试供应商项目") {
+		t.Fatalf("message should explain supplier-side invoice unpaid roster, got %q", res.Message)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["query_family"]; got != QueryFamilyCoreMetric {
+		t.Fatalf("query_family = %v, want %v", got, QueryFamilyCoreMetric)
+	}
+	if got := spec["needs_contract_dimension"]; got != false {
+		t.Fatalf("needs_contract_dimension = %v, want false", got)
+	}
+	summary, ok := res.Data["contract_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract_summary missing: %+v", res.Data)
+	}
+	items, ok := summary["invoice_unpaid_items"].([]map[string]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("invoice_unpaid_items = %#v, want one supplier-side item", summary["invoice_unpaid_items"])
+	}
+	if got := items[0]["supplier_name"]; got != "测试供应商" {
+		t.Fatalf("invoice_unpaid_items[0].supplier_name = %v", got)
+	}
+	if got := items[0]["contract_content"]; got != "测试供应商项目" {
+		t.Fatalf("invoice_unpaid_items[0].contract_content = %v", got)
+	}
+	if got := items[0]["open_amount"]; got != float64(300) {
+		t.Fatalf("invoice_unpaid_items[0].open_amount = %v, want 300", got)
+	}
+}
+
+func TestCompanyScopeContractMetricQuestionUsesAggregateWithoutSyntheticSubject(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月合同收入情况")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(1000) {
+		t.Fatalf("total = %v, want contract revenue 1000", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["query_family"]; got != QueryFamilyCoreMetric {
+		t.Fatalf("query_family = %v, want %v", got, QueryFamilyCoreMetric)
+	}
+	if got := spec["needs_contract_dimension"]; got != false {
+		t.Fatalf("needs_contract_dimension = %v, want false", got)
+	}
+	if strings.Contains(res.Message, "没有识别到合同/项目主体") {
+		t.Fatalf("company-scope contract metric question should not require a specific subject, got %q", res.Message)
+	}
+}
+
 func buildContractARAPPriorityDB(t *testing.T) string {
 	t.Helper()
 	dbPath := t.TempDir() + "/contract-arap-priority.sqlite"
@@ -201,8 +287,10 @@ func buildContractARAPPriorityDB(t *testing.T) string {
 		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, source_report_type TEXT, source_sheet_name TEXT, settlement_amount REAL, paid_amount REAL, is_invoiced TEXT, invoice_amount REAL)`,
 		`INSERT INTO balance_sheet(company, period, account_code, account_name, opening_balance, closing_balance) VALUES ('测试公司','2026-03','1122','应收账款',0,9999)`,
 		`INSERT INTO balance_sheet(company, period, account_code, account_name, opening_balance, closing_balance) VALUES ('测试公司','2026-03','2202','应付账款',0,8888)`,
+		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount) VALUES ('测试公司','2026-03','营业收入',1000,1000)`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-001','测试客户','测试客户项目')`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-002','测试供应商','测试供应商项目')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-003','测试租赁供应商','租赁合同')`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C-001','2026-03','contract_fund_income','26年Q1收入明细',1000,400,'是',800)`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount) VALUES ('C-002','2026-03','contract_revenue_cost','成本-月度结算',700,200,'是',500)`,
 	}

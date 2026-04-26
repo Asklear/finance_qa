@@ -42,6 +42,8 @@ func detectRequestedMetrics(q string) []string {
 
 func detectContractARAPMetric(q string) string {
 	switch {
+	case looksLikeSupplierInvoiceUnpaidQuestion(q):
+		return "已收票未付款"
 	case containsAny(q, []string{"已收发票未付款", "已收票未付款", "收到发票未付款", "供应商发票未付款"}):
 		return "已收票未付款"
 	case containsAny(q, []string{"已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款"}):
@@ -53,6 +55,16 @@ func detectContractARAPMetric(q string) string {
 	default:
 		return ""
 	}
+}
+
+func looksLikeSupplierInvoiceUnpaidQuestion(q string) bool {
+	if !containsAny(q, []string{"已开票未付款", "已开发票未付款", "开票未付款", "发票未付款", "未付款", "未支付"}) {
+		return false
+	}
+	if containsAny(q, []string{"未回款", "未收款", "客户未付款", "客户没付款", "客户未支付"}) {
+		return false
+	}
+	return containsAny(q, []string{"供应商", "采购", "成本", "应付", "收票", "收到发票", "已收发票", "已收票", "合同", "项目"})
 }
 
 func detectCoreMetric(q string) string {

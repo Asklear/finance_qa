@@ -27,6 +27,7 @@ type contractAggregateSummary struct {
 	CostInvoiceOpen         float64
 	Profit                  float64
 	RevenueInvoiceOpenItems []contractAggregateOpenItem
+	CostInvoiceOpenItems    []contractAggregateOpenItem
 	HasRevenueCoverage      bool
 	HasCostCoverage         bool
 	SourceTables            []string
@@ -44,8 +45,10 @@ type contractAggregateOpenItem struct {
 
 func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggregateSummary, error) {
 	entity := strings.TrimSpace(spec.Entity)
-	if resolved := e.resolveContractSubject(spec.OriginalQuestion, entity); resolved != "" {
-		entity = resolved
+	if entity != "" || !shouldUseCompanyScopeContractAggregate(spec.OriginalQuestion) {
+		if resolved := e.resolveContractSubject(spec.OriginalQuestion, entity); resolved != "" {
+			entity = resolved
+		}
 	}
 
 	scope := "company"
@@ -121,6 +124,13 @@ WHERE cs.year_month BETWEEN ? AND ?` + filterClause
 		if err := e.db.QueryRow(costSQL, costArgs...).Scan(&summary.CostSettlement, &summary.CostPaid, &summary.CostInvoiced, &summary.CostPayable, &summary.CostInvoiceOpen, &costContractCount); err != nil {
 			return contractAggregateSummary{}, err
 		}
+		if contractAggregateIncludesMetric(requestedMetrics, "已收票未付款") {
+			items, err := e.collectCostInvoiceOpenItems(filterClause, costArgs)
+			if err != nil {
+				return contractAggregateSummary{}, err
+			}
+			summary.CostInvoiceOpenItems = items
+		}
 	}
 
 	summary.RevenueSettlement = round2(summary.RevenueSettlement)
@@ -159,6 +169,42 @@ JOIN fin_contracts c ON c.contract_id = f.contract_id
 WHERE f.year_month BETWEEN ? AND ?` + filterClause + `
 GROUP BY c.customer_name, c.contract_content
 HAVING COALESCE(SUM(CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0) > 0
+ORDER BY 5 DESC, c.customer_name, c.contract_content`
+	rows, err := e.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []contractAggregateOpenItem{}
+	for rows.Next() {
+		var item contractAggregateOpenItem
+		if err := rows.Scan(&item.CustomerName, &item.ContractContent, &item.InvoiceAmount, &item.ReceivedAmount, &item.OpenAmount); err != nil {
+			return nil, err
+		}
+		item.InvoiceAmount = round2(item.InvoiceAmount)
+		item.ReceivedAmount = round2(item.ReceivedAmount)
+		item.OpenAmount = round2(item.OpenAmount)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (e *Engine) collectCostInvoiceOpenItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
+	sqlText := `
+SELECT c.customer_name,
+       c.contract_content,
+       COALESCE(SUM(cs.invoice_amount), 0),
+       COALESCE(SUM(cs.paid_amount), 0),
+       COALESCE(SUM(CASE WHEN COALESCE(cs.invoice_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.invoice_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0)
+FROM fin_cost_settlements cs
+JOIN fin_contracts c ON c.contract_id = cs.contract_id
+WHERE cs.year_month BETWEEN ? AND ?` + filterClause + `
+GROUP BY c.customer_name, c.contract_content
+HAVING COALESCE(SUM(CASE WHEN COALESCE(cs.invoice_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.invoice_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0) > 0
 ORDER BY 5 DESC, c.customer_name, c.contract_content`
 	rows, err := e.db.Query(sqlText, args...)
 	if err != nil {
