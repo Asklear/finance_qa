@@ -65,6 +65,7 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 		`scp -i "$KEY_PATH" "$LOCAL_PLUGIN_MANIFEST" "$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json"`,
 		`scp -i "$KEY_PATH" "$LOCAL_CLAUDE_WRAPPER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh"`,
 		`scp -i "$KEY_PATH" "$LOCAL_ONLINE_CHECKER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py"`,
+		`go build -o '$REMOTE_REPO_DIR/financeqa' ./cmd/financeqa/...`,
 		`plugins.entries['openclaw-finance'].hooks.allowPromptInjection = true`,
 	} {
 		if !strings.Contains(scriptText, want) {
