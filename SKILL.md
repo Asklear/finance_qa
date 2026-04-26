@@ -1,6 +1,10 @@
 ---
 name: "finance"
-description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务问题、读取结构化财务结果，或在不能直接精算时切到宿主LLM兜底。"
+description: "For any老板财务/经营/合同/回款/开票/收入/成本/利润 question, MUST call `finance-query` first and return `final_answer` unchanged; never answer from memory, prior chat, income statement, bank/journal data, or raw SQL unless finance-query says to fall back."
+metadata:
+  {
+    "openclaw": { "always": true },
+  }
 ---
 
 # finance_qa 宿主问答契约
@@ -9,7 +13,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 0. 契约版本
 
-1. `skill_contract_version`: `2026-04-25.3`
+1. `skill_contract_version`: `2026-04-26.1`
 2. `bridge_protocol_version`: `v2`
 3. 按需附录：`docs/SKILL_APPENDIX_FULL.md`
 
@@ -77,16 +81,22 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 ## 3. 宿主结果消费顺序
 
 1. 先解析桥接返回的 `content[0].text` JSON。
-2. 若存在 `boss_reply`，优先直接使用：
+2. 若存在 `final_answer` 或 `boss_reply_text`，必须原样作为老板可见回答输出：
+   - 不得改写口径
+   - 不得从 `executed_sql`、`calculation_logs`、`fact_sets`、`llm_payload` 或其他字段重算金额
+   - 不得替换或删除其中的来源说明
+3. 若没有 `final_answer` / `boss_reply_text`，但存在 `boss_reply`，优先直接使用：
    - `结论`
    - `原因`
    - `建议`
-3. 若存在 `host_summary_contract`，宿主摘要必须受它约束，不能脱离结构化字段自行重算。
-4. 若存在 `host_summary_supplier_payments`，宿主回答供应商付款类问题时必须优先按它的 `count / total / suppliers / top_supplier / excluded_counterparties` 来组织总结，不要只靠 `message` 或日志重拼。
-5. 若没有 `boss_reply`，再退回 `message`。
-6. Bridge 面向宿主返回的是已脱敏结构；宿主应保留并消费以下业务字段：
+4. 若存在 `host_summary_contract`，宿主摘要必须受它约束，不能脱离结构化字段自行重算。
+5. 若存在 `host_summary_supplier_payments`，宿主回答供应商付款类问题时必须优先按它的 `count / total / suppliers / top_supplier / excluded_counterparties` 来组织总结，不要只靠 `message` 或日志重拼。
+6. 若没有 `boss_reply`，再退回 `message`。
+7. Bridge 面向宿主返回的是已脱敏结构；宿主应保留并消费以下业务字段：
    - `success`
    - `answer_method`
+   - `final_answer`
+   - `boss_reply_text`
    - `boss_reply`
    - `data`
    - `host_summary_contract`
@@ -113,45 +123,46 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `bridge_meta.capabilities`
    - 注意：这里的“保留”是给宿主、前端和审计链路保留，不等于对老板展示；老板可见回复必须只输出业务概念、金额、期间、口径和来源，不直接暴露数据库辅助字段。
    - 若需要原始 SQL / 未脱敏 trace，只能在人类明确要求开发排错时通过本地 CLI 或日志查看，不能在老板问答中默认暴露。
-7. 若存在 `data.source_note`：
+8. 若存在 `data.source_note`：
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
-8. 若 `bridge_meta.capabilities.exposed_tools` 存在：
+9. 若 `bridge_meta.capabilities.exposed_tools` 存在：
    - 仅把其中列出的工具视为当前 bridge 可调用能力
    - 不要把仓库内其他 CLI 子命令误当成 OpenClaw / Claude 当前可直接调用的 bridge tool
-9. 若 `success=false` 或 `answer_method=llm_payload`：
+10. 若 `success=false` 或 `answer_method=llm_payload`：
    - 如果当前结果来自 `finance-query`，立即调用 `finance-host-data`
    - 让宿主 LLM 基于 `data.llm_payload` 继续判断
    - 如果当前结果已经来自 `finance-host-data` 且存在 `data.extraction_errors`，说明宿主数据包提取不完整；此时不能再把半截 `llm_payload` 当完整事实总结给老板
    - 应明确提示“宿主数据包提取不完整，需要先修复库表/字段再重试”
-10. 若存在 `data.tax_inclusion` / `data.tax_inclusion_note`：
+11. 若存在 `data.tax_inclusion` / `data.tax_inclusion_note`：
    - 宿主摘要时必须保留这条口径提示
    - 不能把序时账汇总金额改写成“不含税”或“默认税后”
    - 若给老板做一句话总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
-11. 若存在 `data.route_decision`：
+12. 若存在 `data.route_decision`：
    - `selected_source` 表示本次主口径选择，如 `contract_aggregate` / `bank_statement`
    - `probe_results` 表示轻量探测结果，用于判断合同/项目表是否真的覆盖该问题
    - 宿主可以用它解释“为什么先看合同口径”或“为什么回退”，但不要把这些字段名原样读给老板
 
 ## 4. 宿主不能自己改写的结构化约束
 
-1. `boss_reply` 是后端已整理好的老板口径，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里二次拼数。
-2. `host_summary_contract` 出现时，必须按其字段回答，不允许自行改写成别的时间口径。
-3. `host_summary_supplier_payments` 出现时，必须按其结构化字段回答供应商付款问题，不允许绕开它重新按名称猜供应商、或把被剔除对象重新算回去。
-4. `data.route_decision` 出现时，必须承认后端已经做过来源选择和数据覆盖探测；不要绕开它自行把银行流水、序时账或合同表重新排序成另一套主口径。
-5. 对“累计回款 + 子期间到账”类问题：
+1. `final_answer` / `boss_reply_text` 是后端已整理好的老板可见最终答案，宿主必须原样输出。
+2. `boss_reply` 是后端已整理好的老板口径，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里二次拼数。
+3. `host_summary_contract` 出现时，必须按其字段回答，不允许自行改写成别的时间口径。
+4. `host_summary_supplier_payments` 出现时，必须按其结构化字段回答供应商付款问题，不允许绕开它重新按名称猜供应商、或把被剔除对象重新算回去。
+5. `data.route_decision` 出现时，必须承认后端已经做过来源选择和数据覆盖探测；不要绕开它自行把银行流水、序时账或合同表重新排序成另一套主口径。
+6. 对“累计回款 + 子期间到账”类问题：
    - `total_amount` 是累计值
    - `sub_period_amount` 是子期间值
    - 不能把 `sub_period_receipts` 当累计值
    - 不能把“其中 3 月到账”改写成“全部在 3 月到账”
-6. CLI 非 0 退出码不等于没有结果：
+7. CLI 非 0 退出码不等于没有结果：
    - 必须优先解析 `stdout` JSON
    - 再看 exit code
-7. 若存在 `data.contract_fallback_reason`：
+8. 若存在 `data.contract_fallback_reason`：
    - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
    - 若同时存在 `data.contract_answer_status=missing` 或 `data.source_priority=contract_strict`，表示系统已阻断自动回退；宿主只能说明合同口径缺口，不能自行改用财务账/流水下结论
    - 只有当后端明确返回 `data.contract_fallback_target` 时，才可说明已经切换到对应非合同口径
-8. 若存在 `data.extraction_errors`：
+9. 若存在 `data.extraction_errors`：
    - 说明 `finance-host-data` 或自动 fallback 的宿主数据包提取不完整
    - 宿主不能把 `data.llm_payload` 视为完整证据继续生成确定性结论
 

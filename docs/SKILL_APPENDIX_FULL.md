@@ -9,8 +9,8 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 0. 附录状态
 
-1. `appendix_doc_version`: `2026-04-25.3`
-2. `skill_contract_version`: `2026-04-25.3`
+1. `appendix_doc_version`: `2026-04-26.1`
+2. `skill_contract_version`: `2026-04-26.1`
 3. `bridge_protocol_version`: `v2`
 4. `last_updated`: `2026-04-25`
 5. 当前规范文件名：`docs/SKILL_APPENDIX_FULL.md`
@@ -37,41 +37,43 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 1. `success`
 2. `message`
 3. `answer_method`
-4. `boss_reply`
-5. `host_summary_contract`
-6. `host_summary_supplier_payments`
-7. `data`
-8. `data.trace`（审计摘要；SQL 可能已隐藏）
-9. `data.intent_trace.router_version`
-10. `data.intent_trace.matched`
-11. `data.intent_trace.scores`
-12. `data.intent_trace.final_intent`
-13. `data.intent_trace.confidence`
-14. `data.query_spec`
-15. `data.route_decision`
-16. `data.route_decision.probe_results`
-17. `data.query_pipeline`
-18. `data.source_plan`
-19. `data.fact_sets`
-20. `data.source_catalog`
-21. `data.source_note`
-22. `data.source_documents`
-23. `data.primary_source_tables`
-24. `data.supporting_source_documents`
-25. `data.extraction_errors`
-26. `data.contract_fallback_reason`
-27. `data.contract_fallback_target`
-28. `data.exposed_fields.intent_trace`
-29. `data.tax_inclusion`
-30. `data.tax_inclusion_note`
-31. `bridge_meta.skill_contract_version`
-32. `bridge_meta.protocol_version`
-33. `bridge_meta.capabilities`
-34. `bridge_meta.capabilities.exposed_tools`
-35. `bridge_meta.capabilities.result_structures`
-36. `bridge_meta.skill_appendix_relative_path`
-37. `bridge_meta.skill_appendix_path`
-38. `bridge_meta.skill_appendix_exists`
+4. `final_answer`
+5. `boss_reply_text`
+6. `boss_reply`
+7. `host_summary_contract`
+8. `host_summary_supplier_payments`
+9. `data`
+10. `data.trace`（审计摘要；SQL 可能已隐藏）
+11. `data.intent_trace.router_version`
+12. `data.intent_trace.matched`
+13. `data.intent_trace.scores`
+14. `data.intent_trace.final_intent`
+15. `data.intent_trace.confidence`
+16. `data.query_spec`
+17. `data.route_decision`
+18. `data.route_decision.probe_results`
+19. `data.query_pipeline`
+20. `data.source_plan`
+21. `data.fact_sets`
+22. `data.source_catalog`
+23. `data.source_note`
+24. `data.source_documents`
+25. `data.primary_source_tables`
+26. `data.supporting_source_documents`
+27. `data.extraction_errors`
+28. `data.contract_fallback_reason`
+29. `data.contract_fallback_target`
+30. `data.exposed_fields.intent_trace`
+31. `data.tax_inclusion`
+32. `data.tax_inclusion_note`
+33. `bridge_meta.skill_contract_version`
+34. `bridge_meta.protocol_version`
+35. `bridge_meta.capabilities`
+36. `bridge_meta.capabilities.exposed_tools`
+37. `bridge_meta.capabilities.result_structures`
+38. `bridge_meta.skill_appendix_relative_path`
+39. `bridge_meta.skill_appendix_path`
+40. `bridge_meta.skill_appendix_exists`
 
 说明：即使结果无法直接回答，也要尽量保留完整业务过程。若底层已经产出更完整的 trace、证据等级或规则链路，bridge 可保留脱敏摘要；SQL、数据库 id、科目代码和内部字段名不得默认透出给宿主老板问答。
 重要边界：过程暴露是给宿主、前端和审计链路使用，不等于对老板展示。老板可见回复必须经过字段净化，只输出业务概念、金额、期间、口径和来源，不原样暴露数据库辅助字段。
@@ -208,9 +210,10 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
-1. `boss_reply`：老板口径结论/原因/建议
-2. `host_summary_contract`：合同/项目维度及合同汇总结构化摘要
-3. `host_summary_supplier_payments`：供应商付款期间汇总摘要，含：
+1. `final_answer` / `boss_reply_text`：老板可见最终答案，宿主应原样输出，不得改写口径、金额或来源。
+2. `boss_reply`：老板口径结论/原因/建议；仅当没有 `final_answer` / `boss_reply_text` 时再按三段组织。
+3. `host_summary_contract`：合同/项目维度及合同汇总结构化摘要
+4. `host_summary_supplier_payments`：供应商付款期间汇总摘要，含：
    - `count`
    - `total`
    - `suppliers`
@@ -409,10 +412,11 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
    - 不得把序时账汇总金额擅自改写成“不含税”“税后利润”或“已剔税”
    - 如果要对老板做一段自然语言总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
 10. `bridge_meta.capabilities.tax_disclosure=true` 时，表示 bridge 已显式暴露税口径提示；宿主应优先消费结构化字段，不要回退到正则抽取自然语言。
-11. `bridge_meta.capabilities.boss_reply=true` 时，优先消费 `boss_reply`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
-12. `bridge_meta.capabilities.contract_summary=true` 时，合同类和合同汇总类问题优先消费 `host_summary_contract`。
-13. `bridge_meta.capabilities.supplier_payment_summary=true` 时，供应商付款问题优先消费 `host_summary_supplier_payments`，不要把被剔除的员工、内部往来、税费、手续费对象重新算回去。
-14. `bridge_meta.capabilities.route_decision=true` 时，宿主必须保留 `data.route_decision` 和 `probe_results`，但老板可见回复里只解释为“已先探测合同/项目表覆盖情况”或“已按银行流水口径回答”。
+11. `bridge_meta.capabilities.final_answer=true` 时，优先原样输出 `final_answer` 或 `boss_reply_text`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
+12. `bridge_meta.capabilities.boss_reply=true` 时，在没有 `final_answer` / `boss_reply_text` 时再消费 `boss_reply`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
+13. `bridge_meta.capabilities.contract_summary=true` 时，合同类和合同汇总类问题优先消费 `host_summary_contract`。
+14. `bridge_meta.capabilities.supplier_payment_summary=true` 时，供应商付款问题优先消费 `host_summary_supplier_payments`，不要把被剔除的员工、内部往来、税费、手续费对象重新算回去。
+15. `bridge_meta.capabilities.route_decision=true` 时，宿主必须保留 `data.route_decision` 和 `probe_results`，但老板可见回复里只解释为“已先探测合同/项目表覆盖情况”或“已按银行流水口径回答”。
 
 ## 12. Agent 返回规范（必须透出中间过程）
 

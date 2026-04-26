@@ -22,7 +22,10 @@ flowchart LR
         PK1["SKILL.md"]
         PK2["docs/SKILL_APPENDIX_FULL.md"]
         PK3["bin/financeqa"]
+        PK4["skills/finance/SKILL.md"]
+        PK5["skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         PK1 --> PK2
+        PK4 --> PK5
     end
 
     subgraph HostRepo["服务器仓库 /root/finance_qa"]
@@ -38,10 +41,15 @@ flowchart LR
         OC1["/root/.openclaw/skills/finance/SKILL.md"]
         OC2["/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         OC3["/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py"]
+        OC4["/root/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md"]
+        OC5["/root/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         OC1 -. symlink or same file .-> HR1
         OC2 -. symlink or same file .-> HR2
         OC3 -. symlink .-> HR3
+        OC4 -. symlink or same file .-> HR1
+        OC5 -. symlink or same file .-> HR2
         OC1 --> OC2
+        OC4 --> OC5
     end
 
     subgraph Claude["Claude Code 当前 skill 路径"]
@@ -75,6 +83,8 @@ flowchart LR
     PK3 --> HR4
     HR1 --> OC1
     HR2 --> OC2
+    HR1 --> OC4
+    HR2 --> OC5
     HR3 --> OC3
     HR1 --> CC1
     HR2 --> CC2
@@ -86,10 +96,11 @@ flowchart LR
 
 1. 本地仓库根：`/Users/gaorongvc/work/other/finance_qa`
 2. 服务器仓库根：`/root/finance_qa`
-3. OpenClaw skill 目录：`/root/.openclaw/skills/finance`
-4. OpenClaw extension 目录：`/root/.openclaw/extensions/openclaw-finance/server`
-5. Claude Code skill 目录：`/root/.claude/skills/finance`
-6. 废弃路径：`/root/.openclaw/workspace/skills/finance-orchestrator` 不再作为发布或验证目标。
+3. OpenClaw 全局 skill 兼容目录：`/root/.openclaw/skills/finance`
+4. OpenClaw 扩展 skill 注册目录：`/root/.openclaw/extensions/openclaw-finance/skills/finance`
+5. OpenClaw extension server 目录：`/root/.openclaw/extensions/openclaw-finance/server`
+6. Claude Code skill 目录：`/root/.claude/skills/finance`
+7. 废弃路径：`/root/.openclaw/workspace/skills/finance-orchestrator` 不再作为发布或验证目标。
 
 ## 发布约束
 
@@ -98,7 +109,7 @@ flowchart LR
 3. bridge 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
 4. OpenClaw/Claude 当前可调用 bridge 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 5. `finance-query` 推荐 MCP 调用格式：`{"action":"call","name":"finance-query","arguments":{"query":"..."}}`。
-6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 `finance_bridge.py`，并创建 OpenClaw symlink。
+6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 `finance_bridge.py`，并同时创建 OpenClaw 全局 skill 兼容路径与扩展 skill 注册路径 symlink。
 7. Claude Code skill 路径也要同步或指向服务器仓库同一份 `SKILL.md` 与 appendix。
 
 ## 运行时要点

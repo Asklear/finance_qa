@@ -1,0 +1,12 @@
+{
+  "id": "openclaw-finance",
+  "version": "1.2.0",
+  "channels": [
+    "openclaw-finance"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

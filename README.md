@@ -333,6 +333,8 @@ go test ./tests/integration/... -count=1
 16. `bridge_meta.skill_appendix_relative_path`
 17. `bridge_meta.skill_appendix_path`
 18. `bridge_meta.skill_appendix_exists`
+19. `bridge_meta.final_answer_available`
+20. `bridge_meta.final_answer_source`
 
 说明：桥接层不再读取/注入 `SKILL.md` 或 appendix 的正文规则，skill 仍由宿主（OpenClaw/Claude Code）skills 机制加载；但桥接层会读取 `SKILL.md` 顶部的契约版本标记，校验 appendix 相对路径是否存在，并把这些元数据写回响应。
 当前推荐使用“核心版 SKILL + 附录”：
@@ -340,9 +342,10 @@ go test ./tests/integration/... -count=1
 1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）
 2. 详细规则：`docs/SKILL_APPENDIX_FULL.md`（按需查阅）
 3. 发布到 Claude Code / OpenClaw 时，需保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 这条相对路径
-4. 线上 OpenClaw 当前路径：`/root/.openclaw/skills/finance/SKILL.md` 与 `/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`
-5. 线上 Claude Code 当前路径：`/root/.claude/skills/finance/SKILL.md` 与 `/root/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`
-6. 旧路径 `/root/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标
+4. 线上 OpenClaw 全局 skill 兼容路径：`/root/.openclaw/skills/finance/SKILL.md` 与 `/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+5. 线上 OpenClaw 扩展 skill 注册路径：`/root/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md` 与 `/root/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+6. 线上 Claude Code 当前路径：`/root/.claude/skills/finance/SKILL.md` 与 `/root/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+7. 旧路径 `/root/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标
 
 ## 七、Agent 对接能力矩阵
 
