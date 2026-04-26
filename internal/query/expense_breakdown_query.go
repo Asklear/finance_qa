@@ -27,48 +27,52 @@ func shouldUseExpenseBreakdown(q string) bool {
 	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) || shouldUseHRBreakdown(q, cfg) {
 		return false
 	}
-	asksBreakdown := containsAny(q, []string{"拆", "拆分", "拆开", "大类", "构成", "分类", "类别", "结构", "花哪", "花到哪", "花在哪"})
+	asksBreakdown := containsAny(q, cfg.ExpenseBreakdownTriggerKeywords())
 	if !asksBreakdown {
 		return false
 	}
-	if containsAny(q, []string{"收入", "营收", "利润"}) && !containsAny(q, []string{"支出", "费用", "开支", "花", "付款", "支付", "成本"}) {
+	if containsAny(q, cfg.ExpenseBreakdownMetricBlockKeywords()) && !containsAny(q, cfg.ExpenseBreakdownMetricAllowKeywords()) {
 		return false
 	}
-	if containsAny(q, []string{"整体支出", "总支出", "全部支出", "支出", "费用", "开支", "钱花", "花了", "花哪", "付款", "支付"}) {
+	if containsAny(q, cfg.ExpenseBreakdownExpenseKeywords()) {
 		return true
 	}
-	return containsAny(q, []string{"成本"}) && containsAny(q, []string{"拆分", "拆开", "大类", "构成", "分类", "类别"})
+	return containsAny(q, cfg.ExpenseBreakdownCostKeywords())
 }
 
 func (e *Engine) queryExpenseBreakdownAllPerspectives(from, to string) Result {
 	periodLabel := displayPeriod(from, to)
+	cfg := getRuleConfig()
+	contractView := cfg.ExpenseBreakdownView("contract_project")
+	cashView := cfg.ExpenseBreakdownView("cash_category")
+	accountView := cfg.ExpenseBreakdownView("account_category")
 	contractRows, contractTotal, contractPaid, contractSQL, contractLogs := e.collectContractProjectExpenseBreakdown(from, to)
 	cashRows, cashTotal, cashSQL, cashLogs := e.collectCashCategoryExpenseBreakdown(from, to)
 	accountRows, accountTotal, accountSQL, accountLogs := e.collectAccountCategoryExpenseBreakdown(from, to)
 
 	views := map[string]any{
 		"contract_project": map[string]any{
-			"label":       "合同/项目口径",
-			"description": "按合同成本结算表看成本确认和合同付款",
+			"label":       contractView.Label,
+			"description": contractView.Description,
 			"total":       round2(contractTotal),
 			"paid_total":  round2(contractPaid),
 			"rows":        contractProjectRowsToMaps(contractRows, contractTotal),
 		},
 		"cash_category": map[string]any{
-			"label":       "现金流水口径",
-			"description": "按银行流水实际流出拆大类",
+			"label":       cashView.Label,
+			"description": cashView.Description,
 			"total":       round2(cashTotal),
 			"rows":        categoryRowsToMaps(cashRows, cashTotal),
 		},
 		"account_category": map[string]any{
-			"label":       "账务科目口径",
-			"description": "按序时账成本费用类借方发生额拆大类",
+			"label":       accountView.Label,
+			"description": accountView.Description,
 			"total":       round2(accountTotal),
 			"rows":        accountRowsToMaps(accountRows, accountTotal),
 		},
 	}
 
-	message := composeExpenseBreakdownMessage(periodLabel, contractRows, contractTotal, contractPaid, cashRows, cashTotal, accountRows, accountTotal)
+	message := composeExpenseBreakdownMessage(periodLabel, contractRows, contractTotal, contractPaid, cashRows, cashTotal, accountRows, accountTotal, cfg)
 	sqls := append([]string{}, contractSQL...)
 	sqls = append(sqls, cashSQL...)
 	sqls = append(sqls, accountSQL...)
@@ -84,7 +88,7 @@ func (e *Engine) queryExpenseBreakdownAllPerspectives(from, to string) Result {
 			"period":                   periodLabel,
 			"period_from":              from,
 			"period_to":                to,
-			"metric":                   "整体支出拆分",
+			"metric":                   cfg.ExpenseBreakdownMetricName(),
 			"breakdown_views":          views,
 			"source_primary_tables":    []string{"fin_cost_settlements", "fin_bank_statement", "fin_journal"},
 			"source_supporting_tables": []string{"fin_contracts"},
@@ -238,49 +242,66 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 func (e *Engine) classifyCashExpenseCategory(counterparty, summary string) string {
 	cfg := getRuleConfig()
 	text := normalizeEntityText(counterparty + " " + summary)
-	switch {
-	case containsAny(text, []string{"税务", "税局", "缴税", "纳税", "增值税", "所得税", "附加税", "印花税", "个税"}):
-		return "税费"
-	case containsAny(text, []string{"手续费", "利息", "财务费用", "银行费用"}):
-		return "银行费用"
-	case containsAny(text, cfg.CounterpartyRoleKeywords(CounterpartyEmployee)):
-		return "人力薪酬"
-	case internalPartyMatchesCompany(e.Company, counterparty) || looksLikeInternalOrgUnit(counterparty, cfg):
-		return "内部往来"
-	case containsAny(text, cfg.CounterpartyRoleKeywords(CounterpartySupplier)):
-		return "供应商付款"
-	case looksLikeExternalOrganizationCounterparty(counterparty):
-		return "供应商付款"
-	default:
-		return "其他支出"
+	for _, rule := range cfg.ExpenseBreakdownCashCategoryRules() {
+		if e.matchesCashExpenseCategory(rule, counterparty, text, cfg) {
+			return rule.Category
+		}
 	}
+	return cfg.ExpenseBreakdownCashDefaultCategoryName()
 }
 
 func classifyAccountExpenseCategory(accountCode, accountName, summary string) string {
 	text := normalizeEntityText(accountCode + " " + accountName + " " + summary)
 	cfg := getRuleConfig()
-	switch {
-	case containsAny(text, cfg.CounterpartyRoleKeywords(CounterpartyEmployee)):
-		return "人力薪酬"
-	case containsAny(text, []string{"税金及附加", "所得税费用", "税费"}):
-		return "税费"
-	case containsAny(text, []string{"手续费", "利息", "财务费用", "6603"}):
-		return "银行及财务费用"
-	case containsAny(text, []string{"销售费用", "6601"}):
-		return "销售费用"
-	case containsAny(text, []string{"管理费用", "6602"}):
-		return "管理费用"
-	case containsAny(text, []string{"主营业务成本", "营业成本", "成本", "6401", "6402"}):
-		return "业务成本"
-	case containsAny(text, []string{"营业外支出", "6711"}):
-		return "营业外支出"
-	default:
-		name := strings.TrimSpace(accountName)
-		if name == "" {
-			return "其他费用"
+	for _, rule := range cfg.ExpenseBreakdownAccountCategoryRules() {
+		if matchesAccountExpenseCategory(rule, accountCode, text, cfg) {
+			return rule.Category
 		}
-		return name
 	}
+	if category := cfg.ExpenseBreakdownAccountDefaultCategoryName(); category != "" {
+		return category
+	}
+	name := strings.TrimSpace(accountName)
+	if name == "" {
+		return "其他费用"
+	}
+	return name
+}
+
+func (e *Engine) matchesCashExpenseCategory(rule ExpenseBreakdownCategoryRule, counterparty, text string, cfg RuleConfig) bool {
+	if containsAny(text, rule.Keywords) {
+		return true
+	}
+	if role := CounterpartyRole(strings.TrimSpace(rule.CounterpartyRole)); role != "" && containsAny(text, cfg.CounterpartyRoleKeywords(role)) {
+		return true
+	}
+	if rule.InternalParty && (internalPartyMatchesCompany(e.Company, counterparty) || looksLikeInternalOrgUnit(counterparty, cfg)) {
+		return true
+	}
+	return rule.ExternalOrganization && looksLikeExternalOrganizationCounterparty(counterparty)
+}
+
+func matchesAccountExpenseCategory(rule ExpenseBreakdownCategoryRule, accountCode, text string, cfg RuleConfig) bool {
+	if containsAny(text, rule.Keywords) {
+		return true
+	}
+	if hasAnyPrefix(strings.TrimSpace(accountCode), rule.AccountCodePrefixes) {
+		return true
+	}
+	if role := CounterpartyRole(strings.TrimSpace(rule.CounterpartyRole)); role != "" && containsAny(text, cfg.CounterpartyRoleKeywords(role)) {
+		return true
+	}
+	return false
+}
+
+func hasAnyPrefix(value string, prefixes []string) bool {
+	value = strings.TrimSpace(value)
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, strings.TrimSpace(prefix)) {
+			return true
+		}
+	}
+	return false
 }
 
 func expenseBreakdownRowsFromMap(rows map[string]*expenseBreakdownRow) []expenseBreakdownRow {
@@ -345,12 +366,15 @@ func shareOf(amount, total float64) float64 {
 	return round2(amount / total * 100)
 }
 
-func composeExpenseBreakdownMessage(period string, contractRows []expenseBreakdownRow, contractTotal, contractPaid float64, cashRows []expenseBreakdownRow, cashTotal float64, accountRows []expenseBreakdownRow, accountTotal float64) string {
+func composeExpenseBreakdownMessage(period string, contractRows []expenseBreakdownRow, contractTotal, contractPaid float64, cashRows []expenseBreakdownRow, cashTotal float64, accountRows []expenseBreakdownRow, accountTotal float64, cfg RuleConfig) string {
+	contractView := cfg.ExpenseBreakdownView("contract_project")
+	cashView := cfg.ExpenseBreakdownView("cash_category")
+	accountView := cfg.ExpenseBreakdownView("account_category")
 	return strings.Join([]string{
-		fmt.Sprintf("%s 整体支出已按所有可用口径拆开：", period),
-		fmt.Sprintf("1. 合同/项目口径：合同成本 %.2f 元，合同付款 %.2f 元。主要项目：%s。", round2(contractTotal), round2(contractPaid), summarizeContractProjectRows(contractRows, 5)),
-		fmt.Sprintf("2. 现金流水口径：银行实际流出 %.2f 元。大类：%s。", round2(cashTotal), summarizeCategoryRows(cashRows, 6)),
-		fmt.Sprintf("3. 账务科目口径：账上成本及费用 %.2f 元。科目：%s。", round2(accountTotal), summarizeCategoryRows(accountRows, 6)),
+		fmt.Sprintf("%s %s已按所有可用口径拆开：", period, cfg.ExpenseBreakdownMetricName()),
+		fmt.Sprintf("1. %s：合同成本 %.2f 元，合同付款 %.2f 元。主要项目：%s。", contractView.Label, round2(contractTotal), round2(contractPaid), summarizeContractProjectRows(contractRows, contractView.SummaryLimit)),
+		fmt.Sprintf("2. %s：银行实际流出 %.2f 元。大类：%s。", cashView.Label, round2(cashTotal), summarizeCategoryRows(cashRows, cashView.SummaryLimit)),
+		fmt.Sprintf("3. %s：账上成本及费用 %.2f 元。科目：%s。", accountView.Label, round2(accountTotal), summarizeCategoryRows(accountRows, accountView.SummaryLimit)),
 		"说明：三种口径分别看合同成本确认、银行实际付款、账务入账成本费用，金额不要求相加一致。",
 	}, "\n")
 }
@@ -358,6 +382,9 @@ func composeExpenseBreakdownMessage(period string, contractRows []expenseBreakdo
 func summarizeContractProjectRows(rows []expenseBreakdownRow, limit int) string {
 	if len(rows) == 0 {
 		return "暂无合同/项目成本记录"
+	}
+	if limit <= 0 {
+		limit = len(rows)
 	}
 	parts := make([]string, 0, minInt(len(rows), limit))
 	for i, row := range rows {
@@ -385,6 +412,9 @@ func summarizeContractProjectRows(rows []expenseBreakdownRow, limit int) string 
 func summarizeCategoryRows(rows []expenseBreakdownRow, limit int) string {
 	if len(rows) == 0 {
 		return "暂无记录"
+	}
+	if limit <= 0 {
+		limit = len(rows)
 	}
 	parts := make([]string, 0, minInt(len(rows), limit))
 	for i, row := range rows {

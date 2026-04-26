@@ -150,6 +150,7 @@ func applyNestedRuleConfig(cfg *RuleConfig, raw ruleConfigFile) {
 	if len(raw.Router.FallbackMonthlyExpenseKeywords) > 0 {
 		cfg.FallbackMonthlyExpenseKeywords = dedupeNonEmpty(raw.Router.FallbackMonthlyExpenseKeywords)
 	}
+	applyExpenseBreakdownRuleConfig(cfg, raw.Router.ExpenseBreakdown)
 	if len(raw.Counterparty.Roles) > 0 {
 		cfg.CounterpartyRoleLexicon = normalizeStringSliceMap(raw.Counterparty.Roles)
 	}
@@ -209,5 +210,41 @@ func applyNestedRuleConfig(cfg *RuleConfig, raw ruleConfigFile) {
 	}
 	if len(raw.Accounting.HRCategoryKeywords) > 0 {
 		cfg.HRCategoryKeywordLexicon = normalizeStringSliceMap(raw.Accounting.HRCategoryKeywords)
+	}
+}
+
+func applyExpenseBreakdownRuleConfig(cfg *RuleConfig, raw expenseBreakdownRuleConfigFile) {
+	if len(raw.TriggerKeywords) > 0 {
+		cfg.ExpenseBreakdownTriggerKeywordLexicon = dedupeNonEmpty(raw.TriggerKeywords)
+	}
+	if len(raw.ExpenseKeywords) > 0 {
+		cfg.ExpenseBreakdownExpenseKeywordLexicon = dedupeNonEmpty(raw.ExpenseKeywords)
+	}
+	if len(raw.MetricBlockKeywords) > 0 {
+		cfg.ExpenseBreakdownMetricBlockKeywordLexicon = dedupeNonEmpty(raw.MetricBlockKeywords)
+	}
+	if len(raw.MetricAllowKeywords) > 0 {
+		cfg.ExpenseBreakdownMetricAllowKeywordLexicon = dedupeNonEmpty(raw.MetricAllowKeywords)
+	}
+	if len(raw.CostKeywords) > 0 {
+		cfg.ExpenseBreakdownCostKeywordLexicon = dedupeNonEmpty(raw.CostKeywords)
+	}
+	if strings.TrimSpace(raw.MetricLabel) != "" {
+		cfg.ExpenseBreakdownMetricLabel = strings.TrimSpace(raw.MetricLabel)
+	}
+	if len(raw.Views) > 0 {
+		cfg.ExpenseBreakdownViewLexicon = mergeExpenseBreakdownViews(cfg.ExpenseBreakdownViewLexicon, raw.Views)
+	}
+	if len(raw.CashCategories) > 0 {
+		cfg.ExpenseBreakdownCashCategoryLexicon = normalizeExpenseBreakdownCategoryRules(raw.CashCategories)
+	}
+	if strings.TrimSpace(raw.CashDefaultCategory) != "" {
+		cfg.ExpenseBreakdownCashDefaultCategory = strings.TrimSpace(raw.CashDefaultCategory)
+	}
+	if len(raw.AccountCategories) > 0 {
+		cfg.ExpenseBreakdownAccountCategoryLexicon = normalizeExpenseBreakdownCategoryRules(raw.AccountCategories)
+	}
+	if strings.TrimSpace(raw.AccountDefaultCategory) != "" {
+		cfg.ExpenseBreakdownAccountDefaultCategory = strings.TrimSpace(raw.AccountDefaultCategory)
 	}
 }

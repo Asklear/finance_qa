@@ -28,6 +28,17 @@ func (cfg *RuleConfig) finalize() {
 	cfg.SupplierPaymentExcludeNameLexicon = dedupeNonEmpty(cfg.SupplierPaymentExcludeNameLexicon)
 	cfg.CounterpartyClassificationQuestionLexicon = dedupeNonEmpty(cfg.CounterpartyClassificationQuestionLexicon)
 	cfg.ProfitSingleViewBlockKeywordLexicon = dedupeNonEmpty(cfg.ProfitSingleViewBlockKeywordLexicon)
+	cfg.ExpenseBreakdownTriggerKeywordLexicon = dedupeNonEmpty(cfg.ExpenseBreakdownTriggerKeywordLexicon)
+	cfg.ExpenseBreakdownExpenseKeywordLexicon = dedupeNonEmpty(cfg.ExpenseBreakdownExpenseKeywordLexicon)
+	cfg.ExpenseBreakdownMetricBlockKeywordLexicon = dedupeNonEmpty(cfg.ExpenseBreakdownMetricBlockKeywordLexicon)
+	cfg.ExpenseBreakdownMetricAllowKeywordLexicon = dedupeNonEmpty(cfg.ExpenseBreakdownMetricAllowKeywordLexicon)
+	cfg.ExpenseBreakdownCostKeywordLexicon = dedupeNonEmpty(cfg.ExpenseBreakdownCostKeywordLexicon)
+	cfg.ExpenseBreakdownMetricLabel = strings.TrimSpace(cfg.ExpenseBreakdownMetricLabel)
+	cfg.ExpenseBreakdownViewLexicon = normalizeExpenseBreakdownViews(cfg.ExpenseBreakdownViewLexicon)
+	cfg.ExpenseBreakdownCashCategoryLexicon = normalizeExpenseBreakdownCategoryRules(cfg.ExpenseBreakdownCashCategoryLexicon)
+	cfg.ExpenseBreakdownCashDefaultCategory = strings.TrimSpace(cfg.ExpenseBreakdownCashDefaultCategory)
+	cfg.ExpenseBreakdownAccountCategoryLexicon = normalizeExpenseBreakdownCategoryRules(cfg.ExpenseBreakdownAccountCategoryLexicon)
+	cfg.ExpenseBreakdownAccountDefaultCategory = strings.TrimSpace(cfg.ExpenseBreakdownAccountDefaultCategory)
 	cfg.ContractPriorityKeywordLexicon = dedupeNonEmpty(cfg.ContractPriorityKeywordLexicon)
 	cfg.ContractSourceTableLexicon = normalizeStringSliceMap(cfg.ContractSourceTableLexicon)
 	cfg.ContractSummaryKeywordLexicon = dedupeNonEmpty(cfg.ContractSummaryKeywordLexicon)
@@ -68,6 +79,59 @@ func setIntentKeywordGroup(cfg *RuleConfig, group string, values []string) {
 	case string(IntentMonthlySummary):
 		cfg.IntentMonthlySummaryKeywords = normalized
 	}
+}
+
+func mergeExpenseBreakdownViews(base, overrides map[string]ExpenseBreakdownViewRule) map[string]ExpenseBreakdownViewRule {
+	out := make(map[string]ExpenseBreakdownViewRule, len(base)+len(overrides))
+	for key, view := range normalizeExpenseBreakdownViews(base) {
+		out[key] = view
+	}
+	for key, override := range normalizeExpenseBreakdownViews(overrides) {
+		existing := out[key]
+		if override.Label != "" {
+			existing.Label = override.Label
+		}
+		if override.Description != "" {
+			existing.Description = override.Description
+		}
+		if override.SummaryLimit > 0 {
+			existing.SummaryLimit = override.SummaryLimit
+		}
+		out[key] = existing
+	}
+	return out
+}
+
+func normalizeExpenseBreakdownViews(input map[string]ExpenseBreakdownViewRule) map[string]ExpenseBreakdownViewRule {
+	out := make(map[string]ExpenseBreakdownViewRule, len(input))
+	for key, view := range input {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		view.Label = strings.TrimSpace(view.Label)
+		view.Description = strings.TrimSpace(view.Description)
+		if view.Label == "" && view.Description == "" && view.SummaryLimit <= 0 {
+			continue
+		}
+		out[trimmedKey] = view
+	}
+	return out
+}
+
+func normalizeExpenseBreakdownCategoryRules(input []ExpenseBreakdownCategoryRule) []ExpenseBreakdownCategoryRule {
+	out := make([]ExpenseBreakdownCategoryRule, 0, len(input))
+	for _, rule := range input {
+		rule.Category = strings.TrimSpace(rule.Category)
+		if rule.Category == "" {
+			continue
+		}
+		rule.Keywords = dedupeNonEmpty(rule.Keywords)
+		rule.CounterpartyRole = strings.TrimSpace(rule.CounterpartyRole)
+		rule.AccountCodePrefixes = dedupeNonEmpty(rule.AccountCodePrefixes)
+		out = append(out, rule)
+	}
+	return out
 }
 
 func syncKnownIntentKeywordGroup(cfg *RuleConfig, group string, target *[]string) {

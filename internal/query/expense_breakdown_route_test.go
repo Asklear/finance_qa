@@ -1,6 +1,10 @@
 package query
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestShouldUseExpenseBreakdownRecognizesFlexibleBossPhrasing(t *testing.T) {
 	yes := []string{
@@ -27,5 +31,26 @@ func TestShouldUseExpenseBreakdownRecognizesFlexibleBossPhrasing(t *testing.T) {
 		if shouldUseExpenseBreakdown(q) {
 			t.Fatalf("shouldUseExpenseBreakdown(%q) = true, want false", q)
 		}
+	}
+}
+
+func TestShouldUseExpenseBreakdownUsesConfiguredTriggerKeywords(t *testing.T) {
+	rulesPath := filepath.Join(t.TempDir(), "rules.json")
+	rulesJSON := `{
+  "schema_version": 2,
+  "router": {
+    "expense_breakdown": {
+      "trigger_keywords": ["掰开"],
+      "expense_keywords": ["花销"]
+    }
+  }
+}`
+	if err := os.WriteFile(rulesPath, []byte(rulesJSON), 0o600); err != nil {
+		t.Fatalf("write rules file: %v", err)
+	}
+	t.Setenv("FINANCEQA_RULES_PATH", rulesPath)
+
+	if !shouldUseExpenseBreakdown("2026年3月花销掰开看看") {
+		t.Fatalf("configured trigger and expense keywords should route to expense breakdown")
 	}
 }

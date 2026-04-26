@@ -26,6 +26,51 @@ func (cfg RuleConfig) ProfitSingleViewBlockKeywords() []string {
 	return copyStringSlice(cfg.ProfitSingleViewBlockKeywordLexicon)
 }
 
+func (cfg RuleConfig) ExpenseBreakdownTriggerKeywords() []string {
+	return copyStringSlice(cfg.ExpenseBreakdownTriggerKeywordLexicon)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownExpenseKeywords() []string {
+	return copyStringSlice(cfg.ExpenseBreakdownExpenseKeywordLexicon)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownMetricBlockKeywords() []string {
+	return copyStringSlice(cfg.ExpenseBreakdownMetricBlockKeywordLexicon)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownMetricAllowKeywords() []string {
+	return copyStringSlice(cfg.ExpenseBreakdownMetricAllowKeywordLexicon)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownCostKeywords() []string {
+	return copyStringSlice(cfg.ExpenseBreakdownCostKeywordLexicon)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownMetricName() string {
+	return strings.TrimSpace(cfg.ExpenseBreakdownMetricLabel)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownView(key string) ExpenseBreakdownViewRule {
+	view := cfg.ExpenseBreakdownViewLexicon[strings.TrimSpace(key)]
+	return view
+}
+
+func (cfg RuleConfig) ExpenseBreakdownCashCategoryRules() []ExpenseBreakdownCategoryRule {
+	return copyExpenseBreakdownCategoryRules(cfg.ExpenseBreakdownCashCategoryLexicon)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownCashDefaultCategoryName() string {
+	return strings.TrimSpace(cfg.ExpenseBreakdownCashDefaultCategory)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownAccountCategoryRules() []ExpenseBreakdownCategoryRule {
+	return copyExpenseBreakdownCategoryRules(cfg.ExpenseBreakdownAccountCategoryLexicon)
+}
+
+func (cfg RuleConfig) ExpenseBreakdownAccountDefaultCategoryName() string {
+	return strings.TrimSpace(cfg.ExpenseBreakdownAccountDefaultCategory)
+}
+
 func (cfg RuleConfig) ContractPriorityKeywords() []string {
 	return copyStringSlice(cfg.ContractPriorityKeywordLexicon)
 }
@@ -136,5 +181,18 @@ func copyStringSlice(items []string) []string {
 	}
 	out := make([]string, len(items))
 	copy(out, items)
+	return out
+}
+
+func copyExpenseBreakdownCategoryRules(items []ExpenseBreakdownCategoryRule) []ExpenseBreakdownCategoryRule {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]ExpenseBreakdownCategoryRule, len(items))
+	for i, item := range items {
+		out[i] = item
+		out[i].Keywords = copyStringSlice(item.Keywords)
+		out[i].AccountCodePrefixes = copyStringSlice(item.AccountCodePrefixes)
+	}
 	return out
 }

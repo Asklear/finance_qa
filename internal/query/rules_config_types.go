@@ -54,16 +54,27 @@ type RuleConfig struct {
 	HRPayrollLiabilityNameLexicon             []string            `json:"-"`
 	HRCategoryKeywordLexicon                  map[string][]string `json:"-"`
 
-	IntentKeywordLexicon                      map[string][]string `json:"-"`
-	MetricKeywordLexicon                      map[string][]string `json:"-"`
-	HRBreakdownKeywordLexicon                 []string            `json:"-"`
-	SupplierPaymentExcludeNameLexicon         []string            `json:"-"`
-	CounterpartyClassificationQuestionLexicon []string            `json:"-"`
-	ProfitSingleViewBlockKeywordLexicon       []string            `json:"-"`
-	CounterpartyRoleLexicon                   map[string][]string `json:"-"`
-	CounterpartyTaxLexicon                    map[string][]string `json:"-"`
-	InternalPartyOrgSuffixLexicon             []string            `json:"-"`
-	InternalPartyAccountContextKeywordLexicon []string            `json:"-"`
+	IntentKeywordLexicon                      map[string][]string                 `json:"-"`
+	MetricKeywordLexicon                      map[string][]string                 `json:"-"`
+	HRBreakdownKeywordLexicon                 []string                            `json:"-"`
+	SupplierPaymentExcludeNameLexicon         []string                            `json:"-"`
+	CounterpartyClassificationQuestionLexicon []string                            `json:"-"`
+	ProfitSingleViewBlockKeywordLexicon       []string                            `json:"-"`
+	ExpenseBreakdownTriggerKeywordLexicon     []string                            `json:"-"`
+	ExpenseBreakdownExpenseKeywordLexicon     []string                            `json:"-"`
+	ExpenseBreakdownMetricBlockKeywordLexicon []string                            `json:"-"`
+	ExpenseBreakdownMetricAllowKeywordLexicon []string                            `json:"-"`
+	ExpenseBreakdownCostKeywordLexicon        []string                            `json:"-"`
+	ExpenseBreakdownMetricLabel               string                              `json:"-"`
+	ExpenseBreakdownViewLexicon               map[string]ExpenseBreakdownViewRule `json:"-"`
+	ExpenseBreakdownCashCategoryLexicon       []ExpenseBreakdownCategoryRule      `json:"-"`
+	ExpenseBreakdownCashDefaultCategory       string                              `json:"-"`
+	ExpenseBreakdownAccountCategoryLexicon    []ExpenseBreakdownCategoryRule      `json:"-"`
+	ExpenseBreakdownAccountDefaultCategory    string                              `json:"-"`
+	CounterpartyRoleLexicon                   map[string][]string                 `json:"-"`
+	CounterpartyTaxLexicon                    map[string][]string                 `json:"-"`
+	InternalPartyOrgSuffixLexicon             []string                            `json:"-"`
+	InternalPartyAccountContextKeywordLexicon []string                            `json:"-"`
 }
 
 type ruleConfigFile struct {
@@ -106,6 +117,7 @@ type routerRuleConfigFile struct {
 	CounterpartyClassificationQuestionKeywords []string                              `json:"counterparty_classification_question_keywords"`
 	ProfitSingleViewBlockKeywords              []string                              `json:"profit_single_view_block_keywords"`
 	FallbackMonthlyExpenseKeywords             []string                              `json:"fallback_monthly_expense_keywords"`
+	ExpenseBreakdown                           expenseBreakdownRuleConfigFile        `json:"expense_breakdown"`
 }
 
 type routerStopwordsRuleConfigFile struct {
@@ -118,6 +130,35 @@ type routerIntentRuleConfigFile struct {
 	MinConfidence       *float64 `json:"min_confidence"`
 	Conflicts           []string `json:"conflicts"`
 	HighPriorityPhrases []string `json:"high_priority_phrases"`
+}
+
+type expenseBreakdownRuleConfigFile struct {
+	TriggerKeywords        []string                            `json:"trigger_keywords"`
+	ExpenseKeywords        []string                            `json:"expense_keywords"`
+	MetricBlockKeywords    []string                            `json:"metric_block_keywords"`
+	MetricAllowKeywords    []string                            `json:"metric_allow_keywords"`
+	CostKeywords           []string                            `json:"cost_keywords"`
+	MetricLabel            string                              `json:"metric_label"`
+	Views                  map[string]ExpenseBreakdownViewRule `json:"views"`
+	CashCategories         []ExpenseBreakdownCategoryRule      `json:"cash_categories"`
+	CashDefaultCategory    string                              `json:"cash_default_category"`
+	AccountCategories      []ExpenseBreakdownCategoryRule      `json:"account_categories"`
+	AccountDefaultCategory string                              `json:"account_default_category"`
+}
+
+type ExpenseBreakdownViewRule struct {
+	Label        string `json:"label"`
+	Description  string `json:"description"`
+	SummaryLimit int    `json:"summary_limit"`
+}
+
+type ExpenseBreakdownCategoryRule struct {
+	Category             string   `json:"category"`
+	Keywords             []string `json:"keywords"`
+	CounterpartyRole     string   `json:"counterparty_role"`
+	InternalParty        bool     `json:"internal_party"`
+	ExternalOrganization bool     `json:"external_organization"`
+	AccountCodePrefixes  []string `json:"account_code_prefixes"`
 }
 
 type counterpartyRuleConfigFile struct {

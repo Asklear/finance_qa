@@ -229,7 +229,177 @@
       "总支出",
       "全部支出",
       "支出汇总"
-    ]
+    ],
+    "expense_breakdown": {
+      "trigger_keywords": [
+        "拆",
+        "拆分",
+        "拆开",
+        "大类",
+        "构成",
+        "分类",
+        "类别",
+        "结构",
+        "花哪",
+        "花到哪",
+        "花在哪"
+      ],
+      "expense_keywords": [
+        "整体支出",
+        "总支出",
+        "全部支出",
+        "支出",
+        "费用",
+        "开支",
+        "钱花",
+        "花了",
+        "花哪",
+        "付款",
+        "支付"
+      ],
+      "metric_block_keywords": [
+        "收入",
+        "营收",
+        "利润"
+      ],
+      "metric_allow_keywords": [
+        "支出",
+        "费用",
+        "开支",
+        "花",
+        "付款",
+        "支付",
+        "成本"
+      ],
+      "cost_keywords": [
+        "成本"
+      ],
+      "metric_label": "整体支出拆分",
+      "views": {
+        "contract_project": {
+          "label": "合同/项目口径",
+          "description": "按合同成本结算表看成本确认和合同付款",
+          "summary_limit": 5
+        },
+        "cash_category": {
+          "label": "现金流水口径",
+          "description": "按银行流水实际流出拆大类",
+          "summary_limit": 6
+        },
+        "account_category": {
+          "label": "账务科目口径",
+          "description": "按序时账成本费用类借方发生额拆大类",
+          "summary_limit": 6
+        }
+      },
+      "cash_categories": [
+        {
+          "category": "税费",
+          "keywords": [
+            "税务",
+            "税局",
+            "缴税",
+            "纳税",
+            "增值税",
+            "所得税",
+            "附加税",
+            "印花税",
+            "个税"
+          ]
+        },
+        {
+          "category": "银行费用",
+          "keywords": [
+            "手续费",
+            "利息",
+            "财务费用",
+            "银行费用"
+          ]
+        },
+        {
+          "category": "人力薪酬",
+          "counterparty_role": "employee"
+        },
+        {
+          "category": "内部往来",
+          "internal_party": true
+        },
+        {
+          "category": "供应商付款",
+          "counterparty_role": "supplier"
+        },
+        {
+          "category": "供应商付款",
+          "external_organization": true
+        }
+      ],
+      "cash_default_category": "其他支出",
+      "account_categories": [
+        {
+          "category": "人力薪酬",
+          "counterparty_role": "employee"
+        },
+        {
+          "category": "税费",
+          "keywords": [
+            "税金及附加",
+            "所得税费用",
+            "税费"
+          ]
+        },
+        {
+          "category": "银行及财务费用",
+          "keywords": [
+            "手续费",
+            "利息",
+            "财务费用"
+          ],
+          "account_code_prefixes": [
+            "6603"
+          ]
+        },
+        {
+          "category": "销售费用",
+          "keywords": [
+            "销售费用"
+          ],
+          "account_code_prefixes": [
+            "6601"
+          ]
+        },
+        {
+          "category": "管理费用",
+          "keywords": [
+            "管理费用"
+          ],
+          "account_code_prefixes": [
+            "6602"
+          ]
+        },
+        {
+          "category": "业务成本",
+          "keywords": [
+            "主营业务成本",
+            "营业成本",
+            "成本"
+          ],
+          "account_code_prefixes": [
+            "6401",
+            "6402"
+          ]
+        },
+        {
+          "category": "营业外支出",
+          "keywords": [
+            "营业外支出"
+          ],
+          "account_code_prefixes": [
+            "6711"
+          ]
+        }
+      ],
+      "account_default_category": "其他费用"
+    }
   },
   "counterparty": {
     "roles": {
