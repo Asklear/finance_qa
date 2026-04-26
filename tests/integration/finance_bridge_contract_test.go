@@ -1164,6 +1164,84 @@ exit 2
 	}
 }
 
+func TestFinanceBridgeHidesContractDetailInternalIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
+	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
+	dbPath := filepath.Join(tmp, "bridge-contract-detail-fields.sqlite")
+
+	stubScript := `#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+if [[ "$cmd" == "query" ]]; then
+  cat <<'JSON'
+{"success":true,"message":"【百度边缘计算资源服务协议】发票情况：累计开票83000.00元，最近开票日期2026-03-28。","answer_method":"sql","data":{"intent":"invoice","source_tables":["contract_main","contract_invoice_summaries","contract_invoices","contract_pages"],"source_note":"来源：合同主表、合同发票汇总、合同发票明细、合同分页正文","contracts":[{"contract_title":"百度边缘计算资源服务协议","contract_id":"C013","id":1,"storage_key":"s3://bucket/contract.pdf","file_hash":"abc123","job_id":"ocr-job-1"}],"page_snippets":[{"page_id":12,"contract_id":1,"page_number":2,"text":"甲方收到合格发票后30日内付款","raw_ocr_json":"{\"blocks\":[]}"}],"invoices":[{"invoice_number":"INV-EDGE-002","issue_date":"2026-03-28","total_amount":41500,"contract_id":1}],"query_spec":{"query_family":"contract_detail"}},"executed_sql":["SELECT contract_id,page_id,storage_key FROM contract_pages WHERE contract_id='C013'"],"calculation_logs":["contract_id=C013 page_id=12 storage_key=s3://bucket/contract.pdf file_hash=abc123 job_id=ocr-job-1"]}
+JSON
+  exit 0
+fi
+if [[ "$cmd" == "host-data" ]]; then
+  echo '{"success":true,"answer_method":"llm_payload","data":{"llm_payload":{}}}'
+  exit 0
+fi
+echo "unknown cmd: $cmd" >&2
+exit 2
+`
+	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub bin: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"百度边缘计算资源服务协议发票金额是多少？"}}`
+	callRaw := runBridge(t, stubBin, dbPath, skillPath, callReq)
+	payload := parseBridgeContentPayload(t, callRaw)
+	finalAnswer, _ := payload["final_answer"].(string)
+	if !strings.Contains(finalAnswer, "累计开票83000.00元") {
+		t.Fatalf("final_answer should preserve contract detail answer, got %s", finalAnswer)
+	}
+
+	rawPayload, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	rawText := string(rawPayload)
+	for _, forbidden := range []string{
+		"contract_id",
+		"page_id",
+		"storage_key",
+		"file_hash",
+		"job_id",
+		"raw_ocr_json",
+		"executed_sql",
+		"SELECT contract_id",
+		"C013",
+		"s3://bucket/contract.pdf",
+		"abc123",
+		"ocr-job-1",
+	} {
+		if strings.Contains(rawText, forbidden) {
+			t.Fatalf("bridge payload should hide %q, got %s", forbidden, rawText)
+		}
+	}
+	if !strings.Contains(rawText, "合同发票明细") {
+		t.Fatalf("bridge payload should keep human-readable contract detail source, got %s", rawText)
+	}
+}
+
 func TestRepositorySkillDocumentPublishesContractVersions(t *testing.T) {
 	t.Parallel()
 

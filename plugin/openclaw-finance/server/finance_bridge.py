@@ -461,6 +461,10 @@ SOURCE_TABLE_DOCUMENT_LABELS = [
     ("tenant_uhub.balance_detail", "《科目余额表》"),
     ("tenant_uhub.balance_sheet", "《资产负债表》"),
     ("tenant_uhub.income_statement", "《利润表》"),
+    ("tenant_uhub.contract_main", "合同主表"),
+    ("tenant_uhub.contract_invoices", "合同发票明细"),
+    ("tenant_uhub.contract_invoice_summaries", "合同发票汇总"),
+    ("tenant_uhub.contract_pages", "合同分页正文"),
     ("fin_fund_income", "《优集资金收入计算表-副本.xlsx》"),
     ("fin_cost_settlements", "《优集成本计算表-4.23-池.xlsx》"),
     ("fin_contracts", "《合同信息表》"),
@@ -470,6 +474,10 @@ SOURCE_TABLE_DOCUMENT_LABELS = [
     ("balance_detail", "《科目余额表》"),
     ("balance_sheet", "《资产负债表》"),
     ("income_statement", "《利润表》"),
+    ("contract_main", "合同主表"),
+    ("contract_invoices", "合同发票明细"),
+    ("contract_invoice_summaries", "合同发票汇总"),
+    ("contract_pages", "合同分页正文"),
 ]
 
 HIDDEN_RESPONSE_KEYS = {
@@ -494,6 +502,11 @@ HIDDEN_RESPONSE_KEYS = {
     "sql",
     "raw_sql",
     "query_sql",
+    "page_id",
+    "storage_key",
+    "file_hash",
+    "job_id",
+    "raw_ocr_json",
 }
 
 TECHNICAL_TRACE_MARKERS = (
@@ -503,6 +516,11 @@ TECHNICAL_TRACE_MARKERS = (
     " where ",
     "account_code",
     "contract_id",
+    "page_id",
+    "storage_key",
+    "file_hash",
+    "job_id",
+    "raw_ocr_json",
     "source_report_type",
     "source_sheet_name",
 )
