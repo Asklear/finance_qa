@@ -89,6 +89,32 @@ function finalAnswerPromptContext(finalAnswer) {
   ].join("\n");
 }
 
+function financePayloadPromptContext(payload) {
+  return [
+    "FINANCE_QUERY_PAYLOAD_START",
+    JSON.stringify(payload, null, 2),
+    "FINANCE_QUERY_PAYLOAD_END"
+  ].join("\n");
+}
+
+function isBridgeFallbackPayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  if (payload.success === false) return true;
+  if (payload.answer_method === "llm_payload") return true;
+  const data = payload.data && typeof payload.data === "object" ? payload.data : {};
+  return data.answer_method === "llm_payload" || Boolean(data.llm_payload);
+}
+
+function fallbackPayloadSystemContext() {
+  return [
+    mustCallFinanceQuerySystemContext(),
+    "For this turn, finance-query has already returned a FINANCE_QUERY_PAYLOAD block instead of a direct final answer.",
+    "Do not answer from prior conversation history or memory.",
+    "Reason from the current payload and its llm_payload/source_note only. If the payload contains enough facts, answer the user's question directly in boss-facing language.",
+    "If the payload is still insufficient, say exactly what is missing. Keep source notes, and do not expose SQL, internal IDs, route traces, bridge_meta, or raw field names."
+  ].join("\n");
+}
+
 function hookSessionKey(ctx) {
   return String(ctx?.sessionKey || ctx?.sessionId || "__default__");
 }
@@ -217,6 +243,12 @@ const plugin = {
       try {
         const result = await callBridge("finance-query", { query: prompt });
         const payload = parseBridgePayload(result);
+        if (isBridgeFallbackPayload(payload)) {
+          return {
+            prependSystemContext: fallbackPayloadSystemContext(),
+            prependContext: financePayloadPromptContext(payload)
+          };
+        }
         const finalAnswer = finalAnswerFromPayload(payload);
         if (finalAnswer) {
           forcedAnswersBySessionKey.set(hookSessionKey(ctx), finalAnswer);
@@ -247,8 +279,8 @@ const plugin = {
       const result = await callBridge("finance-query", { query: question });
       const payload = parseBridgePayload(result);
       const finalAnswer = finalAnswerFromPayload(payload);
-      if (!finalAnswer) return undefined;
-      return { handled: true, text: finalAnswer };
+      if (finalAnswer && !isBridgeFallbackPayload(payload)) return { handled: true, text: finalAnswer };
+      return undefined;
     });
   }
 };

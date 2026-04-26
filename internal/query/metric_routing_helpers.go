@@ -63,7 +63,13 @@ func shouldUseSingleAccrualCoreMetrics(q string) bool {
 }
 
 func shouldUseSupplierPaymentStats(q string) bool {
-	return strings.Contains(q, "供应商") && strings.Contains(q, "多少")
+	if !strings.Contains(q, "供应商") {
+		return false
+	}
+	return containsAny(q, []string{
+		"多少", "有哪些", "哪些", "哪几", "几个", "几家", "名单", "列表", "明细", "分别", "叫什么",
+		"发生付款", "付款", "支付", "支出",
+	})
 }
 
 func isCounterpartyClassificationQuestion(q string) bool {

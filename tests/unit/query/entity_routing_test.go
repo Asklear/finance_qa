@@ -569,6 +569,18 @@ func TestSupplierPaymentQuestionUsesPeriodScopedExternalSuppliers(t *testing.T) 
 	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
 		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
 	}
+
+	roster := engine.Query("2026年3月供应商有哪些")
+	if !roster.Success {
+		t.Fatalf("supplier roster query failed: %+v", roster)
+	}
+	if strings.Contains(roster.Message, "语义模糊") {
+		t.Fatalf("supplier roster should not fall back as ambiguous, got %s", roster.Message)
+	}
+	rosterSuppliers, ok := roster.Data["suppliers"].([]map[string]any)
+	if !ok || len(rosterSuppliers) != 2 {
+		t.Fatalf("supplier roster payload = %+v, want two suppliers", roster.Data["suppliers"])
+	}
 }
 
 func TestHRBreakdownQuestionShouldNotRouteToCounterpartyEntity(t *testing.T) {

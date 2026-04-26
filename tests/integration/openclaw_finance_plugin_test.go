@@ -30,6 +30,9 @@ func TestOpenClawFinancePluginForcesFinanceQueryBeforeModel(t *testing.T) {
 		`数据(出来|有了|有没有|情况|多少)`,
 		`prependContext`,
 		`mustCallFinanceQuerySystemContext`,
+		`FINANCE_QUERY_PAYLOAD_START`,
+		`isBridgeFallbackPayload`,
+		`!isBridgeFallbackPayload(payload)`,
 		`isFinanceQuestion`,
 	} {
 		if !strings.Contains(pluginText, want) {

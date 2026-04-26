@@ -34,6 +34,12 @@ func TestResolveOperationalQueryFamilyPrioritizesOperationalRoutes(t *testing.T)
 			want:   QueryFamilySupplierPayments,
 		},
 		{
+			name:   "supplier_roster",
+			q:      "2026年3月供应商有哪些",
+			intent: IntentFallback,
+			want:   QueryFamilySupplierPayments,
+		},
+		{
 			name:   "hr_cost",
 			q:      "2026年3月人力成本多少？工资、社保、公积金分别是多少？",
 			intent: IntentFallback,
