@@ -106,6 +106,58 @@ func TestInvoicedUnpaidQuestionUsesInvoiceGapWithoutSyntheticEntity(t *testing.T
 	}
 }
 
+func TestProjectInvoiceOpenRosterQuestionDoesNotExtractSyntheticEntity(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("有哪些项目已开票未回款")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(400) {
+		t.Fatalf("total = %v, want invoice open amount 400", got)
+	}
+	if entity := res.Data["entity"]; entity != nil && entity != "" {
+		t.Fatalf("synthetic entity should be empty, got %v", entity)
+	}
+	if strings.Contains(res.Message, "没有识别到合同/项目主体") || strings.Contains(res.Message, "合同口径当前不能直接回答") {
+		t.Fatalf("project roster question should answer company-scope invoice open amount, got %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "已开票未回款") {
+		t.Fatalf("message should explain invoice open amount, got %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "测试客户") || !strings.Contains(res.Message, "测试客户项目") {
+		t.Fatalf("message should list customer and project content, got %q", res.Message)
+	}
+	if strings.Contains(res.Message, "C-001") {
+		t.Fatalf("message should not expose internal contract id, got %q", res.Message)
+	}
+	summary, ok := res.Data["contract_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract_summary missing: %+v", res.Data)
+	}
+	items, ok := summary["invoice_open_items"].([]map[string]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("invoice_open_items = %#v, want one item", summary["invoice_open_items"])
+	}
+	if got := items[0]["customer_name"]; got != "测试客户" {
+		t.Fatalf("invoice_open_items[0].customer_name = %v", got)
+	}
+	if got := items[0]["contract_content"]; got != "测试客户项目" {
+		t.Fatalf("invoice_open_items[0].contract_content = %v", got)
+	}
+	if got := items[0]["open_amount"]; got != float64(400) {
+		t.Fatalf("invoice_open_items[0].open_amount = %v, want 400", got)
+	}
+}
+
 func TestReceivedInvoiceUnpaidQuestionUsesSupplierInvoiceGap(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
 	engine, err := NewEngine(dbPath, "测试公司")

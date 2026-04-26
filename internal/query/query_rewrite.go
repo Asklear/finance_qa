@@ -160,7 +160,7 @@ func shouldUseExplicitFinancialAccountQuestion(q string) bool {
 }
 
 func detectBossScope(q, entity string) BossScope {
-	if strings.Contains(q, "合同") || strings.Contains(q, "项目") {
+	if strings.Contains(q, "合同") || (strings.Contains(q, "项目") && strings.TrimSpace(entity) != "") {
 		return BossScopeContract
 	}
 	if strings.TrimSpace(entity) != "" {

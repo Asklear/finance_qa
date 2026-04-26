@@ -97,7 +97,7 @@ SKILL_APPENDIX_PATH = SKILL_CONTRACT["skill_appendix_path"]
 TOOLS = [
     {
         "name": "finance-query",
-        "description": "老板财务问答（结构化结果 + 过程追踪 + 兜底数据包）",
+        "description": "老板财务问答（优先原样使用 final_answer；附结构化结果、过程追踪和兜底数据包）",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -282,6 +282,7 @@ def now_utc_iso():
 def bridge_capabilities():
     return {
         "boss_reply": True,
+        "final_answer": True,
         "contract_summary": True,
         "supplier_payment_summary": True,
         "trace": True,
@@ -1033,8 +1034,26 @@ def build_boss_reply(payload, query):
             invoice = float(first_float(book_view.get("已开票"), contract_summary.get("invoice_amount"), 0) or 0)
             received = float(first_float(cash_view.get("已到账"), cash_view.get("到账"), contract_summary.get("revenue_received"), 0) or 0)
             invoice_open = float(first_float(book_view.get("已开票未回款"), contract_summary.get("invoiced_unreceived_amount"), 0) or 0)
+            detail_lines = []
+            for item in (contract_summary.get("invoice_open_items") or [])[:3]:
+                if not isinstance(item, dict):
+                    continue
+                customer_name = str(item.get("customer_name") or "").strip()
+                contract_content = str(item.get("contract_content") or "").strip()
+                item_label = " - ".join(part for part in (customer_name, contract_content) if part)
+                if not item_label:
+                    continue
+                item_invoice = float(first_float(item.get("invoice_amount"), 0) or 0)
+                item_received = float(first_float(item.get("received_amount"), 0) or 0)
+                item_open = float(first_float(item.get("open_amount"), 0) or 0)
+                detail_lines.append(
+                    f"{item_label} 已开票 {item_invoice:.2f} 元，已回款 {item_received:.2f} 元，未回款 {item_open:.2f} 元"
+                )
+            detail_text = ""
+            if detail_lines:
+                detail_text = " 明细：" + "；".join(detail_lines) + "。"
             return {
-                "结论": f"{period}按合同/项目老板口径：已开票未回款 {invoice_open:.2f} 元。",
+                "结论": f"{period}按合同/项目老板口径：已开票未回款 {invoice_open:.2f} 元。{detail_text}",
                 "原因": source_reason(f"这是收入侧口径，按收入计算表的已开票金额减已到账金额统计；补充看，已开票 {invoice:.2f} 元、已到账 {received:.2f} 元。"),
                 "建议": "如果要继续催收，建议按客户/项目拆出已开票未回款明细。",
             }
@@ -1168,6 +1187,38 @@ def build_boss_reply(payload, query):
     }
 
 
+def build_final_answer(payload):
+    boss_reply = payload.get("boss_reply") or {}
+    if not isinstance(boss_reply, dict):
+        boss_reply = {}
+
+    parts = []
+    conclusion = str(boss_reply.get("结论") or "").strip()
+    reason = str(boss_reply.get("原因") or "").strip()
+    suggestion = str(boss_reply.get("建议") or "").strip()
+    if conclusion:
+        parts.append(conclusion)
+    if reason:
+        parts.append("原因：" + reason)
+    if suggestion:
+        parts.append("建议：" + suggestion)
+
+    if not parts:
+        message = str(payload.get("message") or "").strip()
+        if message:
+            parts.append(message)
+
+    final_answer = "\n\n".join(parts).strip()
+    data = payload.get("data") or {}
+    source_note = str(data.get("source_note") or data.get("source_summary") or "").strip()
+    if source_note and source_note not in final_answer:
+        if final_answer:
+            final_answer = final_answer + "\n\n" + source_note
+        else:
+            final_answer = source_note
+    return final_answer
+
+
 def build_structured_response(payload, query):
     payload = ensure_trace_fields(payload)
     payload["boss_reply"] = build_boss_reply(payload, query)
@@ -1177,7 +1228,17 @@ def build_structured_response(payload, query):
     summary_supplier = build_host_summary_supplier_payments(payload, query)
     if summary_supplier:
         payload["host_summary_supplier_payments"] = summary_supplier
-    payload["bridge_meta"] = build_bridge_meta(query=query)
+    final_answer = build_final_answer(payload)
+    if final_answer:
+        payload["final_answer"] = final_answer
+        payload["boss_reply_text"] = final_answer
+    final_answer_source = "none"
+    if final_answer:
+        final_answer_source = "boss_reply" if isinstance(payload.get("boss_reply"), dict) else "message"
+    bridge_meta = build_bridge_meta(query=query)
+    bridge_meta["final_answer_available"] = bool(final_answer)
+    bridge_meta["final_answer_source"] = final_answer_source
+    payload["bridge_meta"] = bridge_meta
     return payload
 
 

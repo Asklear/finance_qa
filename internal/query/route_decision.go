@@ -134,7 +134,10 @@ func shouldSkipBossProbeRouting(spec QuerySpec, rewrite BossQueryRewrite) bool {
 }
 
 func shouldRouteContractProbeAsDimension(rewrite BossQueryRewrite) bool {
-	if rewrite.Scope == BossScopeEntity || rewrite.Scope == BossScopeContract {
+	if rewrite.Scope == BossScopeEntity {
+		return true
+	}
+	if rewrite.Scope == BossScopeContract && strings.TrimSpace(rewrite.Entity) != "" {
 		return true
 	}
 	switch rewrite.Metric {

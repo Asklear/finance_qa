@@ -8,29 +8,38 @@ import (
 const contractAggregateRole = "aggregate_summary"
 
 type contractAggregateSummary struct {
-	Entity             string
-	Scope              string
-	Period             string
-	PeriodFrom         string
-	PeriodTo           string
-	RequestedMetrics   []string
-	ContractCount      int
-	RevenueSettlement  float64
-	RevenueReceived    float64
-	RevenueInvoiced    float64
-	RevenueReceivable  float64
-	RevenueInvoiceOpen float64
-	CostSettlement     float64
-	CostPaid           float64
-	CostInvoiced       float64
-	CostPayable        float64
-	CostInvoiceOpen    float64
-	Profit             float64
-	HasRevenueCoverage bool
-	HasCostCoverage    bool
-	SourceTables       []string
-	ExecutedSQL        []string
-	CalculationLogs    []string
+	Entity                  string
+	Scope                   string
+	Period                  string
+	PeriodFrom              string
+	PeriodTo                string
+	RequestedMetrics        []string
+	ContractCount           int
+	RevenueSettlement       float64
+	RevenueReceived         float64
+	RevenueInvoiced         float64
+	RevenueReceivable       float64
+	RevenueInvoiceOpen      float64
+	CostSettlement          float64
+	CostPaid                float64
+	CostInvoiced            float64
+	CostPayable             float64
+	CostInvoiceOpen         float64
+	Profit                  float64
+	RevenueInvoiceOpenItems []contractAggregateOpenItem
+	HasRevenueCoverage      bool
+	HasCostCoverage         bool
+	SourceTables            []string
+	ExecutedSQL             []string
+	CalculationLogs         []string
+}
+
+type contractAggregateOpenItem struct {
+	CustomerName    string
+	ContractContent string
+	InvoiceAmount   float64
+	ReceivedAmount  float64
+	OpenAmount      float64
 }
 
 func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggregateSummary, error) {
@@ -79,6 +88,13 @@ JOIN fin_contracts c ON c.contract_id = f.contract_id
 WHERE f.year_month BETWEEN ? AND ?` + filterClause
 		if err := e.db.QueryRow(revenueSQL, args...).Scan(&summary.RevenueSettlement, &summary.RevenueReceived, &summary.RevenueInvoiced, &summary.RevenueReceivable, &summary.RevenueInvoiceOpen, &summary.ContractCount); err != nil {
 			return contractAggregateSummary{}, err
+		}
+		if contractAggregateIncludesMetric(requestedMetrics, "已开票未回款") {
+			items, err := e.collectRevenueInvoiceOpenItems(filterClause, args)
+			if err != nil {
+				return contractAggregateSummary{}, err
+			}
+			summary.RevenueInvoiceOpenItems = items
 		}
 	}
 
@@ -129,6 +145,42 @@ WHERE cs.year_month BETWEEN ? AND ?` + filterClause
 	)
 
 	return summary, nil
+}
+
+func (e *Engine) collectRevenueInvoiceOpenItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
+	sqlText := `
+SELECT c.customer_name,
+       c.contract_content,
+       COALESCE(SUM(f.invoice_amount), 0),
+       COALESCE(SUM(f.received_amount), 0),
+       COALESCE(SUM(CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0)
+FROM fin_fund_income f
+JOIN fin_contracts c ON c.contract_id = f.contract_id
+WHERE f.year_month BETWEEN ? AND ?` + filterClause + `
+GROUP BY c.customer_name, c.contract_content
+HAVING COALESCE(SUM(CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0) > 0
+ORDER BY 5 DESC, c.customer_name, c.contract_content`
+	rows, err := e.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []contractAggregateOpenItem{}
+	for rows.Next() {
+		var item contractAggregateOpenItem
+		if err := rows.Scan(&item.CustomerName, &item.ContractContent, &item.InvoiceAmount, &item.ReceivedAmount, &item.OpenAmount); err != nil {
+			return nil, err
+		}
+		item.InvoiceAmount = round2(item.InvoiceAmount)
+		item.ReceivedAmount = round2(item.ReceivedAmount)
+		item.OpenAmount = round2(item.OpenAmount)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func contractAggregateSourceTablesForMetrics(requestedMetrics []string) []string {

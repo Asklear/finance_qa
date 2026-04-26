@@ -542,6 +542,146 @@ exit 2
 	if capabilities["route_decision"] != true {
 		t.Fatalf("bridge_meta.capabilities.route_decision should be true, got %v", capabilities["route_decision"])
 	}
+	if capabilities["final_answer"] != true {
+		t.Fatalf("bridge_meta.capabilities.final_answer should be true, got %v", capabilities["final_answer"])
+	}
+}
+
+func TestFinanceBridgeBuildsDirectFinalAnswerFromBossReply(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
+	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
+	dbPath := filepath.Join(tmp, "bridge-final-answer.sqlite")
+
+	stubScript := `#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+if [[ "$cmd" == "query" ]]; then
+  cat <<'JSON'
+{"success":true,"message":"2026-03 老板口径先看合同/项目汇总：营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。","answer_method":"sql","data":{"period":"2026-03","metric":"收入","requested_metrics":["收入","成本","利润"],"source_priority":"contract_first","source_tables":["tenant_uhub.fin_contracts","tenant_uhub.fin_fund_income","tenant_uhub.fin_cost_settlements"],"money_view":{"说明":"合同现金口径","回款":3043720.05,"付款":889999.99,"净现金":2153720.06},"account_view":{"说明":"合同经营口径","营收":5612513.29,"合同成本":2024957.12,"利润":3587556.17},"contract_summary":{"scope":"company","contract_count":20,"revenue_settlement":5612513.29,"revenue_received":3043720.05,"cost_settlement":2024957.12,"cost_paid":889999.99,"profit":3587556.17,"coverage":{"收入":true,"成本":true,"利润":true}},"source_note":"来源：《优集资金收入计算表-副本.xlsx》的【25年Q4收入明细】和【26年Q1收入明细】；《优集成本计算表-4.23-池.xlsx》的【成本-月度结算】；补充参考：《合同信息表》","query_spec":{"query_family":"core_metric","metric_kind":"revenue","prefer_contract_aggregate":true}},"executed_sql":["SELECT contract_id FROM tenant_uhub.fin_contracts"],"calculation_logs":["contract_id=C013"]}
+JSON
+  exit 0
+fi
+if [[ "$cmd" == "host-data" ]]; then
+  echo '{"success":true,"answer_method":"llm_payload","data":{"llm_payload":{}}}'
+  exit 0
+fi
+echo "unknown cmd: $cmd" >&2
+exit 2
+`
+	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub bin: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"2026年3月收入、成本、利润分别是多少？"}}`
+	callRaw := runBridge(t, stubBin, dbPath, skillPath, callReq)
+	payload := parseBridgeContentPayload(t, callRaw)
+
+	finalAnswer, _ := payload["final_answer"].(string)
+	if !strings.Contains(finalAnswer, "营收 5612513.29 元") {
+		t.Fatalf("final_answer should preserve contract revenue, got %s", finalAnswer)
+	}
+	if !strings.Contains(finalAnswer, "合同成本 2024957.12 元") {
+		t.Fatalf("final_answer should preserve contract cost, got %s", finalAnswer)
+	}
+	if !strings.Contains(finalAnswer, "来源：《优集资金收入计算表-副本.xlsx》") {
+		t.Fatalf("final_answer should include source note, got %s", finalAnswer)
+	}
+	for _, forbidden := range []string{"contract_id", "C013", "tenant_uhub.fin_contracts", "executed_sql"} {
+		if strings.Contains(finalAnswer, forbidden) {
+			t.Fatalf("final_answer should hide %q, got %s", forbidden, finalAnswer)
+		}
+	}
+
+	bridgeMeta := mustMapMap(t, payload, "bridge_meta")
+	if available := bridgeMeta["final_answer_available"]; available != true {
+		t.Fatalf("bridge_meta.final_answer_available should be true, got %v", available)
+	}
+	if source := bridgeMeta["final_answer_source"]; source != "boss_reply" {
+		t.Fatalf("bridge_meta.final_answer_source should be boss_reply, got %v", source)
+	}
+}
+
+func TestFinanceBridgeFinalAnswerListsInvoiceOpenProjectDetails(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
+	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
+	dbPath := filepath.Join(tmp, "bridge-invoice-open-items.sqlite")
+
+	stubScript := `#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+if [[ "$cmd" == "query" ]]; then
+  cat <<'JSON'
+{"success":true,"message":"2026-03按合同/项目老板口径：已开票未回款 52094.16 元。明细：百度在线网络技术(北京)有限公司-边缘计算资源服务协议 已开票 41500.00 元，已回款 0.00 元，未回款 41500.00 元。","answer_method":"sql","data":{"period":"2026-03","metric":"已开票未回款","requested_metrics":["已开票未回款"],"source_priority":"contract_first","source_tables":["tenant_uhub.fin_contracts","tenant_uhub.fin_fund_income"],"money_view":{"已到账":3043720.05},"account_view":{"已开票":3086900.57,"已开票未回款":52094.16},"contract_summary":{"scope":"company","contract_count":20,"invoice_amount":3086900.57,"revenue_received":3043720.05,"invoiced_unreceived_amount":52094.16,"invoice_open_items":[{"contract_id":"C013","customer_name":"百度在线网络技术(北京)有限公司","contract_content":"边缘计算资源服务协议","invoice_amount":41500,"received_amount":0,"open_amount":41500},{"contract_id":"C054","customer_name":"上海秒针网络科技有限公司","contract_content":"数据采购合同","invoice_amount":8689.11,"received_amount":0,"open_amount":8689.11}],"coverage":{"已开票未回款":true}},"source_note":"来源：《优集资金收入计算表-副本.xlsx》的【26年Q1收入明细】；补充参考：《合同信息表》","query_spec":{"query_family":"core_metric","metric_kind":"arap","prefer_contract_aggregate":true}},"executed_sql":["SELECT contract_id FROM tenant_uhub.fin_contracts"],"calculation_logs":["contract_id=C013"]}
+JSON
+  exit 0
+fi
+if [[ "$cmd" == "host-data" ]]; then
+  echo '{"success":true,"answer_method":"llm_payload","data":{"llm_payload":{}}}'
+  exit 0
+fi
+echo "unknown cmd: $cmd" >&2
+exit 2
+`
+	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub bin: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"有哪些项目已开票未回款"}}`
+	callRaw := runBridge(t, stubBin, dbPath, skillPath, callReq)
+	payload := parseBridgeContentPayload(t, callRaw)
+
+	finalAnswer, _ := payload["final_answer"].(string)
+	for _, want := range []string{
+		"已开票未回款 52094.16 元",
+		"百度在线网络技术(北京)有限公司",
+		"边缘计算资源服务协议",
+		"未回款 41500.00 元",
+		"上海秒针网络科技有限公司",
+		"数据采购合同",
+	} {
+		if !strings.Contains(finalAnswer, want) {
+			t.Fatalf("final_answer should include %q, got %s", want, finalAnswer)
+		}
+	}
+	for _, forbidden := range []string{"contract_id", "C013", "C054", "tenant_uhub.fin_contracts", "executed_sql"} {
+		if strings.Contains(finalAnswer, forbidden) {
+			t.Fatalf("final_answer should hide %q, got %s", forbidden, finalAnswer)
+		}
+	}
 }
 
 func TestFinanceBridgeBossReplyContractAggregateIncomeAndCostOmitsProfitPlaceholder(t *testing.T) {

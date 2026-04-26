@@ -60,7 +60,8 @@ func buildContractAggregateSupplement(selection contractAggregateSelection, summ
 	case selection.IncludePayable && !selection.IncludeReceivable:
 		return fmt.Sprintf("补充合同成本 %.2f 元、已付款 %.2f 元；其中已收票未付款 %.2f 元。", round2(summary.CostSettlement), round2(summary.CostPaid), round2(summary.CostInvoiceOpen))
 	case selection.IncludeInvoiceAR && !selection.IncludeInvoiceAP:
-		return fmt.Sprintf("补充已开票 %.2f 元、已到账 %.2f 元。", round2(summary.RevenueInvoiced), round2(summary.RevenueReceived))
+		detail := buildRevenueInvoiceOpenDetailSentence(summary.RevenueInvoiceOpenItems)
+		return fmt.Sprintf("补充已开票 %.2f 元、已到账 %.2f 元。%s", round2(summary.RevenueInvoiced), round2(summary.RevenueReceived), detail)
 	case selection.IncludeInvoiceAP && !selection.IncludeInvoiceAR:
 		return fmt.Sprintf("补充已收票 %.2f 元、已付款 %.2f 元。", round2(summary.CostInvoiced), round2(summary.CostPaid))
 	default:
@@ -88,4 +89,33 @@ func buildContractAggregateSupplement(selection contractAggregateSelection, summ
 		}
 		return "补充" + strings.Join(parts, "，") + "。"
 	}
+}
+
+func buildRevenueInvoiceOpenDetailSentence(items []contractAggregateOpenItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for i, item := range items {
+		if i >= 3 {
+			break
+		}
+		label := strings.TrimSpace(item.CustomerName)
+		content := strings.TrimSpace(item.ContractContent)
+		if content != "" {
+			if label != "" {
+				label += "-"
+			}
+			label += content
+		}
+		if label == "" {
+			label = "未命名项目"
+		}
+		parts = append(parts, fmt.Sprintf("%s 已开票 %.2f 元、已回款 %.2f 元、未回款 %.2f 元", label, round2(item.InvoiceAmount), round2(item.ReceivedAmount), round2(item.OpenAmount)))
+	}
+	suffix := ""
+	if len(items) > 3 {
+		suffix = fmt.Sprintf("等 %d 个项目", len(items))
+	}
+	return "明细：" + strings.Join(parts, "；") + suffix + "。"
 }
