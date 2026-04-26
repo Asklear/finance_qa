@@ -4,6 +4,7 @@ type executionStage string
 
 const (
 	executionStageHRBreakdown                executionStage = "hr_breakdown"
+	executionStageExpenseBreakdown           executionStage = "expense_breakdown"
 	executionStageOrchestrator               executionStage = "orchestrator"
 	executionStageDirectBankCashFlow         executionStage = "direct_bank_cash_flow"
 	executionStageDirectContractDimension    executionStage = "direct_contract_dimension"

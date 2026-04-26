@@ -4,6 +4,10 @@ type executionStageHandler func(*Engine, queryExecutionContext) (Result, bool)
 
 func executionStageHandlers() map[executionStage]executionStageHandler {
 	return map[executionStage]executionStageHandler{
+		executionStageExpenseBreakdown: func(e *Engine, ctx queryExecutionContext) (Result, bool) {
+			result := e.queryExpenseBreakdownAllPerspectives(ctx.from, ctx.to)
+			return result, result.Success
+		},
 		executionStageHRBreakdown: func(e *Engine, ctx queryExecutionContext) (Result, bool) {
 			result := e.queryHRBreakdown(ctx.from, ctx.to)
 			return result, result.Success

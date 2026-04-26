@@ -50,6 +50,9 @@ func (e *Engine) applyQueryPriorityAdjustments(q string, intent Intent, spec Que
 	if intent == IntentIdentityQuery || isCounterpartyClassificationQuestion(q) {
 		return spec, entity, hasRealEntity, anchor
 	}
+	if shouldUseExpenseBreakdown(q) {
+		return spec, entity, hasRealEntity, anchor
+	}
 	if spec.QueryFamily == QueryFamilyContractDetail {
 		return spec, entity, hasRealEntity, anchor
 	}

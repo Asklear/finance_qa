@@ -32,6 +32,9 @@ func (b *executionStagePlanBuilder) stagesOrEmpty() []executionStage {
 
 func resolveOperationalExecutionStages(ctx queryExecutionContext) []executionStage {
 	stages := make([]executionStage, 0, 2)
+	if shouldUseExpenseBreakdown(ctx.q) {
+		stages = append(stages, executionStageExpenseBreakdown)
+	}
 	if ctx.spec.QueryFamily == QueryFamilyHRCost || shouldUseHRBreakdown(ctx.q, ctx.cfg) {
 		stages = append(stages, executionStageHRBreakdown)
 	}

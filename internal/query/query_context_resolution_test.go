@@ -72,6 +72,31 @@ func TestExplicitBankCashReceiptQueryAnswersFromBankStatement(t *testing.T) {
 	}
 }
 
+func TestResolveQueryRoutingDoesNotTreatOverallExpenseAsEntity(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("2026年3月整体支出按大类拆一下")
+	if route.entity != "" || route.hasRealEntity {
+		t.Fatalf("entity = %q hasRealEntity=%t, want no business entity", route.entity, route.hasRealEntity)
+	}
+	if route.spec.QueryFamily == QueryFamilyCounterparty {
+		t.Fatalf("query_family = %s, want non-counterparty route", route.spec.QueryFamily)
+	}
+
+	contractViewRoute := engine.resolveQueryRouting("2026年3月整体支出按合同拆一下")
+	if contractViewRoute.spec.NeedsContractDimension || contractViewRoute.spec.QueryFamily == QueryFamilyContractDimension {
+		t.Fatalf("overall expense contract-view breakdown should not require a specific contract entity, spec=%+v", contractViewRoute.spec)
+	}
+	if contractViewRoute.spec.BossRewrite.Scope != BossScopeCompany || contractViewRoute.spec.BossRewrite.Granularity != BossGranularityBreakdown {
+		t.Fatalf("boss rewrite = %+v, want company breakdown", contractViewRoute.spec.BossRewrite)
+	}
+}
+
 func TestResolveQueryRoutingKeepsReadinessFamilyAndResolvedEntity(t *testing.T) {
 	dbPath := buildQueryContextResolutionDB(t)
 	engine, err := NewEngine(dbPath, "测试公司")

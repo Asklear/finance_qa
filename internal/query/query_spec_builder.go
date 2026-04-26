@@ -11,7 +11,7 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 
 	from, to := ExtractPeriodWithNow(q, anchor)
 	isContractDetail := shouldUseContractDetailQuestion(q)
-	needsContractDimension := !isContractDetail && shouldUseContractDimension(q)
+	needsContractDimension := !isContractDetail && !shouldUseExpenseBreakdown(q) && shouldUseContractDimension(q)
 	if needsContractDimension {
 		from, to = extractContractQuestionPeriods(q, anchor)
 	}

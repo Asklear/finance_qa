@@ -160,6 +160,9 @@ func shouldUseExplicitFinancialAccountQuestion(q string) bool {
 }
 
 func detectBossScope(q, entity string) BossScope {
+	if shouldUseExpenseBreakdown(q) {
+		return BossScopeCompany
+	}
 	if shouldUseCompanyScopeContractAggregate(q) {
 		return BossScopeCompany
 	}
@@ -180,6 +183,7 @@ func looksLikeBossRewriteNonEntity(entity string) bool {
 	return containsAny(normalized, []string{
 		"银行卡", "银行", "实际", "到账", "回款", "收款", "付款", "现金", "现金流",
 		"应收", "应付", "账款", "开票", "收票", "发票", "未付", "未回", "未收",
+		"整体", "大类", "构成", "分类", "类别", "支出", "费用", "开支",
 	})
 }
 
@@ -193,7 +197,7 @@ func detectBossGranularity(q string, metric BossMetric, hasSubPeriod bool) BossG
 		return BossGranularityBalance
 	case containsAny(q, []string{"明细", "列表", "每笔", "逐笔"}):
 		return BossGranularityDetail
-	case containsAny(q, []string{"拆分", "拆开", "分别", "构成"}):
+	case containsAny(q, []string{"拆", "拆分", "拆开", "分别", "构成"}):
 		return BossGranularityBreakdown
 	case metric == BossMetricHealth || containsAny(q, []string{"分析", "建议", "风险", "健康"}):
 		return BossGranularityAnalysis
