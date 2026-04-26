@@ -124,7 +124,7 @@ const plugin = {
   register(api) {
     api.registerTool(createFinanceTool(
       "finance-query",
-      "Boss finance QA. For finance questions, call this first and answer from the current returned facts and source notes.",
+      "Boss finance QA. Call this first for finance questions. When the returned JSON has final_answer or boss_reply_text, preserve key amounts, uncertainty wording, and source notes. When it has contract_continuity_candidates, describe them as same-project candidates/references, not a confirmed counterparty mapping.",
       {
         type: "object",
         properties: {

@@ -24,6 +24,7 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 		`mustCallFinanceQuerySystemContext`,
 		`contract_continuity_candidates`,
 		`do not omit the source note`,
+		`same-project candidates/references`,
 		`isFinanceQuestion`,
 	} {
 		if !strings.Contains(pluginText, want) {
