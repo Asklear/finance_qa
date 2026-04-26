@@ -18,6 +18,31 @@ func shouldUseContractDimension(question string) bool {
 	return containsAny(q, contractPriorityKeywords())
 }
 
+func shouldUseContractDetailQuestion(question string) bool {
+	q := strings.TrimSpace(question)
+	if !containsAny(q, []string{"合同", "协议", "发票"}) {
+		return false
+	}
+	if shouldUseCompanyScopeContractAggregate(q) {
+		return false
+	}
+	detailKeywords := []string{
+		"条款", "细节", "正文", "原文", "具体内容", "合同内容", "内容是什么",
+		"付款条款", "付款方式", "结算周期", "结算方式", "服务范围", "服务内容",
+		"交付", "验收", "保密", "违约", "税率", "签署", "签约", "起止", "到期",
+		"续约", "第几页", "哪一页", "发票金额", "发票明细", "发票号码", "发票号",
+		"开票日期", "票面金额", "不含税", "含税", "税额", "购买方", "销售方",
+	}
+	if !containsAny(q, detailKeywords) {
+		return false
+	}
+	operatingKeywords := []string{"收入", "营收", "成本", "利润", "回款", "到账", "付款", "应收", "应付", "未回款", "未付款", "已开票", "未支付"}
+	if containsAny(q, operatingKeywords) && !containsAny(q, detailKeywords) {
+		return false
+	}
+	return true
+}
+
 func shouldUseCompanyScopeContractAggregate(question string) bool {
 	q := strings.TrimSpace(question)
 	if !containsAny(q, []string{"合同", "项目"}) {

@@ -118,6 +118,9 @@ func shouldSkipBossProbeRouting(spec QuerySpec, rewrite BossQueryRewrite) bool {
 	if spec.QueryFamily == QueryFamilyHRCost {
 		return true
 	}
+	if spec.QueryFamily == QueryFamilyContractDetail {
+		return true
+	}
 	if rewrite.Metric == BossMetricARAP && rewrite.Perspective == BossPerspectiveContractFirst {
 		return false
 	}

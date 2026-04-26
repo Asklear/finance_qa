@@ -21,6 +21,7 @@ func NewDefaultSourceRegistry(engine *Engine) *SourceRegistry {
 	if engine == nil {
 		return registry
 	}
+	registry.Register(NewContractDetailSourceAdapter(engine))
 	registry.Register(NewContractSourceAdapter(engine))
 	registry.Register(NewCoreMetricsSourceAdapter(engine))
 	registry.Register(NewARAPSourceAdapter(engine))

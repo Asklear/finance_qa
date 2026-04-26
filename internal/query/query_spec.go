@@ -9,6 +9,7 @@ const (
 	QueryFamilyCoreMetric        QueryFamily = "core_metric"
 	QueryFamilyCounterparty      QueryFamily = "counterparty"
 	QueryFamilyContractDimension QueryFamily = "contract_dimension"
+	QueryFamilyContractDetail    QueryFamily = "contract_detail"
 	QueryFamilyARAP              QueryFamily = "arap"
 	QueryFamilySupplierPayments  QueryFamily = "supplier_payments"
 	QueryFamilyReadiness         QueryFamily = "readiness"

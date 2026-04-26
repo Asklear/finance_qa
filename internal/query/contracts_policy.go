@@ -31,6 +31,9 @@ func (e *Engine) hasContractDimensionEntity(entity string) bool {
 }
 
 func (e *Engine) shouldPrioritizeContractQuery(question, entity string, hasRealEntity bool) bool {
+	if shouldUseContractDetailQuestion(question) {
+		return false
+	}
 	if shouldUseCompanyScopeContractAggregate(question) && strings.TrimSpace(entity) == "" && !hasRealEntity {
 		return false
 	}

@@ -13,6 +13,7 @@ const (
 	SourceCapabilityOfficialARAP     SourceCapability = "official_arap"
 	SourceCapabilityOpenItemEvidence SourceCapability = "openitem_evidence"
 	SourceCapabilityContractLedger   SourceCapability = "contract_ledger"
+	SourceCapabilityContractDetail   SourceCapability = "contract_detail"
 	SourceCapabilitySupplierPayments SourceCapability = "supplier_payment_fact"
 	SourceCapabilityDataReadiness    SourceCapability = "data_readiness_fact"
 )
@@ -41,6 +42,8 @@ func PlanQuerySpec(spec QuerySpec) QueryPlan {
 	}
 
 	switch spec.QueryFamily {
+	case QueryFamilyContractDetail:
+		add(SourceCapabilityContractDetail)
 	case QueryFamilyContractDimension:
 		add(SourceCapabilityContractLedger)
 		add(SourceCapabilityBankCashReceipts)

@@ -11,7 +11,7 @@ func (e *Engine) shouldUseOrchestrator(spec QuerySpec) bool {
 
 func shouldUseOrchestratorForSpec(spec QuerySpec) bool {
 	switch spec.QueryFamily {
-	case QueryFamilyContractDimension, QueryFamilySupplierPayments, QueryFamilyReadiness, QueryFamilyCoreMetric:
+	case QueryFamilyContractDimension, QueryFamilyContractDetail, QueryFamilySupplierPayments, QueryFamilyReadiness, QueryFamilyCoreMetric:
 		return true
 	case QueryFamilyARAP:
 		return shouldUseOrchestratorARAP(spec)
@@ -39,6 +39,8 @@ func composeResultFromAnswerFrame(frame AnswerFrame) (Result, error) {
 	switch frame.Spec.QueryFamily {
 	case QueryFamilyContractDimension:
 		return composeContractResult(frame)
+	case QueryFamilyContractDetail:
+		return composeContractDetailResult(frame)
 	case QueryFamilySupplierPayments:
 		return composeSupplierPaymentResult(frame)
 	case QueryFamilyReadiness:

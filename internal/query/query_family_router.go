@@ -3,6 +3,9 @@ package query
 import "strings"
 
 func detectQueryFamily(q string, intent Intent, entity, from, to string, cfg RuleConfig, needsContractDimension bool) QueryFamily {
+	if shouldUseContractDetailQuestion(q) {
+		return QueryFamilyContractDetail
+	}
 	if family, ok := resolveForcedQueryFamily(needsContractDimension); ok {
 		return family
 	}

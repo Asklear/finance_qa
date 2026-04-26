@@ -10,7 +10,8 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 	intent, _ := classifyIntentV2(q, cfg)
 
 	from, to := ExtractPeriodWithNow(q, anchor)
-	needsContractDimension := shouldUseContractDimension(q)
+	isContractDetail := shouldUseContractDetailQuestion(q)
+	needsContractDimension := !isContractDetail && shouldUseContractDimension(q)
 	if needsContractDimension {
 		from, to = extractContractQuestionPeriods(q, anchor)
 	}

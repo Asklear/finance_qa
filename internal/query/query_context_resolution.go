@@ -50,6 +50,9 @@ func (e *Engine) applyQueryPriorityAdjustments(q string, intent Intent, spec Que
 	if intent == IntentIdentityQuery || isCounterpartyClassificationQuestion(q) {
 		return spec, entity, hasRealEntity, anchor
 	}
+	if spec.QueryFamily == QueryFamilyContractDetail {
+		return spec, entity, hasRealEntity, anchor
+	}
 	if !e.shouldPrioritizeContractQuery(q, entity, hasRealEntity) {
 		return spec, entity, hasRealEntity, anchor
 	}
@@ -95,6 +98,7 @@ func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 	spec := BuildQuerySpec(q, anchor)
 	entity := e.resolveQueryEntity(q, spec)
 	spec = reconcileQuerySpec(spec, entity, cfg)
+	spec = e.applyLegacyContractContentFallback(q, spec)
 	entity = spec.Entity
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
 	spec, entity, hasRealEntity = normalizeExplicitCashCompanyRoute(q, spec, entity, hasRealEntity, cfg)
@@ -114,4 +118,24 @@ func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 		anchor:             anchor,
 		cfg:                cfg,
 	}
+}
+
+func (e *Engine) applyLegacyContractContentFallback(q string, spec QuerySpec) QuerySpec {
+	if spec.QueryFamily != QueryFamilyContractDetail {
+		return spec
+	}
+	if len(e.tableColumns("contract_main")) > 0 {
+		return spec
+	}
+	if inferContractDetailIntent(q) != ContractDetailIntentField {
+		return spec
+	}
+	if !containsAny(q, []string{"合同内容", "内容是什么", "是什么"}) {
+		return spec
+	}
+	spec.QueryFamily = QueryFamilyContractDimension
+	spec.NeedsContractDimension = true
+	spec.PreferContractAggregate = false
+	spec.PerspectivePolicy = PerspectiveCashThenAccrual
+	return spec
 }
