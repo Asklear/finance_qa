@@ -25,7 +25,11 @@ func shouldUseStrictContractSourceForSpec(spec QuerySpec) bool {
 
 func buildStrictContractMissingResult(ctx queryExecutionContext, failure Result) Result {
 	reason := strings.TrimSpace(failure.Message)
-	return buildStrictContractMissingResultForSpec(ctx.spec, reason, nil, failure.ExecutedSQL, failure.CalculationLogs)
+	result := buildStrictContractMissingResultForSpec(ctx.spec, reason, nil, failure.ExecutedSQL, failure.CalculationLogs)
+	if ctx.engine != nil {
+		result = ctx.engine.enrichStrictContractMissingWithContinuityCandidates(ctx.spec, result)
+	}
+	return result
 }
 
 func buildStrictContractMissingResultForSpec(spec QuerySpec, reason string, sourceTables []string, executedSQL, calculationLogs []string) Result {

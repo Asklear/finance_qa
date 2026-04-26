@@ -877,6 +877,70 @@ exit 2
 	}
 }
 
+func TestFinanceBridgeBossReplyUsesAllContinuityCandidatesForInference(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	stubBin := filepath.Join(tmp, "financeqa_stub.sh")
+	skillPath := filepath.Join(tmp, "SKILL.md")
+	appendixPath := filepath.Join(tmp, "docs", "SKILL_APPENDIX_FULL.md")
+	dbPath := filepath.Join(tmp, "bridge-contract-continuity.sqlite")
+
+	stubScript := `#!/usr/bin/env bash
+set -euo pipefail
+cmd="${1:-}"
+shift || true
+if [[ "$cmd" == "query" ]]; then
+  cat <<'JSON'
+{"success":true,"message":"辽宁金程信息科技有限公司2026-01~2026-03 合同口径当前不能直接回答：合同信息表没有匹配到该主体/项目。","answer_method":"sql","data":{"contract_answer_status":"missing","contract_source_required":true,"contract_fallback_reason":"合同信息表没有匹配到该主体/项目","source_priority":"contract_strict","source_tables":["tenant_uhub.fin_contracts","tenant_uhub.fin_fund_income"],"source_summary":"来源：《合同信息表》；《优集资金收入计算表-副本.xlsx》的【26年Q1收入明细】。","period":"2026-01~2026-03","entity":"辽宁金程信息科技有限公司","requested_metrics":["回款"],"contract_continuity_note":"原主体当前期间无合同台账记录；以下为历史同名项目在当前期间挂到其他主体名下的候选，供宿主 LLM 按项目连续性判断，不等同于确定主体映射。","contract_continuity_candidates":[{"original_entity":"辽宁金程信息科技有限公司","candidate_entity":"四川其妙科技有限公司","contract_content":"行业商品数据采购合同-A01","candidate_received_amount":1668149.01,"candidate_settlement_amount":1668149.01,"candidate_invoice_amount":1668149.01,"basis":"same_contract_content_across_periods","confidence":0.75},{"original_entity":"辽宁金程信息科技有限公司","candidate_entity":"四川其妙科技有限公司","contract_content":"行业商品数据采购合同-A02","candidate_received_amount":1668149.01,"candidate_settlement_amount":1668149.01,"candidate_invoice_amount":1668149.01,"basis":"same_contract_content_across_periods","confidence":0.75},{"original_entity":"辽宁金程信息科技有限公司","candidate_entity":"四川其妙科技有限公司","contract_content":"行业商品数据采购合同-A03","candidate_received_amount":1668149.01,"candidate_settlement_amount":1668149.01,"candidate_invoice_amount":1668149.01,"basis":"same_contract_content_across_periods","confidence":0.75},{"original_entity":"辽宁金程信息科技有限公司","candidate_entity":"四川其妙科技有限公司","contract_content":"FY26指定平台商品数据服务采购-pdd","candidate_received_amount":103500,"candidate_settlement_amount":103500,"candidate_invoice_amount":103500,"basis":"same_contract_content_across_periods","confidence":0.75},{"original_entity":"辽宁金程信息科技有限公司","candidate_entity":"四川其妙科技有限公司","contract_content":"海外平台商品数据监控合同-A05","candidate_received_amount":0,"candidate_settlement_amount":735014.81,"candidate_invoice_amount":0,"basis":"same_contract_content_across_periods","confidence":0.75},{"original_entity":"辽宁金程信息科技有限公司","candidate_entity":"四川其妙科技有限公司","contract_content":"海外行业榜单及动态数据服务-A05","candidate_received_amount":42,"candidate_settlement_amount":735014.80,"candidate_invoice_amount":0,"basis":"same_contract_content_across_periods","confidence":0.75}],"query_spec":{"query_family":"contract_dimension","needs_contract_dimension":true}},"executed_sql":["contract_strict_missing: fallback blocked"],"calculation_logs":["[合同连续性候选] matched same contract_content across historical and requested periods"]}
+JSON
+  exit 0
+fi
+if [[ "$cmd" == "host-data" ]]; then
+  echo '{"success":true,"answer_method":"llm_payload","data":{"llm_payload":{}}}'
+  exit 0
+fi
+echo "unknown cmd: $cmd" >&2
+exit 2
+`
+	if err := os.WriteFile(stubBin, []byte(stubScript), 0o755); err != nil {
+		t.Fatalf("write stub bin: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte(sampleSkillMarkdown()), 0o644); err != nil {
+		t.Fatalf("write skill: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(appendixPath), 0o755); err != nil {
+		t.Fatalf("mkdir appendix dir: %v", err)
+	}
+	if err := os.WriteFile(appendixPath, []byte("# appendix"), 0o644); err != nil {
+		t.Fatalf("write appendix: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	callReq := `{"action":"call","name":"finance-query","arguments":{"query":"金程今年回款情况"}}`
+	callRaw := runBridge(t, stubBin, dbPath, skillPath, callReq)
+	payload := parseBridgeContentPayload(t, callRaw)
+
+	contract := mustMapMap(t, payload, "host_summary_contract")
+	candidates, ok := contract["continuity_candidates"].([]any)
+	if !ok || len(candidates) != 6 {
+		t.Fatalf("host_summary_contract.continuity_candidates should keep all candidates, got %#v", contract["continuity_candidates"])
+	}
+
+	finalAnswer, _ := payload["final_answer"].(string)
+	if !strings.Contains(finalAnswer, "5107989.03") {
+		t.Fatalf("final answer should total all continuity candidates, got %s", finalAnswer)
+	}
+	if !strings.Contains(finalAnswer, "疑似") || !strings.Contains(finalAnswer, "推断") {
+		t.Fatalf("final answer should frame continuity as an inference, got %s", finalAnswer)
+	}
+	if !strings.Contains(finalAnswer, "不是固定映射表") {
+		t.Fatalf("final answer should not turn continuity candidates into a fixed mapping, got %s", finalAnswer)
+	}
+}
+
 func TestFinanceBridgeExposesSupplierPaymentHostSummary(t *testing.T) {
 	t.Parallel()
 

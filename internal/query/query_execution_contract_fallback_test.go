@@ -160,6 +160,66 @@ func TestContractDimensionARAPFailureStopsAtStrictContractSource(t *testing.T) {
 	}
 }
 
+func TestContractStrictMissingSurfacesContinuityCandidatesForLLMInference(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "contract-continuity-candidates.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
+		`CREATE TABLE fin_fund_income (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, received_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL, account_code TEXT)`,
+		`CREATE TABLE journal (company TEXT, period TEXT, voucher_date TEXT, voucher_no TEXT, account_code TEXT, account_name TEXT, summary TEXT, direction TEXT, amount REAL, debit_amount REAL, credit_amount REAL, counterparty TEXT)`,
+		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, credit_amount REAL, debit_amount REAL, counterparty_name TEXT, summary TEXT)`,
+		`CREATE TABLE income_statement (company TEXT, period TEXT, item_name TEXT, current_amount REAL, cumulative_amount REAL)`,
+		`CREATE TABLE balance_detail (company TEXT, year INTEGER, period TEXT, account_code TEXT, account_name TEXT, opening_debit REAL, opening_credit REAL, current_debit REAL, current_credit REAL, closing_debit REAL, closing_credit REAL)`,
+		`CREATE TABLE balance_sheet (company TEXT, period TEXT, account_code TEXT, account_name TEXT, opening_balance REAL, closing_balance REAL)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-OLD-001', '辽宁金程信息科技有限公司', '行业商品数据采购合同-A01')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-NEW-001', '四川其妙科技有限公司', '行业商品数据采购合同-A01')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, settlement_amount, received_amount, invoice_amount) VALUES ('C-OLD-001', '2025-12', 1000, 1000, 0)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, settlement_amount, received_amount, invoice_amount) VALUES ('C-NEW-001', '2026-01', 1200, 900, 900)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("金程2026年回款情况")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got, _ := res.Data["contract_answer_status"].(string); got != "missing" {
+		t.Fatalf("contract_answer_status = %q, want missing", got)
+	}
+	candidates, ok := res.Data["contract_continuity_candidates"].([]map[string]any)
+	if !ok || len(candidates) != 1 {
+		t.Fatalf("contract_continuity_candidates = %#v, want one candidate", res.Data["contract_continuity_candidates"])
+	}
+	candidate := candidates[0]
+	if got := candidate["candidate_entity"]; got != "四川其妙科技有限公司" {
+		t.Fatalf("candidate_entity = %v", got)
+	}
+	if got := candidate["contract_content"]; got != "行业商品数据采购合同-A01" {
+		t.Fatalf("contract_content = %v", got)
+	}
+	if got := candidate["candidate_received_amount"]; got != float64(900) {
+		t.Fatalf("candidate_received_amount = %v, want 900", got)
+	}
+	if got := candidate["basis"]; got != "same_contract_content_across_periods" {
+		t.Fatalf("basis = %v", got)
+	}
+}
+
 func TestExplicitFinancialARAPBypassesContractStrictSource(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "explicit-financial-arap.sqlite")
 	db, err := sql.Open("sqlite", dbPath)

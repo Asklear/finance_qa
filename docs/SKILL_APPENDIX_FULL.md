@@ -405,6 +405,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 7. 如果结果带有 `data.contract_fallback_reason`：
    - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
    - 若同时存在 `data.contract_answer_status=missing` 或 `data.source_priority=contract_strict`，宿主必须停在合同缺口说明，不能自行切到财务账/流水下结论
+   - 若同时存在 `data.contract_continuity_candidates`，这些是“历史同名合同/项目在当前期间挂到其他主体”的候选证据；宿主可以据此做疑似连续性推断，但必须说明不是固定主体映射
    - 只有后端明确返回 `data.contract_fallback_target` 时，才可说明已经切换到对应非合同口径
 8. 若人类明确要求高级维护能力，再通过直接 CLI / shell 工具调用，不要默认把这些能力说明注入老板问答上下文。
 9. 若响应里带有 `data.tax_inclusion` / `data.tax_inclusion_note`：

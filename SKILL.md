@@ -161,6 +161,7 @@ metadata:
 8. 若存在 `data.contract_fallback_reason`：
    - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
    - 若同时存在 `data.contract_answer_status=missing` 或 `data.source_priority=contract_strict`，表示系统已阻断自动回退；宿主只能说明合同口径缺口，不能自行改用财务账/流水下结论
+   - 若同时存在 `data.contract_continuity_candidates`，这些是“历史同名合同/项目在当前期间挂到其他主体”的候选证据；宿主可以据此做疑似连续性推断，但必须说明不是固定主体映射
    - 只有当后端明确返回 `data.contract_fallback_target` 时，才可说明已经切换到对应非合同口径
 9. 若存在 `data.extraction_errors`：
    - 说明 `finance-host-data` 或自动 fallback 的宿主数据包提取不完整

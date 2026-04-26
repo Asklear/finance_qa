@@ -588,6 +588,8 @@ def normalize_exposed_fields(data):
         "source_summary": data.get("source_summary") or "",
         "contract_fallback_reason": data.get("contract_fallback_reason") or "",
         "contract_answer_status": data.get("contract_answer_status") or "",
+        "contract_continuity_candidates": data.get("contract_continuity_candidates") or [],
+        "contract_continuity_note": data.get("contract_continuity_note") or "",
     }
     data["exposed_fields"] = exposed
     return data
@@ -659,6 +661,8 @@ def build_contract_strict_missing_summary(data):
         "reason": reason,
         "source_note": source_note,
         "source_documents": source_documents,
+        "continuity_candidates": data.get("contract_continuity_candidates") or [],
+        "continuity_note": data.get("contract_continuity_note") or "",
         "safe_to_quote_message": True,
     }
 
@@ -868,10 +872,52 @@ def build_boss_reply(payload, query):
     if summary_contract and summary_contract.get("kind") == "contract_strict_missing":
         period = summary_contract.get("period") or data.get("period") or "当前期间"
         entity = str(summary_contract.get("entity") or "").strip()
-        entity_prefix = f"{entity}" if entity else ""
+        entity_prefix = f"{entity} " if entity else ""
         reason = str(summary_contract.get("reason") or "合同/项目台账在请求期间没有足够记录").strip()
+        continuity_candidates = summary_contract.get("continuity_candidates") or []
+        if isinstance(continuity_candidates, list) and continuity_candidates:
+            detail_lines = []
+            total_received = 0.0
+            entity_received = {}
+            normalized_candidates = []
+            for item in continuity_candidates:
+                if not isinstance(item, dict):
+                    continue
+                candidate_entity = str(item.get("candidate_entity") or "").strip()
+                received = float(first_float(item.get("candidate_received_amount"), 0) or 0)
+                total_received += received
+                if candidate_entity:
+                    entity_received[candidate_entity] = entity_received.get(candidate_entity, 0.0) + received
+                normalized_candidates.append(item)
+            top_entity = ""
+            if entity_received:
+                top_entity = max(entity_received.items(), key=lambda pair: pair[1])[0]
+            for item in normalized_candidates[:5]:
+                candidate_entity = str(item.get("candidate_entity") or "").strip()
+                contract_content = str(item.get("contract_content") or "").strip()
+                received = float(first_float(item.get("candidate_received_amount"), 0) or 0)
+                settlement = float(first_float(item.get("candidate_settlement_amount"), 0) or 0)
+                invoice = float(first_float(item.get("candidate_invoice_amount"), 0) or 0)
+                label = " - ".join(part for part in (candidate_entity, contract_content) if part)
+                if label:
+                    detail_lines.append(f"{label}：合同结算 {settlement:.2f} 元，到账 {received:.2f} 元，开票 {invoice:.2f} 元")
+            detail_text = "；".join(detail_lines)
+            hidden_count = max(len(normalized_candidates) - len(detail_lines), 0)
+            if hidden_count > 0:
+                detail_text = detail_text + f"；另有 {hidden_count} 条候选未展开"
+            if detail_text:
+                detail_text = "候选：" + detail_text + "。"
+            guess_subject = f"疑似可按 {top_entity} 的同名项目参考" if top_entity else "疑似可按同名项目参考"
+            return {
+                "结论": f"{entity_prefix}{period} 原主体合同台账无记录；但发现历史同名项目在当前期间挂到其他主体名下，{guess_subject}，候选到账合计 {total_received:.2f} 元。",
+                "原因": append_source_note(
+                    f"这不是固定映射表判断，而是按同名合同/项目跨期间连续性给出的推断候选；{detail_text}",
+                    summary_contract.get("source_note"),
+                ),
+                "建议": "可以先按这些候选给老板一个“疑似承继主体/项目连续性”的参考答案，并明确这是推断，不把它写成确定主体映射。",
+            }
         return {
-            "结论": f"{entity_prefix}{period}合同口径当前不能直接回答：{reason}。",
+            "结论": f"{entity_prefix}{period} 合同口径当前不能直接回答：{reason}。",
             "原因": append_source_note(
                 "系统已经按合同/项目台账优先探测，但没有足够记录支撑确定性金额；为避免把非老板口径冒充合同口径，本次未自动切到财务账或银行流水。",
                 summary_contract.get("source_note"),
