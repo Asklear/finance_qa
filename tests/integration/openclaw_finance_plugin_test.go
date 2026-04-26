@@ -23,6 +23,7 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 		`数据(出来|有了|有没有|情况|多少)`,
 		`mustCallFinanceQuerySystemContext`,
 		`contract_continuity_candidates`,
+		`do not omit the source note`,
 		`isFinanceQuestion`,
 	} {
 		if !strings.Contains(pluginText, want) {
