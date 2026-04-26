@@ -27,6 +27,11 @@
 
 ## 工具调用策略
 
+0. 对任何财务、经营、合同、回款、开票、收入、成本、利润、现金、银行、税额、应收/应付、客户、供应商或来源表问题，必须先调用 bridge，再回答。推荐命令：
+   ```bash
+   printf '%s' '{"action":"call","name":"finance-query","arguments":{"query":"用户原问题"}}' | python3 /root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py
+   ```
+   若当前环境没有线上 OpenClaw bridge，则使用仓库内 `plugin/openclaw-finance/server/finance_bridge.py`。解析返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 bridge 的最终答案。
 1. 优先调用 `finance-query` 获取结构化回答。
 2. 若 `success=false` 或 `answer_method=llm_payload`，立即调用 `finance-host-data` 做兜底推理。
 3. 涉及报表导入，使用 `finance-upload`（单文件）。
