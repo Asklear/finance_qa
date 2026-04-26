@@ -267,6 +267,71 @@ func TestCompanyScopeContractMetricQuestionUsesAggregateWithoutSyntheticSubject(
 	}
 }
 
+func TestCompanyScopeCustomerRevenueDetailUsesContractAggregateWithoutSyntheticSubject(t *testing.T) {
+	dbPath := buildCompanyScopeRevenueDetailDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月客户收入明细")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(3000) {
+		t.Fatalf("total = %v, want contract revenue 3000", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["entity"]; got != "" {
+		t.Fatalf("query_spec.entity = %v, want empty for dimension word", got)
+	}
+	if !strings.Contains(res.Message, "北京甲方有限公司") || !strings.Contains(res.Message, "上海乙方科技有限公司") {
+		t.Fatalf("message should include contract revenue detail customers, got: %s", res.Message)
+	}
+	summary, ok := res.Data["contract_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract_summary missing: %+v", res.Data)
+	}
+	items, ok := summary["revenue_items"].([]map[string]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("contract_summary.revenue_items = %#v, want 2 items", summary["revenue_items"])
+	}
+}
+
+func TestCompanyScopeContractRevenueDetailDoesNotUseRandomContractSubject(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月合同收入明细")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(1000) {
+		t.Fatalf("total = %v, want company-scope contract revenue 1000", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["entity"]; got != "" {
+		t.Fatalf("query_spec.entity = %v, want empty; should not infer 租赁合同 from generic 合同", got)
+	}
+}
+
 func buildContractARAPPriorityDB(t *testing.T) string {
 	t.Helper()
 	dbPath := t.TempDir() + "/contract-arap-priority.sqlite"
@@ -297,6 +362,43 @@ func buildContractARAPPriorityDB(t *testing.T) string {
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("exec stmt failed: %v\n%s", err, stmt)
+		}
+	}
+	return dbPath
+}
+
+func buildCompanyScopeRevenueDetailDB(t *testing.T) string {
+	t.Helper()
+	dbPath := t.TempDir() + "/company-scope-revenue-detail.sqlite"
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE balance_sheet (company TEXT, period TEXT, account_code TEXT, account_name TEXT, opening_balance REAL, closing_balance REAL)`,
+		`CREATE TABLE income_statement (company TEXT, period TEXT, item_name TEXT, current_amount REAL, cumulative_amount REAL)`,
+		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, credit_amount REAL, debit_amount REAL, counterparty_name TEXT, summary TEXT)`,
+		`CREATE TABLE journal (company TEXT, period TEXT, voucher_date TEXT, voucher_no TEXT, account_code TEXT, account_name TEXT, summary TEXT, direction TEXT, amount REAL, debit_amount REAL, credit_amount REAL, counterparty TEXT)`,
+		`CREATE TABLE balance_detail (company TEXT, year INTEGER, period TEXT, account_code TEXT, account_name TEXT, opening_debit REAL, opening_credit REAL, current_debit REAL, current_credit REAL, closing_debit REAL, closing_credit REAL)`,
+		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
+		`CREATE TABLE fin_fund_income (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, source_report_type TEXT, source_sheet_name TEXT, settlement_amount REAL, received_amount REAL, is_invoiced TEXT, invoice_amount REAL)`,
+		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, source_report_type TEXT, source_sheet_name TEXT, settlement_amount REAL, paid_amount REAL, is_invoiced TEXT, invoice_amount REAL)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES
+		 ('R-001','北京甲方有限公司','年度数据服务'),
+		 ('R-002','上海乙方科技有限公司','市场调研服务')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES
+		 ('R-001','2026-03','contract_fund_income','26年Q1收入明细',1000,800,'是',1000),
+		 ('R-002','2026-03','contract_fund_income','26年Q1收入明细',2000,1500,'是',2000)`,
+		`INSERT INTO income_statement(company, period, item_name, current_amount, cumulative_amount) VALUES
+		 ('测试公司','2026-03','营业收入',9999,9999),
+		 ('测试公司','2026-03','营业成本',100,100),
+		 ('测试公司','2026-03','净利润',9899,9899)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
 		}
 	}
 	return dbPath

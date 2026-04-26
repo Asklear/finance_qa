@@ -180,6 +180,9 @@ func looksLikeBossRewriteNonEntity(entity string) bool {
 	if normalized == "" {
 		return false
 	}
+	if looksLikeBusinessDimensionLabel(entity) {
+		return true
+	}
 	return containsAny(normalized, []string{
 		"银行卡", "银行", "实际", "到账", "回款", "收款", "付款", "现金", "现金流",
 		"应收", "应付", "账款", "开票", "收票", "发票", "未付", "未回", "未收",

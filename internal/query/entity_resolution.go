@@ -139,7 +139,7 @@ func (e *Engine) entityExistsInSources(name string) bool {
 
 func (e *Engine) isRealBusinessEntity(question, entity string) bool {
 	name := strings.TrimSpace(entity)
-	if len([]rune(name)) < 2 || isGenericMetricEntity(name) || looksLikeTemporalMetricEntity(name) {
+	if len([]rune(name)) < 2 || isGenericMetricEntity(name) || looksLikeTemporalMetricEntity(name) || looksLikeBusinessDimensionLabel(name) {
 		return false
 	}
 	if strings.Contains(question, "项目") {

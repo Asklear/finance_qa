@@ -34,7 +34,7 @@ func extractNamedEntityFromQuestion(question string) string {
 	}
 	if m := namedEntityPattern.FindStringSubmatch(q); len(m) == 2 {
 		entity := trimEntityNoiseSuffixes(stripTemporalNoise(strings.TrimSpace(m[1])))
-		if len([]rune(entity)) >= 2 && !isGenericMetricEntity(entity) && !looksLikeAccountFragment(entity) && !looksLikeSyntheticQuestionFragment(entity) {
+		if len([]rune(entity)) >= 2 && !isGenericMetricEntity(entity) && !looksLikeAccountFragment(entity) && !looksLikeSyntheticQuestionFragment(entity) && !looksLikeBusinessDimensionLabel(entity) {
 			return entity
 		}
 	}
@@ -46,6 +46,7 @@ func isRealishQueryEntity(entity string) bool {
 	return len([]rune(trimmed)) >= 2 &&
 		!isGenericMetricEntity(trimmed) &&
 		!looksLikeTemporalMetricEntity(trimmed) &&
+		!looksLikeBusinessDimensionLabel(trimmed) &&
 		!looksLikeSyntheticQuestionFragment(trimmed)
 }
 

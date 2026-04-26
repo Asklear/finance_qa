@@ -43,7 +43,7 @@ func shouldSkipEntityFragment(fragment string, minLen int) bool {
 	if len([]rune(fragment)) < minLen {
 		return true
 	}
-	if isGenericMetricEntity(fragment) || looksLikeTemporalMetricEntity(fragment) {
+	if isGenericMetricEntity(fragment) || looksLikeTemporalMetricEntity(fragment) || looksLikeBusinessDimensionLabel(fragment) {
 		return true
 	}
 	return containsAny(fragment, []string{

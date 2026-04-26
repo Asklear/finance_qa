@@ -54,6 +54,9 @@ func buildContractAggregatePayloadSummary(selection contractAggregateSelection, 
 		payload["revenue_settlement"] = round2(summary.RevenueSettlement)
 		payload["revenue_received"] = round2(summary.RevenueReceived)
 		payload["invoice_amount"] = round2(summary.RevenueInvoiced)
+		if len(summary.RevenueItems) > 0 {
+			payload["revenue_items"] = buildRevenueItemPayload(summary.RevenueItems)
+		}
 	}
 	if selection.IncludeReceivable {
 		payload["revenue_settlement"] = round2(summary.RevenueSettlement)
@@ -70,6 +73,9 @@ func buildContractAggregatePayloadSummary(selection contractAggregateSelection, 
 	if selection.IncludeCost {
 		payload["cost_settlement"] = round2(summary.CostSettlement)
 		payload["cost_paid"] = round2(summary.CostPaid)
+		if len(summary.CostItems) > 0 {
+			payload["cost_items"] = buildCostItemPayload(summary.CostItems)
+		}
 	}
 	if selection.IncludePayable {
 		payload["cost_settlement"] = round2(summary.CostSettlement)
@@ -87,6 +93,36 @@ func buildContractAggregatePayloadSummary(selection contractAggregateSelection, 
 		payload["profit"] = round2(summary.Profit)
 		payload["revenue_received"] = round2(summary.RevenueReceived)
 		payload["cost_paid"] = round2(summary.CostPaid)
+	}
+	return payload
+}
+
+func buildRevenueItemPayload(items []contractAggregateOpenItem) []map[string]any {
+	payload := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, map[string]any{
+			"customer_name":     item.CustomerName,
+			"contract_content":  item.ContractContent,
+			"settlement_amount": round2(item.SettlementAmount),
+			"invoice_amount":    round2(item.InvoiceAmount),
+			"received_amount":   round2(item.ReceivedAmount),
+			"unreceived_amount": round2(item.OpenAmount),
+		})
+	}
+	return payload
+}
+
+func buildCostItemPayload(items []contractAggregateOpenItem) []map[string]any {
+	payload := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		payload = append(payload, map[string]any{
+			"supplier_name":     item.CustomerName,
+			"contract_content":  item.ContractContent,
+			"settlement_amount": round2(item.SettlementAmount),
+			"invoice_amount":    round2(item.InvoiceAmount),
+			"paid_amount":       round2(item.ReceivedAmount),
+			"unpaid_amount":     round2(item.OpenAmount),
+		})
 	}
 	return payload
 }

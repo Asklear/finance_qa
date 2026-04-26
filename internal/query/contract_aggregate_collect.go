@@ -26,7 +26,9 @@ type contractAggregateSummary struct {
 	CostPayable             float64
 	CostInvoiceOpen         float64
 	Profit                  float64
+	RevenueItems            []contractAggregateOpenItem
 	RevenueInvoiceOpenItems []contractAggregateOpenItem
+	CostItems               []contractAggregateOpenItem
 	CostInvoiceOpenItems    []contractAggregateOpenItem
 	HasRevenueCoverage      bool
 	HasCostCoverage         bool
@@ -36,11 +38,12 @@ type contractAggregateSummary struct {
 }
 
 type contractAggregateOpenItem struct {
-	CustomerName    string
-	ContractContent string
-	InvoiceAmount   float64
-	ReceivedAmount  float64
-	OpenAmount      float64
+	CustomerName     string
+	ContractContent  string
+	SettlementAmount float64
+	InvoiceAmount    float64
+	ReceivedAmount   float64
+	OpenAmount       float64
 }
 
 func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggregateSummary, error) {
@@ -92,6 +95,13 @@ WHERE f.year_month BETWEEN ? AND ?` + filterClause
 		if err := e.db.QueryRow(revenueSQL, args...).Scan(&summary.RevenueSettlement, &summary.RevenueReceived, &summary.RevenueInvoiced, &summary.RevenueReceivable, &summary.RevenueInvoiceOpen, &summary.ContractCount); err != nil {
 			return contractAggregateSummary{}, err
 		}
+		if contractAggregateWantsDetailItems(spec.OriginalQuestion) {
+			items, err := e.collectRevenueItems(filterClause, args)
+			if err != nil {
+				return contractAggregateSummary{}, err
+			}
+			summary.RevenueItems = items
+		}
 		if contractAggregateIncludesMetric(requestedMetrics, "已开票未回款") {
 			items, err := e.collectRevenueInvoiceOpenItems(filterClause, args)
 			if err != nil {
@@ -124,6 +134,13 @@ WHERE cs.year_month BETWEEN ? AND ?` + filterClause
 		if err := e.db.QueryRow(costSQL, costArgs...).Scan(&summary.CostSettlement, &summary.CostPaid, &summary.CostInvoiced, &summary.CostPayable, &summary.CostInvoiceOpen, &costContractCount); err != nil {
 			return contractAggregateSummary{}, err
 		}
+		if contractAggregateWantsDetailItems(spec.OriginalQuestion) {
+			items, err := e.collectCostItems(filterClause, costArgs)
+			if err != nil {
+				return contractAggregateSummary{}, err
+			}
+			summary.CostItems = items
+		}
 		if contractAggregateIncludesMetric(requestedMetrics, "已收票未付款") {
 			items, err := e.collectCostInvoiceOpenItems(filterClause, costArgs)
 			if err != nil {
@@ -155,6 +172,67 @@ WHERE cs.year_month BETWEEN ? AND ?` + filterClause
 	)
 
 	return summary, nil
+}
+
+func contractAggregateWantsDetailItems(question string) bool {
+	return containsAny(question, []string{"明细", "列表", "有哪些", "哪些", "分别", "拆", "拆分", "构成"})
+}
+
+func (e *Engine) collectRevenueItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
+	sqlText := `
+SELECT c.customer_name,
+       c.contract_content,
+       COALESCE(SUM(f.settlement_amount), 0),
+       COALESCE(SUM(f.invoice_amount), 0),
+       COALESCE(SUM(f.received_amount), 0),
+       COALESCE(SUM(CASE WHEN COALESCE(f.settlement_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.settlement_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0)
+FROM fin_fund_income f
+JOIN fin_contracts c ON c.contract_id = f.contract_id
+WHERE f.year_month BETWEEN ? AND ?` + filterClause + `
+GROUP BY c.customer_name, c.contract_content
+ORDER BY 3 DESC, c.customer_name, c.contract_content`
+	return e.collectContractAggregateItems(sqlText, args)
+}
+
+func (e *Engine) collectCostItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
+	sqlText := `
+SELECT c.customer_name,
+       c.contract_content,
+       COALESCE(SUM(cs.settlement_amount), 0),
+       COALESCE(SUM(cs.invoice_amount), 0),
+       COALESCE(SUM(cs.paid_amount), 0),
+       COALESCE(SUM(CASE WHEN COALESCE(cs.settlement_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.settlement_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0)
+FROM fin_cost_settlements cs
+JOIN fin_contracts c ON c.contract_id = cs.contract_id
+WHERE cs.year_month BETWEEN ? AND ?` + filterClause + `
+GROUP BY c.customer_name, c.contract_content
+ORDER BY 3 DESC, c.customer_name, c.contract_content`
+	return e.collectContractAggregateItems(sqlText, args)
+}
+
+func (e *Engine) collectContractAggregateItems(sqlText string, args []any) ([]contractAggregateOpenItem, error) {
+	rows, err := e.db.Query(sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []contractAggregateOpenItem{}
+	for rows.Next() {
+		var item contractAggregateOpenItem
+		if err := rows.Scan(&item.CustomerName, &item.ContractContent, &item.SettlementAmount, &item.InvoiceAmount, &item.ReceivedAmount, &item.OpenAmount); err != nil {
+			return nil, err
+		}
+		item.SettlementAmount = round2(item.SettlementAmount)
+		item.InvoiceAmount = round2(item.InvoiceAmount)
+		item.ReceivedAmount = round2(item.ReceivedAmount)
+		item.OpenAmount = round2(item.OpenAmount)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (e *Engine) collectRevenueInvoiceOpenItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
