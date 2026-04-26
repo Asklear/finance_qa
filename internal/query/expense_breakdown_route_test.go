@@ -14,6 +14,7 @@ func TestShouldUseExpenseBreakdownRecognizesFlexibleBossPhrasing(t *testing.T) {
 		"本月成本按大类拆开",
 		"3月付款分类看一下",
 		"2026年3月整体支出按合同拆一下",
+		"2026年3月花销掰开看看",
 	}
 	for _, q := range yes {
 		if !shouldUseExpenseBreakdown(q) {
