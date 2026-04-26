@@ -112,7 +112,7 @@ ssh -i "$KEY_PATH" "$SERVER" "set -e; \
   grep -n 'SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md'; \
   grep -n 'SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/SKILL.md'; \
   grep -n 'before_prompt_build' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js'; \
-  grep -n 'before_dispatch' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js'; \
+  grep -n 'mustCallFinanceQuerySystemContext' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js'; \
   grep -n 'final_answer' '$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh'; \
   grep -n 'claude_finance_final_answer.sh' '$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py'; \
   python3 '$REMOTE_OPENCLAW_EXT_DIR/finance_bridge.py' <<< '{\"action\":\"list\"}' >/tmp/finance_bridge_list.json; \

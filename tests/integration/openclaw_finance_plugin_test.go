@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestOpenClawFinancePluginForcesFinanceQueryBeforeModel(t *testing.T) {
+func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *testing.T) {
 	t.Parallel()
 
 	pluginPath := filepath.Join("..", "..", "plugin", "openclaw-finance", "dist", "index.esm.js")
@@ -19,24 +19,27 @@ func TestOpenClawFinancePluginForcesFinanceQueryBeforeModel(t *testing.T) {
 
 	for _, want := range []string{
 		`api.on("before_prompt_build"`,
-		`api.on("before_dispatch"`,
-		`api.on("before_message_write"`,
 		`finance-query`,
-		`final_answer`,
-		`return payload.final_answer`,
-		`FINANCE_QUERY_FINAL_ANSWER_START`,
-		`finance-query has already been executed`,
-		`forcedAnswersBySessionKey`,
 		`数据(出来|有了|有没有|情况|多少)`,
-		`prependContext`,
 		`mustCallFinanceQuerySystemContext`,
-		`FINANCE_QUERY_PAYLOAD_START`,
-		`isBridgeFallbackPayload`,
-		`!isBridgeFallbackPayload(payload)`,
 		`isFinanceQuestion`,
 	} {
 		if !strings.Contains(pluginText, want) {
 			t.Fatalf("OpenClaw finance plugin should contain %q", want)
+		}
+	}
+	for _, reject := range []string{
+		`api.on("before_dispatch"`,
+		`api.on("before_message_write"`,
+		`FINANCE_QUERY_FINAL_ANSWER_START`,
+		`FINANCE_QUERY_PAYLOAD_START`,
+		`forcedAnswersBySessionKey`,
+		`isBridgeFallbackPayload`,
+		`finance-query has already been executed`,
+		`prependContext`,
+	} {
+		if strings.Contains(pluginText, reject) {
+			t.Fatalf("OpenClaw finance plugin should not hard-intercept model answers; found %q", reject)
 		}
 	}
 	if !strings.Contains(pluginText, "Do not answer from prior conversation history") {
