@@ -254,6 +254,66 @@ func TestImportFileWithOptions_ContractRevenueCostWorkbookInfersYearMonthAndCarr
 	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlements WHERE year_month='2025-10'`, 0)
 }
 
+func TestImportFileWithOptions_ContractRevenueCostWorkbookUsesSheetMonthDefaultBeforeContractPeriod(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-revenue-cost-sheet-month-default.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集收入成本计算表-表头归期.xlsx")
+	if err := createRevenueCostWorkbookWithCrossPeriodFebruaryRows(workbook); err != nil {
+		t.Fatalf("create sheet month default workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import sheet month default workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2026-02'`, 60)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2027-02'`, 0)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlements WHERE year_month='2026-02'`, 60)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlements WHERE year_month='2027-02'`, 0)
+}
+
+func TestImportFileWithOptions_ContractRevenueCostWorkbookUsesExplicitYearMonthHeaderBeforeContractPeriod(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-revenue-cost-explicit-year-month.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集收入成本计算表-年份月份表头.xlsx")
+	if err := createRevenueCostWorkbookWithExplicitYearMonthHeader(workbook); err != nil {
+		t.Fatalf("create explicit year month workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import explicit year month workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2026-02'`, 30)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2027-02'`, 0)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlements WHERE year_month='2026-02'`, 30)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlements WHERE year_month='2027-02'`, 0)
+}
+
 func TestImportFileWithOptions_ContractFundWorkbookSupportsAnyQuarterSheetAndCarryForward(t *testing.T) {
 	t.Parallel()
 
@@ -344,7 +404,7 @@ func TestImportFileWithOptions_ContractFundWorkbookCarriesForwardMergedContractC
 	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(received_amount),0) FROM fin_fund_income WHERE year_month='2026-03'`, 300)
 }
 
-func TestImportFileWithOptions_ContractFundWorkbookCarriesForwardMergedMonthlyAmounts(t *testing.T) {
+func TestImportFileWithOptions_ContractFundWorkbookDoesNotDuplicateMergedMonthlyAmounts(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -369,10 +429,329 @@ func TestImportFileWithOptions_ContractFundWorkbookCarriesForwardMergedMonthlyAm
 	t.Cleanup(func() { _ = db.Close() })
 
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_contracts`, 4)
-	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income`, 12)
-	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2026-01'`, 400)
-	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2026-02'`, 800)
-	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(received_amount),0) FROM fin_fund_income WHERE year_month='2026-03'`, 1200)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income_groups`, 3)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income_group_members`, 12)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income_groups WHERE year_month='2026-01'`, 100)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income_groups WHERE year_month='2026-02'`, 200)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(received_amount),0) FROM fin_fund_income_groups WHERE year_month='2026-03'`, 300)
+	assertYearMonthAmount(t, db, `
+SELECT COALESCE(SUM(fi.settlement_amount),0)
+FROM fin_fund_income fi
+JOIN fin_contracts fc ON fc.contract_id = fi.contract_id
+WHERE fc.contract_content = '数据采购合同-快手'
+`, 0)
+	assertYearMonthAmount(t, db, `
+SELECT COALESCE(SUM(fi.settlement_amount),0)
+FROM fin_fund_income fi
+JOIN fin_contracts fc ON fc.contract_id = fi.contract_id
+WHERE fc.contract_content = '数据采购合同-抖音'
+`, 0)
+	assertCount(t, db, `
+SELECT COUNT(DISTINCT fc.contract_content)
+FROM fin_fund_income_group_members gm
+JOIN fin_contracts fc ON fc.contract_id = gm.contract_id
+JOIN fin_fund_income_groups g ON g.id = gm.group_id
+WHERE g.year_month = '2026-01'
+  AND fc.contract_content LIKE '数据采购合同-%'
+`, 4)
+}
+
+func TestImportFileWithOptions_ContractCostWorkbookDoesNotDuplicateMergedMonthlyAmounts(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-cost-carry-amounts.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集成本计算表-合并金额.xlsx")
+	if err := createCostWorkbookWithMergedMonthlyAmounts(workbook); err != nil {
+		t.Fatalf("create cost workbook with merged monthly amounts: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import cost workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_contracts`, 4)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_groups`, 3)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_group_members`, 12)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 100)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-02'`, 200)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(paid_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-03'`, 300)
+	assertYearMonthAmount(t, db, `
+SELECT COALESCE(SUM(cs.settlement_amount),0)
+FROM fin_cost_settlements cs
+JOIN fin_contracts fc ON fc.contract_id = cs.contract_id
+WHERE fc.contract_content LIKE '外包服务合同-%'
+`, 0)
+	assertCount(t, db, `
+SELECT COUNT(DISTINCT fc.contract_content)
+FROM fin_cost_settlement_group_members gm
+JOIN fin_contracts fc ON fc.contract_id = gm.contract_id
+JOIN fin_cost_settlement_groups g ON g.id = gm.group_id
+WHERE g.year_month = '2026-01'
+  AND fc.contract_content LIKE '外包服务合同-%'
+`, 4)
+}
+
+func TestImportFileWithOptions_ContractCostWorkbookDedupesMergedMembersAndSkipsUnmergedBlankContractPayment(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-cost-blank-contract-payment.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集成本计算表-空合同付款.xlsx")
+	if err := createCostWorkbookWithMergedContractAndUnmergedBlankPayment(workbook); err != nil {
+		t.Fatalf("create cost workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import cost workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_contracts`, 1)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_groups`, 1)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_group_members`, 1)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 100)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(paid_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 0)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_cost_settlements
+WHERE paid_amount = 576127.10 OR settlement_amount = 576127.10 OR invoice_amount = 576127.10
+`, 0)
+}
+
+func TestImportFileWithOptions_ContractCostWorkbookSeparatesDifferentMergedMetricRanges(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-cost-different-merged-metrics.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集成本计算表-不同金额合并范围.xlsx")
+	if err := createCostWorkbookWithDifferentMergedMetricRanges(workbook); err != nil {
+		t.Fatalf("create cost workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import cost workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_groups`, 3)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 300)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(invoice_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 200)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(paid_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 150)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_cost_settlement_group_members gm
+JOIN fin_cost_settlement_groups g ON g.id = gm.group_id
+WHERE g.invoice_amount = 200
+`, 2)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_cost_settlement_group_members gm
+JOIN fin_cost_settlement_groups g ON g.id = gm.group_id
+WHERE g.paid_amount = 150
+`, 2)
+}
+
+func TestImportFileWithOptions_ContractFundWorkbookSeparatesDifferentMergedMetricRanges(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-fund-different-merged-metrics.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集资金收入计算表-不同金额合并范围.xlsx")
+	if err := createFundWorkbookWithDifferentMergedMetricRanges(workbook); err != nil {
+		t.Fatalf("create fund workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import fund workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income_groups`, 3)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income_groups WHERE year_month='2026-01'`, 300)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(invoice_amount),0) FROM fin_fund_income_groups WHERE year_month='2026-01'`, 200)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(received_amount),0) FROM fin_fund_income_groups WHERE year_month='2026-01'`, 150)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_fund_income_group_members gm
+JOIN fin_fund_income_groups g ON g.id = gm.group_id
+WHERE g.invoice_amount = 200
+`, 2)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_fund_income_group_members gm
+JOIN fin_fund_income_groups g ON g.id = gm.group_id
+WHERE g.received_amount = 150
+`, 2)
+}
+
+func TestImportFileWithOptions_ContractFundWorkbookIncrementalCleansOldMergedChildAmounts(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-fund-merged-incremental-cleanup.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集资金收入计算表-合并金额.xlsx")
+	if err := createFundWorkbookWithMergedMonthlyAmounts(workbook); err != nil {
+		t.Fatalf("create fund workbook with merged monthly amounts: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("seed fund workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO fin_fund_income(
+	contract_id, year_month, source_report_type, source_sheet_name,
+	quantity, settlement_amount, received_amount, is_invoiced, invoice_amount
+)
+SELECT contract_id, '2026-01', 'contract_fund_income', '26年Q1收入明细',
+       '/', 100, 100, '是', 100
+FROM fin_contracts
+WHERE customer_name = 'Yipit,LLC'
+  AND contract_content LIKE '数据采购合同-%'
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed old duplicated child amounts: %v", err)
+	}
+	_ = db.Close()
+
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     true,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("incremental reimport fund workbook failed: %v", err)
+	}
+
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_contracts WHERE contract_content LIKE '合并金额组%'`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income_groups`, 3)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income_group_members`, 12)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income_groups WHERE year_month='2026-01'`, 100)
+	assertYearMonthAmount(t, db, `
+SELECT COALESCE(SUM(fi.settlement_amount),0)
+FROM fin_fund_income fi
+JOIN fin_contracts fc ON fc.contract_id = fi.contract_id
+WHERE fc.contract_content LIKE '数据采购合同-%'
+`, 0)
+}
+
+func TestImportFileWithOptions_ContractCostWorkbookIncrementalCleansOldMergedChildAmounts(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-cost-merged-incremental-cleanup.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集成本计算表-合并金额.xlsx")
+	if err := createCostWorkbookWithMergedMonthlyAmounts(workbook); err != nil {
+		t.Fatalf("create cost workbook with merged monthly amounts: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("seed cost workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO fin_cost_settlements(
+	contract_id, year_month, source_report_type, source_sheet_name,
+	quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code
+)
+SELECT contract_id, '2026-01', 'contract_revenue_cost', '成本-月度结算',
+       '/', 100, '是', 100, 100, '640101'
+FROM fin_contracts
+WHERE customer_name = '上海合并供应商科技有限公司'
+  AND contract_content LIKE '外包服务合同-%'
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed old duplicated child cost amounts: %v", err)
+	}
+	_ = db.Close()
+
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     true,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("incremental reimport cost workbook failed: %v", err)
+	}
+
+	db, err = sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("reopen sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 0)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_groups`, 3)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_group_members`, 12)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 100)
+	assertYearMonthAmount(t, db, `
+SELECT COALESCE(SUM(cs.settlement_amount),0)
+FROM fin_cost_settlements cs
+JOIN fin_contracts fc ON fc.contract_id = cs.contract_id
+WHERE fc.contract_content LIKE '外包服务合同-%'
+`, 0)
 }
 
 func TestImportFileWithOptions_CostOnlyWorkbookDoesNotClearFundIncomeOnFullReplace(t *testing.T) {
@@ -412,6 +791,52 @@ func TestImportFileWithOptions_CostOnlyWorkbookDoesNotClearFundIncomeOnFullRepla
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income`, 2)
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 1)
 	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(received_amount),0) FROM fin_fund_income WHERE year_month='2026-01'`, 1000)
+}
+
+func TestImportFileWithOptions_ContractFundWorkbookMergesTableSourceMetadataAcrossFiles(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-fund-source-metadata.sqlite")
+	firstWorkbook := filepath.Join(t.TempDir(), "优集资金收入计算表-2025Q4.xlsx")
+	secondWorkbook := filepath.Join(t.TempDir(), "优集资金收入计算表-2026.xlsx")
+	if err := createFundWorkbook(firstWorkbook); err != nil {
+		t.Fatalf("create first fund workbook: %v", err)
+	}
+	if err := createAnyQuarterFundWorkbook(secondWorkbook); err != nil {
+		t.Fatalf("create second fund workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, firstWorkbook, ingest.ImportOptions{
+		Incremental:     true,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import first fund workbook failed: %v", err)
+	}
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, secondWorkbook, ingest.ImportOptions{
+		Incremental:     true,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import second fund workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	var comment string
+	if err := db.QueryRow(`SELECT comment FROM meta_table_comments WHERE table_name='fin_fund_income'`).Scan(&comment); err != nil {
+		t.Fatalf("load fin_fund_income table comment: %v", err)
+	}
+	if !strings.Contains(comment, "优集资金收入计算表-2025Q4.xlsx") || !strings.Contains(comment, "优集资金收入计算表-2026.xlsx") {
+		t.Fatalf("fund income source metadata should keep both workbook names, got %q", comment)
+	}
+	if !strings.Contains(comment, "26年Q1收入明细") || !strings.Contains(comment, "27年Q2收入明细") {
+		t.Fatalf("fund income source metadata should keep sheets from both imports, got %q", comment)
+	}
 }
 
 func TestImportFileWithOptions_RevenueOnlyWorkbookDoesNotClearCostSettlementsOnFullReplace(t *testing.T) {
@@ -512,6 +937,9 @@ func createCrossYearRevenueCostWorkbook(path string) error {
 	}); err != nil {
 		return err
 	}
+	if err := f.MergeCell("收入-月度结算", "A3", "A4"); err != nil {
+		return err
+	}
 	if _, err := f.NewSheet("成本-月度结算"); err != nil {
 		return err
 	}
@@ -520,6 +948,61 @@ func createCrossYearRevenueCostWorkbook(path string) error {
 		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票"},
 		{"南京林悦智能科技有限公司", "技术服务采购合同-LY01", "2026-02-01", "2026-12-31", "月结", 50, "640101", "1人月", 600, "是"},
 		{"", "技术服务采购合同-LY02", "", "", "", 50, "640101", "1人月", 400, "否"},
+	}); err != nil {
+		return err
+	}
+	if err := f.MergeCell("成本-月度结算", "A3", "A4"); err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createRevenueCostWorkbookWithCrossPeriodFebruaryRows(path string) error {
+	f := excelize.NewFile()
+	f.SetSheetName("Sheet1", "收入-月度结算")
+	if err := writeSheetRows(f, "收入-月度结算", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "2月", "", "", ""},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额"},
+		{"表头归期客户A", "收入合同-2026-A", "2026-01-01", "2026-12-31", "月结", 1, 1, 10, "是", 10},
+		{"表头归期客户B", "收入合同-2026-B", "2026-01-01", "2026-12-31", "月结", 1, 1, 20, "是", 20},
+		{"表头归期客户C", "收入合同-跨期-C", "2026-03-01", "2027-02-28", "月结", 1, 1, 30, "是", 30},
+	}); err != nil {
+		return err
+	}
+	if _, err := f.NewSheet("成本-月度结算"); err != nil {
+		return err
+	}
+	if err := writeSheetRows(f, "成本-月度结算", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "入账科目", "2月", "", "", "", ""},
+		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "付款金额"},
+		{"表头归期供应商A", "成本合同-2026-A", "2026-01-01", "2026-12-31", "月结", 1, "640101", 1, 10, "是", 10, 10},
+		{"表头归期供应商B", "成本合同-2026-B", "2026-01-01", "2026-12-31", "月结", 1, "640101", 1, 20, "是", 20, 20},
+		{"表头归期供应商C", "成本合同-跨期-C", "2026-03-01", "2027-02-28", "月结", 1, "640101", 1, 30, "是", 30, 30},
+	}); err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createRevenueCostWorkbookWithExplicitYearMonthHeader(path string) error {
+	f := excelize.NewFile()
+	f.SetSheetName("Sheet1", "收入-月度结算")
+	if err := writeSheetRows(f, "收入-月度结算", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "2026年2月", "", "", ""},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额"},
+		{"表头归期客户C", "收入合同-跨期-C", "2026-03-01", "2027-02-28", "月结", 1, 1, 30, "是", 30},
+	}); err != nil {
+		return err
+	}
+	if _, err := f.NewSheet("成本-月度结算"); err != nil {
+		return err
+	}
+	if err := writeSheetRows(f, "成本-月度结算", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "入账科目", "2026年2月", "", "", "", ""},
+		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "付款金额"},
+		{"表头归期供应商C", "成本合同-跨期-C", "2026-03-01", "2027-02-28", "月结", 1, "640101", 1, 30, "是", 30, 30},
 	}); err != nil {
 		return err
 	}
@@ -536,6 +1019,9 @@ func createAnyQuarterFundWorkbook(path string) error {
 		{"飞未云科（深圳）技术有限公司", "全品类商品价格数据-京东", "2027-04-01", "2027-12-31", "月结", 100, 4, 400, "是", 400, 380, "", "", "", "", ""},
 		{"", "全品类商品销量数据-京东", "", "", "", 80, "", "", "", "", "", 5, 500, "是", 500, 500},
 	}); err != nil {
+		return err
+	}
+	if err := f.MergeCell("27年Q2收入明细", "A3", "A4"); err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
@@ -582,6 +1068,11 @@ func createCostWorkbookWithBlankContinuedContent(path string) error {
 	}); err != nil {
 		return err
 	}
+	for _, mergedRange := range [][2]string{{"A3", "A5"}, {"B3", "B5"}} {
+		if err := f.MergeCell("成本-月度结算", mergedRange[0], mergedRange[1]); err != nil {
+			return err
+		}
+	}
 	defer func() { _ = f.Close() }()
 	return f.SaveAs(path)
 }
@@ -597,6 +1088,77 @@ func createFundWorkbookWithBlankContinuedContent(path string) error {
 		{"", "", "2026/1/1", "2026/3/31", "月结", 100, "", "", "", "", "", "", "", "", "", "", 3, 300, "否", 0, 300},
 	}); err != nil {
 		return err
+	}
+	for _, mergedRange := range [][2]string{{"A3", "A5"}, {"B3", "B5"}} {
+		if err := f.MergeCell("26年Q1收入明细", mergedRange[0], mergedRange[1]); err != nil {
+			return err
+		}
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createCostWorkbookWithMergedContractAndUnmergedBlankPayment(path string) error {
+	f := excelize.NewFile()
+	sheet := "成本-月度结算"
+	f.SetSheetName("Sheet1", sheet)
+	if err := writeSheetRows(f, sheet, [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "入账科目", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "付款金额"},
+		{"南京林悦智能科技有限公司", "行业商品数据采购合同", "2026/1/1", "2026/12/31", "月度", "固定金额", "640101", "/", 100, "是", 100, 0},
+		{"", "", "2026/1/1", "2026/12/31", "月度", "固定金额", "640101", "/", "", "是", "", ""},
+		{"", "", "2026/1/1", "2026/12/31", "月度", "固定金额", "640101", "", "", "", "", 576127.10},
+	}); err != nil {
+		return err
+	}
+	for _, mergedRange := range [][2]string{{"A3", "A5"}, {"B3", "B4"}, {"K3", "K4"}} {
+		if err := f.MergeCell(sheet, mergedRange[0], mergedRange[1]); err != nil {
+			return err
+		}
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createCostWorkbookWithDifferentMergedMetricRanges(path string) error {
+	f := excelize.NewFile()
+	sheet := "成本-月度结算"
+	f.SetSheetName("Sheet1", sheet)
+	if err := writeSheetRows(f, sheet, [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "入账科目", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "付款金额"},
+		{"上海合并供应商科技有限公司", "外包服务合同-A", "2026/1/1", "2026/12/31", "月度", "固定金额", "640101", "/", 300, "是", 200, ""},
+		{"上海合并供应商科技有限公司", "外包服务合同-B", "2026/1/1", "2026/12/31", "月度", "固定金额", "640101", "/", "", "是", "", 150},
+		{"上海合并供应商科技有限公司", "外包服务合同-C", "2026/1/1", "2026/12/31", "月度", "固定金额", "640101", "/", "", "是", "", ""},
+	}); err != nil {
+		return err
+	}
+	for _, mergedRange := range [][2]string{{"I3", "I5"}, {"K3", "K4"}, {"L4", "L5"}} {
+		if err := f.MergeCell(sheet, mergedRange[0], mergedRange[1]); err != nil {
+			return err
+		}
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createFundWorkbookWithDifferentMergedMetricRanges(path string) error {
+	f := excelize.NewFile()
+	sheet := "26年Q1收入明细"
+	f.SetSheetName("Sheet1", sheet)
+	if err := writeSheetRows(f, sheet, [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额"},
+		{"Yipit,LLC", "数据采购合同-A", "2026/1/1", "2026/3/31", "月结", "固定金额", "/", 300, "是", 200, ""},
+		{"Yipit,LLC", "数据采购合同-B", "2026/1/1", "2026/3/31", "月结", "固定金额", "/", "", "是", "", 150},
+		{"Yipit,LLC", "数据采购合同-C", "2026/1/1", "2026/3/31", "月结", "固定金额", "/", "", "是", "", ""},
+	}); err != nil {
+		return err
+	}
+	for _, mergedRange := range [][2]string{{"H3", "H5"}, {"J3", "J4"}, {"K4", "K5"}} {
+		if err := f.MergeCell(sheet, mergedRange[0], mergedRange[1]); err != nil {
+			return err
+		}
 	}
 	defer func() { _ = f.Close() }()
 	return f.SaveAs(path)
@@ -622,6 +1184,34 @@ func createFundWorkbookWithMergedMonthlyAmounts(path string) error {
 		}
 	}
 	for _, col := range []string{"G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U"} {
+		if err := f.MergeCell(sheet, col+"3", col+"6"); err != nil {
+			return err
+		}
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createCostWorkbookWithMergedMonthlyAmounts(path string) error {
+	f := excelize.NewFile()
+	sheet := "成本-月度结算"
+	f.SetSheetName("Sheet1", sheet)
+	if err := writeSheetRows(f, sheet, [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "入账科目", "1月", "", "", "", "", "2月", "", "", "", "", "3月", "", "", "", ""},
+		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "付款金额", "数量", "结算金额", "是否开票", "开票金额", "付款金额", "数量", "结算金额", "是否开票", "开票金额", "付款金额"},
+		{"上海合并供应商科技有限公司", "外包服务合同-A", "2026/1/1", "2026/3/31", "月结", "固定金额", "640101", "/", 100, "是", 100, 100, "/", 200, "是", 200, 200, "/", 300, "是", 300, 300},
+		{"上海合并供应商科技有限公司", "外包服务合同-B", "2026/1/1", "2026/3/31", "月结", "固定金额", "640101", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""},
+		{"上海合并供应商科技有限公司", "外包服务合同-C", "2026/1/1", "2026/3/31", "月结", "固定金额", "640101", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""},
+		{"上海合并供应商科技有限公司", "外包服务合同-D", "2026/1/1", "2026/3/31", "月结", "固定金额", "640101", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""},
+	}); err != nil {
+		return err
+	}
+	for _, mergedRange := range [][2]string{{"H1", "L1"}, {"M1", "Q1"}, {"R1", "V1"}} {
+		if err := f.MergeCell(sheet, mergedRange[0], mergedRange[1]); err != nil {
+			return err
+		}
+	}
+	for _, col := range []string{"H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V"} {
 		if err := f.MergeCell(sheet, col+"3", col+"6"); err != nil {
 			return err
 		}

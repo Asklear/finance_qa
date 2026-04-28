@@ -116,6 +116,34 @@ CREATE TABLE IF NOT EXISTS fin_cost_settlements (
     settlement_unit_price TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS fin_cost_settlement_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    source_report_type TEXT,
+    source_sheet_name TEXT,
+    source_start_row INTEGER,
+    source_end_row INTEGER,
+    merge_range TEXT,
+    quantity TEXT,
+    settlement_amount DECIMAL(18,2),
+    is_invoiced TEXT,
+    invoice_amount DECIMAL(18,2),
+    paid_amount DECIMAL(18,2),
+    account_code TEXT,
+    contract_start_date TEXT,
+    contract_end_date TEXT,
+    settlement_cycle TEXT,
+    settlement_unit_price TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS fin_cost_settlement_group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    contract_id TEXT NOT NULL,
+    source_row_number INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS fin_fund_income (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL,
@@ -131,6 +159,33 @@ CREATE TABLE IF NOT EXISTS fin_fund_income (
     contract_end_date TEXT,
     settlement_cycle TEXT,
     settlement_unit_price TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS fin_fund_income_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name TEXT NOT NULL,
+    year_month TEXT NOT NULL,
+    source_report_type TEXT,
+    source_sheet_name TEXT,
+    source_start_row INTEGER,
+    source_end_row INTEGER,
+    merge_range TEXT,
+    quantity TEXT,
+    settlement_amount DECIMAL(18,2),
+    received_amount DECIMAL(18,2),
+    is_invoiced TEXT,
+    invoice_amount DECIMAL(18,2),
+    contract_start_date TEXT,
+    contract_end_date TEXT,
+    settlement_cycle TEXT,
+    settlement_unit_price TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS fin_fund_income_group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    contract_id TEXT NOT NULL,
+    source_row_number INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS table_idempotency_policies (
@@ -162,7 +217,13 @@ CREATE INDEX IF NOT EXISTS idx_bank_statement_company_date_credit ON bank_statem
 CREATE INDEX IF NOT EXISTS idx_fin_contracts_name ON fin_contracts(customer_name, contract_content);
 CREATE INDEX IF NOT EXISTS idx_fin_revenue_settlements_contract_period ON fin_revenue_settlements(contract_id, year_month);
 CREATE INDEX IF NOT EXISTS idx_fin_cost_settlements_contract_period ON fin_cost_settlements(contract_id, year_month);
+CREATE INDEX IF NOT EXISTS idx_fin_cost_settlement_groups_period ON fin_cost_settlement_groups(customer_name, year_month);
+CREATE INDEX IF NOT EXISTS idx_fin_cost_settlement_group_members_group ON fin_cost_settlement_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_fin_cost_settlement_group_members_contract ON fin_cost_settlement_group_members(contract_id);
 CREATE INDEX IF NOT EXISTS idx_fin_fund_income_contract_period ON fin_fund_income(contract_id, year_month);
+CREATE INDEX IF NOT EXISTS idx_fin_fund_income_groups_period ON fin_fund_income_groups(customer_name, year_month);
+CREATE INDEX IF NOT EXISTS idx_fin_fund_income_group_members_group ON fin_fund_income_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_fin_fund_income_group_members_contract ON fin_fund_income_group_members(contract_id);
 CREATE INDEX IF NOT EXISTS idx_table_idempotency_enabled ON table_idempotency_policies(enabled);
 CREATE TABLE IF NOT EXISTS dimensions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

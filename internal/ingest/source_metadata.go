@@ -28,7 +28,7 @@ func annotateImportedReportSource(ctx context.Context, dbPath, reportType, fileP
 		return err
 	}
 	meta := dbschema.BuildImportedTableSourceMetadata(tableName, filePath, []string{reportType}, nil, "")
-	if err := dbschema.UpsertTableSourceMetadata(ctx, tx, dbPath, tableName, meta); err != nil {
+	if err := upsertMergedImportedSourceMetadata(ctx, tx, dbPath, tableName, meta, "imported"); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -49,7 +49,7 @@ func annotateContractWorkbookSource(ctx context.Context, tx *sql.Tx, dbPath, fil
 			"",
 		)
 		meta.Display = "《合同信息表》"
-		if err := dbschema.UpsertTableSourceMetadata(ctx, tx, dbPath, "fin_contracts", meta); err != nil {
+		if err := upsertMergedImportedSourceMetadata(ctx, tx, dbPath, "fin_contracts", meta, "contract"); err != nil {
 			return err
 		}
 	}
@@ -62,7 +62,7 @@ func annotateContractWorkbookSource(ctx context.Context, tx *sql.Tx, dbPath, fil
 			sheets,
 			formatWorkbookSheetDisplay(fileName, sheets),
 		)
-		if err := dbschema.UpsertTableSourceMetadata(ctx, tx, dbPath, "fin_fund_income", meta); err != nil {
+		if err := upsertMergedImportedSourceMetadata(ctx, tx, dbPath, "fin_fund_income", meta, "imported"); err != nil {
 			return err
 		}
 	}
@@ -75,11 +75,65 @@ func annotateContractWorkbookSource(ctx context.Context, tx *sql.Tx, dbPath, fil
 			sheets,
 			formatWorkbookSheetDisplay(fileName, sheets),
 		)
-		if err := dbschema.UpsertTableSourceMetadata(ctx, tx, dbPath, "fin_cost_settlements", meta); err != nil {
+		if err := upsertMergedImportedSourceMetadata(ctx, tx, dbPath, "fin_cost_settlements", meta, "imported"); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func upsertMergedImportedSourceMetadata(ctx context.Context, tx *sql.Tx, dbPath, tableName string, incoming dbschema.TableSourceMetadata, displayMode string) error {
+	loaded, err := dbschema.LoadTableSourceMetadata(ctx, tx, dbPath, []string{tableName})
+	if err == nil {
+		if existing, ok := loaded[tableName]; ok {
+			incoming.FileNames = mergeSourceMetadataStrings(existing.FileNames, incoming.FileNames)
+			incoming.SheetNames = mergeSourceMetadataStrings(existing.SheetNames, incoming.SheetNames)
+			incoming.ReportTypes = mergeSourceMetadataStrings(existing.ReportTypes, incoming.ReportTypes)
+			incoming.Notes = mergeSourceMetadataStrings(existing.Notes, incoming.Notes)
+		}
+	}
+	switch strings.TrimSpace(displayMode) {
+	case "contract":
+		incoming.Display = "《合同信息表》"
+	default:
+		incoming.Display = formatMergedWorkbookDisplay(incoming.FileNames, incoming.SheetNames, incoming.Display)
+	}
+	return dbschema.UpsertTableSourceMetadata(ctx, tx, dbPath, tableName, incoming)
+}
+
+func mergeSourceMetadataStrings(left, right []string) []string {
+	out := make([]string, 0, len(left)+len(right))
+	seen := map[string]struct{}{}
+	for _, values := range [][]string{left, right} {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func formatMergedWorkbookDisplay(fileNames, sheetNames []string, fallback string) string {
+	fileNames = mergeSourceMetadataStrings(nil, fileNames)
+	switch len(fileNames) {
+	case 0:
+		return strings.TrimSpace(fallback)
+	case 1:
+		return formatWorkbookSheetDisplay(fileNames[0], sheetNames)
+	default:
+		parts := make([]string, 0, len(fileNames))
+		for _, fileName := range fileNames {
+			parts = append(parts, "《"+fileName+"》")
+		}
+		return strings.Join(parts, "；")
+	}
 }
 
 func workbookDisplayName(filePath string) string {

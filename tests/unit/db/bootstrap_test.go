@@ -147,6 +147,32 @@ func TestBootstrapAddsContractExtensionColumnsToLegacySQLiteTables(t *testing.T)
 			invoice_amount DECIMAL(18,2),
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE fin_cost_settlement_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT NOT NULL,
+			year_month TEXT NOT NULL,
+			settlement_amount DECIMAL(18,2),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE fin_cost_settlement_group_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER NOT NULL,
+			contract_id TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE fin_fund_income_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT NOT NULL,
+			year_month TEXT NOT NULL,
+			settlement_amount DECIMAL(18,2),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE fin_fund_income_group_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER NOT NULL,
+			contract_id TEXT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, ddl := range legacyDDL {
 		if _, err := sqlDB.Exec(ddl); err != nil {
@@ -181,6 +207,43 @@ func TestBootstrapAddsContractExtensionColumnsToLegacySQLiteTables(t *testing.T)
 		"contract_end_date",
 		"settlement_cycle",
 		"settlement_unit_price",
+	)
+	assertSQLiteColumnsExist(t, sqlDB, "fin_cost_settlement_groups",
+		"source_report_type",
+		"source_sheet_name",
+		"source_start_row",
+		"source_end_row",
+		"merge_range",
+		"quantity",
+		"is_invoiced",
+		"invoice_amount",
+		"paid_amount",
+		"account_code",
+		"contract_start_date",
+		"contract_end_date",
+		"settlement_cycle",
+		"settlement_unit_price",
+	)
+	assertSQLiteColumnsExist(t, sqlDB, "fin_cost_settlement_group_members",
+		"source_row_number",
+	)
+	assertSQLiteColumnsExist(t, sqlDB, "fin_fund_income_groups",
+		"source_report_type",
+		"source_sheet_name",
+		"source_start_row",
+		"source_end_row",
+		"merge_range",
+		"quantity",
+		"received_amount",
+		"is_invoiced",
+		"invoice_amount",
+		"contract_start_date",
+		"contract_end_date",
+		"settlement_cycle",
+		"settlement_unit_price",
+	)
+	assertSQLiteColumnsExist(t, sqlDB, "fin_fund_income_group_members",
+		"source_row_number",
 	)
 }
 
