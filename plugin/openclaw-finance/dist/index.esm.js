@@ -66,8 +66,8 @@ function mustCallFinanceQuerySystemContext() {
     "Finance QA routing policy:",
     "For any finance, business operation, contract, collection, invoice, revenue, cost, profit, cash, bank, tax, AR/AP, customer, supplier, or source-table question, you MUST call `finance-query` before answering.",
     "Do not answer from prior conversation history, memory, previous tool results, raw SQL, income statement/book values, or cached summaries, even when the latest user message repeats an earlier question.",
-    "After `finance-query`, parse `content[0].text` as JSON and answer from the current tool result. Prefer deterministic fields such as `final_answer`, `boss_reply_text`, `boss_reply`, `message`, and structured data, but do not blindly repeat a fallback or missing-subject message if the payload contains facts that let you answer the user's question.",
-    "When `final_answer` or `boss_reply_text` exists, preserve its key amounts, uncertainty wording, and source note; do not omit the source note.",
+    "After `finance-query`, parse `content[0].text` as JSON and answer from the current tool result. If `final_answer` or `boss_reply_text` exists, use that text as the visible answer instead of summarizing from structured data.",
+    "do not omit the source note. If you paraphrase for brevity, the final visible answer must still include the current result's `来源：...` sentence from `source_note`, `source_summary`, `final_answer`, or `boss_reply_text`.",
     "If the current tool result includes `contract_continuity_candidates`, use those candidates as same-project continuity evidence and make a tentative business inference with uncertainty; call it a same-project candidate/reference and do not state that the counterparty definitely changed or became associated.",
     "Keep the source note from the tool result. Do not expose internal IDs, SQL, route traces, or contract IDs unless the user explicitly asks for technical details."
   ].join("\n");

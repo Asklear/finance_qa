@@ -128,7 +128,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - `fin_fund_income` 保存收入/回款侧行项目字段：`quantity`、`settlement_amount`、`received_amount`、`invoice_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
    - 两张行项目表额外保存 `source_report_type`、`source_sheet_name`，作为来源分区键；合同 Excel 做全量重传时，只覆盖相同来源分区，不整表清空
    - 除 `year_month` 会按规则推断外，其他扩展字段默认保留源 Excel 原值；源单元格为空时，数据库也保持为空，不做硬补
-   - 合同月度结算表的 `year_month` 必须动态推断：先按每行合同开始/终止日期匹配月份年份；若行内日期缺失，再按同 sheet 同月份的多数年份或 sheet 年份补齐
+   - 合同月度结算表的 `year_month` 必须动态推断：先按表头里的年份/月或同 sheet 同月份默认年份归期；合同开始/终止日期仅作为合同期间展示字段，只有表头和同表归期证据都缺失时，才可作为最后兜底。
    - 合并单元格产生的空客户名不能直接跳过，要继承上一条非空客户名
    - 资金到账表要兼容任意 `xx年Qn收入明细` sheet，不允许只支持固定季度名称
    - `fin_revenue_settlements` 已废弃，仅保留历史兼容，不再作为查询来源
