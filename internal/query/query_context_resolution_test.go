@@ -32,6 +32,29 @@ func TestResolveQueryRoutingPromotesContractPriorityToContractDimension(t *testi
 	}
 }
 
+func TestResolveQueryRoutingPromotesBareCumulativeContractQuestionToYTD(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("飞未云科累计销售额多少？")
+	if route.entity != "飞未云科（深圳）技术有限公司" {
+		t.Fatalf("entity = %q, want %q", route.entity, "飞未云科（深圳）技术有限公司")
+	}
+	if route.spec.QueryFamily != QueryFamilyContractDimension {
+		t.Fatalf("query_family = %s, want %s", route.spec.QueryFamily, QueryFamilyContractDimension)
+	}
+	if route.spec.PeriodFrom != "2026-01" || route.spec.PeriodTo != "2026-03" {
+		t.Fatalf("period = %s~%s, want 2026-01~2026-03", route.spec.PeriodFrom, route.spec.PeriodTo)
+	}
+	if !route.hasRealEntity {
+		t.Fatalf("expected hasRealEntity=true")
+	}
+}
+
 func TestResolveQueryRoutingTreatsExplicitBankCashAsCompanyCash(t *testing.T) {
 	dbPath := buildQueryContextResolutionDB(t)
 	engine, err := NewEngine(dbPath, "测试公司")

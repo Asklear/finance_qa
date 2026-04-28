@@ -157,6 +157,32 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 			settlement_cycle TEXT,
 			settlement_unit_price TEXT
 		)`,
+		`CREATE TABLE fin_cost_settlement_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			source_start_row INTEGER,
+			source_end_row INTEGER,
+			merge_range TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			paid_amount REAL,
+			account_code TEXT,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT
+		)`,
+		`CREATE TABLE fin_cost_settlement_group_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER,
+			contract_id TEXT,
+			source_row_number INTEGER
+		)`,
 		`CREATE TABLE fin_fund_income (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			contract_id TEXT,
@@ -172,6 +198,31 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 			contract_end_date TEXT,
 			settlement_cycle TEXT,
 			settlement_unit_price TEXT
+		)`,
+		`CREATE TABLE fin_fund_income_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			source_start_row INTEGER,
+			source_end_row INTEGER,
+			merge_range TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT
+		)`,
+		`CREATE TABLE fin_fund_income_group_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER,
+			contract_id TEXT,
+			source_row_number INTEGER
 		)`,
 		`CREATE TABLE meta_table_comments (
 			table_name TEXT PRIMARY KEY,
@@ -193,7 +244,11 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 		`INSERT INTO bank_statement(company, transaction_date, transaction_time, transaction_type, debit_amount, credit_amount, balance, summary, counterparty_name, counterparty_account) VALUES ('南京优集数据科技有限公司','2026-03-20','10:00:00','转账',0,100,1000,'测试回款','飞未云科（深圳）技术有限公司','xx')`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content, contract_start_date, contract_end_date, settlement_cycle) VALUES ('C-FW-001', '飞未云科（深圳）技术有限公司', '飞未云科项目-京东价格数据', '2026-01-01', '2026-12-31', '月结')`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price) VALUES ('C-FW-001', '2026-03', 'contract_fund_income', '26年Q1收入明细', '1项', 900, 900, '是', 900, '2026-01-01', '2026-12-31', '月结', '900元/项')`,
+		`INSERT INTO fin_fund_income_groups(id, customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price) VALUES (1, '飞未云科（深圳）技术有限公司', '2026-03', 'contract_fund_income', '26年Q1收入明细', 8, 9, 'R8:R9', '1项', 100, 100, '是', 100, '2026-01-01', '2026-12-31', '月结', '100元/项')`,
+		`INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number) VALUES (1, 'C-FW-001', 8)`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price) VALUES ('C-FW-001', '2026-03', 'contract_revenue_cost', '成本-月度结算', '1项', 200, '是', 200, 180, '640101', '2026-01-01', '2026-12-31', '月结', '200元/项')`,
+		`INSERT INTO fin_cost_settlement_groups(id, customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price) VALUES (1, '飞未云科（深圳）技术有限公司', '2026-03', 'contract_revenue_cost', '成本-月度结算', 8, 9, 'U8:U9', '1项', 80, '是', 80, 70, '640101', '2026-01-01', '2026-12-31', '月结', '80元/项')`,
+		`INSERT INTO fin_cost_settlement_group_members(group_id, contract_id, source_row_number) VALUES (1, 'C-FW-001', 8)`,
 		`INSERT INTO meta_table_comments(table_name, comment) VALUES ('fin_fund_income', 'financeqa_source: {"display":"《优集资金收入计算表-副本.xlsx》","file_names":["优集资金收入计算表-副本.xlsx"],"sheet_names":["26年Q1收入明细"]}')`,
 		`INSERT INTO meta_table_comments(table_name, comment) VALUES ('fin_cost_settlements', 'financeqa_source: {"display":"《优集成本计算表-4.23-池.xlsx》","file_names":["优集成本计算表-4.23-池.xlsx"],"sheet_names":["成本-月度结算"]}')`,
 		`INSERT INTO meta_table_comments(table_name, comment) VALUES ('fin_contracts', 'financeqa_source: {"display":"《合同信息表》","file_names":["优集资金收入计算表-副本.xlsx","优集成本计算表-4.23-池.xlsx"]}')`,
@@ -243,6 +298,13 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 	if fundRows[0]["source_sheet_name"] != "26年Q1收入明细" {
 		t.Fatalf("source_sheet_name missing from fin_fund_income payload: %#v", fundRows[0])
 	}
+	fundGroupRows, ok := financialTables["fin_fund_income_groups"].([]map[string]any)
+	if !ok || len(fundGroupRows) != 1 {
+		t.Fatalf("fin_fund_income_groups payload mismatch: %#v", financialTables["fin_fund_income_groups"])
+	}
+	if fundGroupRows[0]["merge_range"] != "R8:R9" {
+		t.Fatalf("merge_range missing from fin_fund_income_groups payload: %#v", fundGroupRows[0])
+	}
 
 	costRows, ok := financialTables["fin_cost_settlements"].([]map[string]any)
 	if !ok || len(costRows) != 1 {
@@ -250,6 +312,13 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 	}
 	if costRows[0]["paid_amount"] != float64(180) {
 		t.Fatalf("paid_amount missing from fin_cost_settlements payload: %#v", costRows[0])
+	}
+	costGroupRows, ok := financialTables["fin_cost_settlement_groups"].([]map[string]any)
+	if !ok || len(costGroupRows) != 1 {
+		t.Fatalf("fin_cost_settlement_groups payload mismatch: %#v", financialTables["fin_cost_settlement_groups"])
+	}
+	if costGroupRows[0]["paid_amount"] != float64(70) {
+		t.Fatalf("paid_amount missing from fin_cost_settlement_groups payload: %#v", costGroupRows[0])
 	}
 
 	routeDecision, ok := payload["route_decision"].(map[string]any)

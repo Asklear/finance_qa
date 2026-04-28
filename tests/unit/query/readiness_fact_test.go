@@ -117,13 +117,23 @@ func TestReadinessCountsContractLedgerMatches(t *testing.T) {
 		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, counterparty_name TEXT, summary TEXT, debit_amount REAL, credit_amount REAL)`,
 		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
 		`CREATE TABLE fin_fund_income (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, source_report_type TEXT, source_sheet_name TEXT, settlement_amount REAL, received_amount REAL, is_invoiced TEXT, invoice_amount REAL)`,
+		`CREATE TABLE fin_fund_income_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT, year_month TEXT, source_report_type TEXT, source_sheet_name TEXT, settlement_amount REAL, received_amount REAL, is_invoiced TEXT, invoice_amount REAL)`,
+		`CREATE TABLE fin_fund_income_group_members (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, contract_id TEXT, source_row_number INTEGER)`,
 		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, source_report_type TEXT, source_sheet_name TEXT, quantity TEXT, settlement_amount REAL, is_invoiced TEXT, account_code TEXT)`,
+		`CREATE TABLE fin_cost_settlement_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT, year_month TEXT, source_report_type TEXT, source_sheet_name TEXT, quantity TEXT, settlement_amount REAL, is_invoiced TEXT, invoice_amount REAL, paid_amount REAL, account_code TEXT)`,
+		`CREATE TABLE fin_cost_settlement_group_members (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, contract_id TEXT, source_row_number INTEGER)`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
 		 VALUES ('C-FW-RDY-1', '飞未云科（深圳）技术有限公司', '飞未项目-京东价格数据')`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
 		 VALUES ('C-FW-RDY-1', '2026-03', 'contract_fund_income', '26年Q1收入明细', 900, 900, '是', 900)`,
+		`INSERT INTO fin_fund_income_groups(id, customer_name, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES (1, '飞未云科（深圳）技术有限公司', '2026-03', 'contract_fund_income', '26年Q1收入明细', 100, 100, '是', 100)`,
+		`INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number) VALUES (1, 'C-FW-RDY-1', 8)`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, account_code)
 		 VALUES ('C-FW-RDY-1', '2026-03', 'contract_revenue_cost', '26年Q1成本明细', '1项', 300, '是', '640101')`,
+		`INSERT INTO fin_cost_settlement_groups(id, customer_name, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code)
+		 VALUES (1, '飞未云科（深圳）技术有限公司', '2026-03', 'contract_revenue_cost', '26年Q1成本明细', '1项', 80, '是', 80, 70, '640101')`,
+		`INSERT INTO fin_cost_settlement_group_members(group_id, contract_id, source_row_number) VALUES (1, 'C-FW-RDY-1', 9)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -147,7 +157,7 @@ func TestReadinessCountsContractLedgerMatches(t *testing.T) {
 		t.Fatalf("fact_sets missing or empty: %#v", res.Data["fact_sets"])
 	}
 	assertFactValue(t, factSets[0], "readiness_has_data", 1)
-	assertFactValue(t, factSets[0], "readiness_row_count", 2)
+	assertFactValue(t, factSets[0], "readiness_row_count", 4)
 
 	sourceTables, ok := res.Data["source_tables"].([]string)
 	if !ok {

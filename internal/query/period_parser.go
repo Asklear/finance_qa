@@ -37,6 +37,9 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 	if from, to, ok := extractRelativeMonthRange(q, year, anchorMonth); ok {
 		return from, to
 	}
+	if from, to, ok := extractImplicitCumulativeRange(q, year, anchorMonth); ok {
+		return from, to
+	}
 
 	period := anchor.Format("2006-01")
 	return period, period
@@ -128,6 +131,13 @@ func extractYearCumulativeRange(q string, anchorYear, anchorMonth int) (string, 
 			endMonth = anchorMonth
 		}
 		return formatPeriodValue(y, 1), formatPeriodValue(y, endMonth), true
+	}
+	return "", "", false
+}
+
+func extractImplicitCumulativeRange(q string, anchorYear, anchorMonth int) (string, string, bool) {
+	if strings.Contains(q, "累计") || strings.Contains(q, "年内") {
+		return formatPeriodValue(anchorYear, 1), formatPeriodValue(anchorYear, anchorMonth), true
 	}
 	return "", "", false
 }

@@ -129,6 +129,28 @@ WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
 			return 0, 0, 0, nil, nil, err
 		}
 	}
+	if e.hasFundIncomeGroupTables() {
+		sqls = append(sqls, "queryEntityDataReady(contract_fund_income_groups): SELECT COUNT(*) FROM fin_fund_income_groups WHERE customer/member matches ... AND year_month BETWEEN ? AND ?")
+		var groupRows int
+		if err := e.db.QueryRow(`
+SELECT COUNT(*)
+FROM fin_fund_income_groups g
+WHERE g.year_month BETWEEN ? AND ?
+  AND (
+    g.customer_name LIKE ?
+    OR EXISTS (
+      SELECT 1
+      FROM fin_fund_income_group_members gm
+      JOIN fin_contracts c ON c.contract_id = gm.contract_id
+      WHERE gm.group_id = g.id
+        AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)
+    )
+  )
+`, from, to, like, like, like).Scan(&groupRows); err != nil {
+			return 0, 0, 0, nil, nil, err
+		}
+		fundRows += groupRows
+	}
 	if len(e.tableColumns("fin_cost_settlements")) > 0 {
 		sqls = append(sqls, "queryEntityDataReady(contract_cost_settlements): SELECT COUNT(*) FROM fin_cost_settlements JOIN fin_contracts ... WHERE year_month BETWEEN ? AND ?")
 		if err := e.db.QueryRow(`
@@ -140,6 +162,28 @@ WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
 `, like, like, from, to).Scan(&costRows); err != nil {
 			return 0, 0, 0, nil, nil, err
 		}
+	}
+	if e.hasCostSettlementGroupTables() {
+		sqls = append(sqls, "queryEntityDataReady(contract_cost_settlement_groups): SELECT COUNT(*) FROM fin_cost_settlement_groups WHERE customer/member matches ... AND year_month BETWEEN ? AND ?")
+		var groupRows int
+		if err := e.db.QueryRow(`
+SELECT COUNT(*)
+FROM fin_cost_settlement_groups g
+WHERE g.year_month BETWEEN ? AND ?
+  AND (
+    g.customer_name LIKE ?
+    OR EXISTS (
+      SELECT 1
+      FROM fin_cost_settlement_group_members gm
+      JOIN fin_contracts c ON c.contract_id = gm.contract_id
+      WHERE gm.group_id = g.id
+        AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)
+    )
+  )
+`, from, to, like, like, like).Scan(&groupRows); err != nil {
+			return 0, 0, 0, nil, nil, err
+		}
+		costRows += groupRows
 	}
 	logs = append(logs, fmt.Sprintf("[数据完备性-合同] contracts=%d fund=%d cost=%d", contractRows, fundRows, costRows))
 	return contractRows, fundRows, costRows, sqls, logs, nil

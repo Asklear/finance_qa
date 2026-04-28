@@ -1,16 +1,17 @@
 package query
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 func (e *Engine) collectSupplierContractSummary(summary contractDimensionSummary, like string) (contractDimensionSummary, error) {
 	var contractCost, cashPaid float64
-	e.db.QueryRow(`
-SELECT COALESCE(SUM(cs.settlement_amount), 0)
-FROM fin_cost_settlements cs
-JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
-  AND cs.year_month BETWEEN ? AND ?
-`, like, like, summary.PeriodFrom, summary.PeriodTo).Scan(&contractCost)
+	costTotals, err := e.collectCostSettlementTotals(context.Background(), summary.PeriodFrom, summary.PeriodTo, like)
+	if err != nil {
+		return contractDimensionSummary{}, err
+	}
+	contractCost = costTotals.Settlement
 	e.db.QueryRow(`
 SELECT COALESCE(SUM(debit_amount), 0)
 FROM bank_statement
@@ -32,7 +33,7 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 	summary.Data["cash_paid_amount"] = cashPaid
 	summary.CalculationLog = append(summary.CalculationLog, fmt.Sprintf("[合同维度-供应商] cost=%.2f paid=%.2f", contractCost, cashPaid))
 	summary.ExecutedSQL = append(summary.ExecutedSQL,
-		"supplier_contract_book: SELECT SUM(settlement_amount) FROM fin_cost_settlements JOIN fin_contracts ... WHERE year_month BETWEEN ? AND ?",
+		"supplier_contract_book: SELECT SUM(settlement_amount) FROM fin_cost_settlements + fin_cost_settlement_groups ... WHERE year_month BETWEEN ? AND ?",
 		"supplier_contract_cash: SELECT SUM(debit_amount) FROM bank_statement WHERE counterparty_name LIKE ? AND transaction_date BETWEEN ? AND ?",
 	)
 	return summary, nil
@@ -40,27 +41,17 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 
 func (e *Engine) collectMixedContractSummary(summary contractDimensionSummary, like string) (contractDimensionSummary, error) {
 	var revenueSettlement, costSettlement, cashReceived, cashPaid float64
-	e.db.QueryRow(`
-SELECT COALESCE(SUM(f.settlement_amount), 0)
-FROM fin_fund_income f
-JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
-  AND f.year_month BETWEEN ? AND ?
-`, like, like, summary.PeriodFrom, summary.PeriodTo).Scan(&revenueSettlement)
-	e.db.QueryRow(`
-SELECT COALESCE(SUM(cs.settlement_amount), 0)
-FROM fin_cost_settlements cs
-JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
-  AND cs.year_month BETWEEN ? AND ?
-`, like, like, summary.PeriodFrom, summary.PeriodTo).Scan(&costSettlement)
-	e.db.QueryRow(`
-SELECT COALESCE(SUM(f.received_amount), 0)
-FROM fin_fund_income f
-JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
-  AND f.year_month BETWEEN ? AND ?
-`, like, like, summary.PeriodFrom, summary.PeriodTo).Scan(&cashReceived)
+	totals, err := e.collectFundIncomeTotals(context.Background(), summary.PeriodFrom, summary.PeriodTo, like)
+	if err != nil {
+		return contractDimensionSummary{}, err
+	}
+	revenueSettlement = totals.Settlement
+	cashReceived = totals.Received
+	costTotals, err := e.collectCostSettlementTotals(context.Background(), summary.PeriodFrom, summary.PeriodTo, like)
+	if err != nil {
+		return contractDimensionSummary{}, err
+	}
+	costSettlement = costTotals.Settlement
 	e.db.QueryRow(`
 SELECT COALESCE(SUM(debit_amount), 0)
 FROM bank_statement
@@ -86,7 +77,7 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 	summary.Data["cash_paid_amount"] = cashPaid
 	summary.CalculationLog = append(summary.CalculationLog, fmt.Sprintf("[合同维度-混合] revenue=%.2f cost=%.2f received=%.2f paid=%.2f", revenueSettlement, costSettlement, cashReceived, cashPaid))
 	summary.ExecutedSQL = append(summary.ExecutedSQL,
-		"mixed_contract_book: SELECT SUM(settlement_amount) FROM fin_fund_income/fin_cost_settlements JOIN fin_contracts ... WHERE year_month BETWEEN ? AND ?",
+		"mixed_contract_book: SELECT SUM(settlement_amount) FROM fin_fund_income/fin_cost_settlements + group tables ... WHERE year_month BETWEEN ? AND ?",
 		"mixed_contract_cash: SELECT SUM(received_amount) FROM fin_fund_income JOIN fin_contracts ...; SELECT SUM(debit_amount) FROM bank_statement ...",
 	)
 	return summary, nil

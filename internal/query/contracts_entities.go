@@ -1,6 +1,9 @@
 package query
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 func contractSubjectCandidatesQuery(column string) string {
 	return `
@@ -117,20 +120,12 @@ func (e *Engine) detectContractRole(entity, from, to string) string {
 	}
 	like := "%" + entity + "%"
 	var costRows, fundRows int
-	e.db.QueryRow(`
-SELECT COUNT(1)
-FROM fin_cost_settlements cs
-JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
-  AND cs.year_month BETWEEN ? AND ?
-`, like, like, from, to).Scan(&costRows)
-	e.db.QueryRow(`
-SELECT COUNT(1)
-FROM fin_fund_income f
-JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE (c.customer_name LIKE ? OR c.contract_content LIKE ?)
-  AND f.year_month BETWEEN ? AND ?
-`, like, like, from, to).Scan(&fundRows)
+	if totals, err := e.collectCostSettlementTotals(context.Background(), from, to, like); err == nil {
+		costRows = totals.RowCount
+	}
+	if totals, err := e.collectFundIncomeTotals(context.Background(), from, to, like); err == nil {
+		fundRows = totals.RowCount
+	}
 
 	hasCustomer := fundRows > 0
 	hasSupplier := costRows > 0

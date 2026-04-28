@@ -106,6 +106,13 @@ func (e *Engine) probeContractAmount(ctx context.Context, rewrite BossQueryRewri
 }
 
 func (e *Engine) countContractAmountRows(ctx context.Context, rewrite BossQueryRewrite, tableName, amountColumn string) (int, int, error) {
+	if tableName == "fin_fund_income" && e.hasFundIncomeGroupTables() && isFundIncomeAmountColumn(amountColumn) {
+		return e.countFundIncomeAmountRows(ctx, rewrite, amountColumn)
+	}
+	if tableName == "fin_cost_settlements" && e.hasCostSettlementGroupTables() && isCostSettlementAmountColumn(amountColumn) {
+		return e.countCostSettlementAmountRows(ctx, rewrite, amountColumn)
+	}
+
 	entity := strings.TrimSpace(rewrite.Entity)
 	if entity == "" {
 		sqlText := fmt.Sprintf(`
@@ -130,6 +137,114 @@ WHERE f.year_month BETWEEN ? AND ?
 	like := "%" + entity + "%"
 	var rows, months int
 	err := e.db.QueryRowContext(ctx, sqlText, rewrite.PeriodFrom, rewrite.PeriodTo, like, like).Scan(&rows, &months)
+	return rows, months, err
+}
+
+func isCostSettlementAmountColumn(column string) bool {
+	switch strings.TrimSpace(column) {
+	case "settlement_amount", "paid_amount", "invoice_amount":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) countCostSettlementAmountRows(ctx context.Context, rewrite BossQueryRewrite, amountColumn string) (int, int, error) {
+	entity := strings.TrimSpace(rewrite.Entity)
+	directSQL := fmt.Sprintf(`
+SELECT cs.year_month AS year_month
+FROM fin_cost_settlements cs
+JOIN fin_contracts c ON c.contract_id = cs.contract_id
+WHERE cs.year_month BETWEEN ? AND ?
+  AND cs.%s IS NOT NULL`, amountColumn)
+	args := []any{rewrite.PeriodFrom, rewrite.PeriodTo}
+	if entity != "" {
+		directSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		like := "%" + entity + "%"
+		args = append(args, like, like)
+	}
+
+	groupSQL := fmt.Sprintf(`
+SELECT g.year_month AS year_month
+FROM fin_cost_settlement_groups g
+WHERE g.year_month BETWEEN ? AND ?
+  AND g.%s IS NOT NULL`, amountColumn)
+	args = append(args, rewrite.PeriodFrom, rewrite.PeriodTo)
+	if entity != "" {
+		like := "%" + entity + "%"
+		groupSQL += `
+  AND (
+    g.customer_name LIKE ?
+    OR EXISTS (
+      SELECT 1
+      FROM fin_cost_settlement_group_members gm
+      JOIN fin_contracts c ON c.contract_id = gm.contract_id
+      WHERE gm.group_id = g.id
+        AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)
+    )
+  )`
+		args = append(args, like, like, like)
+	}
+
+	sqlText := `
+SELECT COUNT(*), COUNT(DISTINCT year_month)
+FROM (` + directSQL + ` UNION ALL ` + groupSQL + `) cost_settlement_amount_rows`
+	var rows, months int
+	err := e.db.QueryRowContext(ctx, sqlText, args...).Scan(&rows, &months)
+	return rows, months, err
+}
+
+func isFundIncomeAmountColumn(column string) bool {
+	switch strings.TrimSpace(column) {
+	case "settlement_amount", "received_amount", "invoice_amount":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) countFundIncomeAmountRows(ctx context.Context, rewrite BossQueryRewrite, amountColumn string) (int, int, error) {
+	entity := strings.TrimSpace(rewrite.Entity)
+	directSQL := fmt.Sprintf(`
+SELECT f.year_month AS year_month
+FROM fin_fund_income f
+JOIN fin_contracts c ON c.contract_id = f.contract_id
+WHERE f.year_month BETWEEN ? AND ?
+  AND f.%s IS NOT NULL`, amountColumn)
+	args := []any{rewrite.PeriodFrom, rewrite.PeriodTo}
+	if entity != "" {
+		directSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		like := "%" + entity + "%"
+		args = append(args, like, like)
+	}
+
+	groupSQL := fmt.Sprintf(`
+SELECT g.year_month AS year_month
+FROM fin_fund_income_groups g
+WHERE g.year_month BETWEEN ? AND ?
+  AND g.%s IS NOT NULL`, amountColumn)
+	args = append(args, rewrite.PeriodFrom, rewrite.PeriodTo)
+	if entity != "" {
+		like := "%" + entity + "%"
+		groupSQL += `
+  AND (
+    g.customer_name LIKE ?
+    OR EXISTS (
+      SELECT 1
+      FROM fin_fund_income_group_members gm
+      JOIN fin_contracts c ON c.contract_id = gm.contract_id
+      WHERE gm.group_id = g.id
+        AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)
+    )
+  )`
+		args = append(args, like, like, like)
+	}
+
+	sqlText := `
+SELECT COUNT(*), COUNT(DISTINCT year_month)
+FROM (` + directSQL + ` UNION ALL ` + groupSQL + `) fund_income_amount_rows`
+	var rows, months int
+	err := e.db.QueryRowContext(ctx, sqlText, args...).Scan(&rows, &months)
 	return rows, months, err
 }
 

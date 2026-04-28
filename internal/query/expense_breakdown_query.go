@@ -99,21 +99,45 @@ func (e *Engine) queryExpenseBreakdownAllPerspectives(from, to string) Result {
 }
 
 func (e *Engine) collectContractProjectExpenseBreakdown(from, to string) ([]expenseBreakdownRow, float64, float64, []string, []string) {
-	sqlText := `
+	directSQL := `
 SELECT c.customer_name,
        c.contract_content,
-       COALESCE(SUM(cs.settlement_amount), 0),
-       COALESCE(SUM(cs.paid_amount), 0),
-       COALESCE(SUM(cs.invoice_amount), 0)
+       COALESCE(cs.settlement_amount, 0) AS settlement_amount,
+       COALESCE(cs.paid_amount, 0) AS paid_amount,
+       COALESCE(cs.invoice_amount, 0) AS invoice_amount
 FROM fin_cost_settlements cs
 JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE cs.year_month BETWEEN ? AND ?
-GROUP BY c.customer_name, c.contract_content
-HAVING COALESCE(SUM(cs.settlement_amount), 0) <> 0
-    OR COALESCE(SUM(cs.paid_amount), 0) <> 0
-ORDER BY 3 DESC, c.customer_name, c.contract_content`
-	rows, err := e.db.Query(sqlText, from, to)
-	executed := []string{"expense_breakdown(contract_project): SELECT customer_name, contract_content, SUM(settlement_amount), SUM(paid_amount), SUM(invoice_amount) FROM fin_cost_settlements JOIN fin_contracts ... WHERE year_month BETWEEN ? AND ? GROUP BY customer_name, contract_content"}
+WHERE cs.year_month BETWEEN ? AND ?`
+	args := []any{from, to}
+	unionSQL := directSQL
+	executed := []string{"expense_breakdown(contract_project): SELECT customer_name, contract_content, SUM(settlement_amount), SUM(paid_amount), SUM(invoice_amount) FROM fin_cost_settlements + fin_cost_settlement_groups ... WHERE year_month BETWEEN ? AND ? GROUP BY customer_name, contract_content"}
+	if e.hasCostSettlementGroupTables() {
+		unionSQL += `
+UNION ALL
+SELECT g.customer_name,
+       CASE
+         WHEN COALESCE(TRIM(g.merge_range), '') <> '' THEN '合并金额组 ' || g.merge_range
+         ELSE '合并金额组'
+       END AS contract_content,
+       COALESCE(g.settlement_amount, 0) AS settlement_amount,
+       COALESCE(g.paid_amount, 0) AS paid_amount,
+       COALESCE(g.invoice_amount, 0) AS invoice_amount
+FROM fin_cost_settlement_groups g
+WHERE g.year_month BETWEEN ? AND ?`
+		args = append(args, from, to)
+	}
+	sqlText := `
+SELECT customer_name,
+       contract_content,
+       COALESCE(SUM(settlement_amount), 0),
+       COALESCE(SUM(paid_amount), 0),
+       COALESCE(SUM(invoice_amount), 0)
+FROM (` + unionSQL + `) contract_project_expense
+GROUP BY customer_name, contract_content
+HAVING COALESCE(SUM(settlement_amount), 0) <> 0
+    OR COALESCE(SUM(paid_amount), 0) <> 0
+ORDER BY 3 DESC, customer_name, contract_content`
+	rows, err := e.db.Query(sqlText, args...)
 	logs := []string{fmt.Sprintf("[整体支出拆分-合同项目] period=%s", displayPeriod(from, to))}
 	if err != nil {
 		logs = append(logs, fmt.Sprintf("[整体支出拆分-合同项目] skipped error=%v", err))

@@ -23,7 +23,15 @@ func (e *Engine) getLatestContractPeriodAnchor() time.Time {
 			parser:  parseAnchorMonthValue,
 		},
 		{
+			sqlText: `SELECT MAX(year_month) FROM fin_fund_income_groups`,
+			parser:  parseAnchorMonthValue,
+		},
+		{
 			sqlText: `SELECT MAX(year_month) FROM fin_cost_settlements`,
+			parser:  parseAnchorMonthValue,
+		},
+		{
+			sqlText: `SELECT MAX(year_month) FROM fin_cost_settlement_groups`,
 			parser:  parseAnchorMonthValue,
 		},
 	}

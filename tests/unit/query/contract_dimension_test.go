@@ -80,6 +80,40 @@ func TestSupplierContractQuestionUsesContractCostAndBankPayments(t *testing.T) {
 	}
 }
 
+func TestSupplierContractQuestionUsesMergedCostSettlementGroups(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("上海合并供应商科技有限公司2026年Q1合同成本多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["role"]; got != "supplier_contract" {
+		t.Fatalf("role = %v, want supplier_contract", got)
+	}
+	bookView, ok := res.Data["book_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("book_view missing: %+v", res.Data)
+	}
+	if got := bookView["contract_cost"]; got != float64(600) {
+		t.Fatalf("contract_cost = %v, want 600", got)
+	}
+	contracts, ok := res.Data["contracts"].([]map[string]any)
+	if !ok {
+		t.Fatalf("contracts missing: %+v", res.Data["contracts"])
+	}
+	if len(contracts) != 4 {
+		t.Fatalf("contract count = %d, want 4: %#v", len(contracts), contracts)
+	}
+	if !strings.Contains(res.Message, "合同成本 600.00 元") {
+		t.Fatalf("message should include merged cost group total, got: %s", res.Message)
+	}
+}
+
 func TestMixedContractQuestionUsesCashFirstDualAnswer(t *testing.T) {
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
@@ -227,6 +261,95 @@ func TestContractAliasRevenueQuestionUsesContractDimension(t *testing.T) {
 	}
 }
 
+func TestCustomerContractQuestionUsesMergedFundIncomeGroups(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("Yipit data 2026年Q1回款和结算金额是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["role"]; got != "customer_contract" {
+		t.Fatalf("role = %v, want customer_contract", got)
+	}
+	bookView, ok := res.Data["book_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("book_view missing: %+v", res.Data)
+	}
+	cashView, ok := res.Data["cash_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("cash_view missing: %+v", res.Data)
+	}
+	if got := bookView["settlement_amount"]; got != float64(600) {
+		t.Fatalf("settlement_amount = %v, want 600", got)
+	}
+	if got := cashView["received_amount"]; got != float64(570) {
+		t.Fatalf("received_amount = %v, want 570", got)
+	}
+	contracts, ok := res.Data["contracts"].([]map[string]any)
+	if !ok {
+		t.Fatalf("contracts missing: %+v", res.Data["contracts"])
+	}
+	if len(contracts) != 4 {
+		t.Fatalf("contract count = %d, want 4: %#v", len(contracts), contracts)
+	}
+	for _, contract := range contracts {
+		content, _ := contract["contract_content"].(string)
+		if strings.Contains(content, "合并金额组") {
+			t.Fatalf("contracts should not expose merged pseudo contract: %#v", contracts)
+		}
+	}
+	if !strings.Contains(res.Message, "实际到账 570.00 元") || !strings.Contains(res.Message, "合同台账结算 600.00 元") {
+		t.Fatalf("message should include merged group totals, got: %s", res.Message)
+	}
+}
+
+func TestContractMemberQuestionDoesNotAttributeWholeMergedFundIncomeGroup(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("数据采购合同-快手2026年Q1收入是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	bookView, ok := res.Data["book_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("book_view missing: %+v", res.Data)
+	}
+	if got := bookView["settlement_amount"]; got != float64(0) {
+		t.Fatalf("settlement_amount = %v, want 0 because merged customer-level amount is not attributable to one member contract", got)
+	}
+}
+
+func TestContractMemberQuestionDoesNotAttributeWholeMergedCostSettlementGroup(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("外包服务合同-A2026年Q1成本是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	bookView, ok := res.Data["book_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("book_view missing: %+v", res.Data)
+	}
+	if got := bookView["contract_cost"]; got != float64(0) {
+		t.Fatalf("contract_cost = %v, want 0 because merged supplier-level amount is not attributable to one member contract", got)
+	}
+}
+
 func TestContractHalfWidthParenthesesEntityStillUsesContractDimension(t *testing.T) {
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
@@ -248,6 +371,57 @@ func TestContractHalfWidthParenthesesEntityStillUsesContractDimension(t *testing
 	}
 	if got := res.Data["entity"]; got != "飞未云科（深圳）技术有限公司" {
 		t.Fatalf("entity = %v, want 飞未云科（深圳）技术有限公司", got)
+	}
+}
+
+func TestCompanyAggregateMetricIncludesMergedFundIncomeGroups(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年Q1收入是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "营收 4200.00 元") {
+		t.Fatalf("message should include merged group revenue, got: %s", res.Message)
+	}
+	summary, ok := res.Data["contract_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract_summary missing: %+v", res.Data)
+	}
+	if got := summary["contract_count"]; got != float64(6) && got != 6 {
+		t.Fatalf("contract_count = %v, want 6", got)
+	}
+}
+
+func TestCompanyAggregateMetricIncludesMergedCostSettlementGroups(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年Q1成本是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "合同成本 600.00 元") {
+		t.Fatalf("message should include merged group cost, got: %s", res.Message)
+	}
+	summary, ok := res.Data["contract_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract_summary missing: %+v", res.Data)
+	}
+	if got := summary["contract_count"]; got != float64(4) && got != 4 {
+		t.Fatalf("contract_count = %v, want 4", got)
+	}
+	if got := summary["cost_paid"]; got != float64(570) {
+		t.Fatalf("cost_paid = %v, want 570", got)
 	}
 }
 
@@ -289,8 +463,45 @@ func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 	if !ok {
 		t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
 	}
-	if len(sourceTables) != 3 {
-		t.Fatalf("source_tables count = %d, want 3", len(sourceTables))
+	wantSourceTables := []string{
+		"tenant_uhub.fin_contracts",
+		"tenant_uhub.fin_fund_income",
+		"tenant_uhub.fin_fund_income_groups",
+		"tenant_uhub.fin_fund_income_group_members",
+		"tenant_uhub.fin_cost_settlements",
+		"tenant_uhub.fin_cost_settlement_groups",
+		"tenant_uhub.fin_cost_settlement_group_members",
+	}
+	for _, want := range wantSourceTables {
+		if !containsString(sourceTables, want) {
+			t.Fatalf("source_tables missing %s, got %#v", want, sourceTables)
+		}
+	}
+	if strings.Contains(res.Message, "合并金额组") {
+		t.Fatalf("boss-facing message should not expose merged group helper labels, got: %s", res.Message)
+	}
+}
+
+func TestCompanyAggregateInvoiceOpenDetailDoesNotExposeMergedGroupLabel(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年Q1应付账款多少（已收票未付款）？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "合并金额组") {
+		t.Fatalf("boss-facing message should not expose merged group helper labels, got: %s", res.Message)
+	}
+	if strings.Contains(res.Message, "多合同合计") {
+		t.Fatalf("boss-facing message should use rigorous merged group wording, got: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "合并行合计（覆盖合同/项目：") || !strings.Contains(res.Message, "外包服务合同-A") {
+		t.Fatalf("message should identify merged group through real member contracts, got: %s", res.Message)
 	}
 }
 
@@ -580,6 +791,34 @@ func buildContractQueryTestDB(t *testing.T) string {
 			account_code TEXT,
 			created_at TEXT
 		)`,
+		`CREATE TABLE fin_cost_settlement_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			source_start_row INTEGER,
+			source_end_row INTEGER,
+			merge_range TEXT,
+			customer_name TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			paid_amount REAL,
+			account_code TEXT,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT,
+			created_at TEXT
+		)`,
+		`CREATE TABLE fin_cost_settlement_group_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER,
+			contract_id TEXT,
+			source_row_number INTEGER,
+			created_at TEXT
+		)`,
 		`CREATE TABLE fin_fund_income (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			contract_id TEXT,
@@ -590,6 +829,33 @@ func buildContractQueryTestDB(t *testing.T) string {
 			received_amount REAL,
 			is_invoiced TEXT,
 			invoice_amount REAL,
+			created_at TEXT
+		)`,
+		`CREATE TABLE fin_fund_income_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			source_start_row INTEGER,
+			source_end_row INTEGER,
+			merge_range TEXT,
+			customer_name TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT,
+			created_at TEXT
+		)`,
+		`CREATE TABLE fin_fund_income_group_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER,
+			contract_id TEXT,
+			source_row_number INTEGER,
 			created_at TEXT
 		)`,
 		`CREATE TABLE meta_table_comments (
@@ -610,13 +876,41 @@ func buildContractQueryTestDB(t *testing.T) string {
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C003', '南京众信数通智能科技有限公司', '数据服务合同-ZX01')`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C004', '飞未云科（深圳）技术有限公司', '全品类商品价格数据-京东')`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C005', '飞未云科（深圳）技术有限公司', '全品类商品销量数据-京东')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C010', 'Yipit data', '数据采购合同-快手')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C011', 'Yipit data', '数据采购合同-抖音')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C012', 'Yipit data', '数据采购合同-淘宝')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C013', 'Yipit data', '数据采购合同-京东')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C020', '上海合并供应商科技有限公司', '外包服务合同-A')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C021', '上海合并供应商科技有限公司', '外包服务合同-B')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C022', '上海合并供应商科技有限公司', '外包服务合同-C')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C023', '上海合并供应商科技有限公司', '外包服务合同-D')`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C001', '2025-10', 'contract_fund_income', '25年Q4收入明细', 1000, 1234, '是', 1000)`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C001', '2025-11', 'contract_fund_income', '25年Q4收入明细', 2000, 1500, '是', 2000)`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C003', '2025-10', 'contract_fund_income', '25年Q4收入明细', 300, 280, '是', 300)`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C004', '2026-01', 'contract_fund_income', '26年Q1收入明细', 2500, 2500, '是', 2500)`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C005', '2026-03', 'contract_fund_income', '26年Q1收入明细', 1100, 1100, '是', 1100)`,
+		`INSERT INTO fin_fund_income_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES (101, '2026-01', 'contract_fund_income', '26年Q1收入明细', 24, 27, 'Yipit data', '/', 100, 90, '是', 100)`,
+		`INSERT INTO fin_fund_income_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES (102, '2026-02', 'contract_fund_income', '26年Q1收入明细', 24, 27, 'Yipit data', '/', 200, 180, '是', 200)`,
+		`INSERT INTO fin_fund_income_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES (103, '2026-03', 'contract_fund_income', '26年Q1收入明细', 24, 27, 'Yipit data', '/', 300, 300, '是', 300)`,
+		`INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number) VALUES
+		 (101, 'C010', 24), (101, 'C011', 25), (101, 'C012', 26), (101, 'C013', 27),
+		 (102, 'C010', 24), (102, 'C011', 25), (102, 'C012', 26), (102, 'C013', 27),
+		 (103, 'C010', 24), (103, 'C011', 25), (103, 'C012', 26), (103, 'C013', 27)`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, account_code) VALUES ('C002', '2025-10', 'contract_revenue_cost', '成本-月度结算', '1人月', 888, '是', '640101')`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, account_code) VALUES ('C003', '2025-10', 'contract_revenue_cost', '成本-月度结算', '1项', 120, '是', '640101')`,
+		`INSERT INTO fin_cost_settlement_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code)
+		 VALUES (201, '2026-01', 'contract_revenue_cost', '成本-月度结算', 24, 27, '上海合并供应商科技有限公司', '/', 100, '是', 100, 90, '640101')`,
+		`INSERT INTO fin_cost_settlement_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code)
+		 VALUES (202, '2026-02', 'contract_revenue_cost', '成本-月度结算', 24, 27, '上海合并供应商科技有限公司', '/', 200, '是', 200, 180, '640101')`,
+		`INSERT INTO fin_cost_settlement_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code)
+		 VALUES (203, '2026-03', 'contract_revenue_cost', '成本-月度结算', 24, 27, '上海合并供应商科技有限公司', '/', 300, '是', 300, 300, '640101')`,
+		`INSERT INTO fin_cost_settlement_group_members(group_id, contract_id, source_row_number) VALUES
+		 (201, 'C020', 24), (201, 'C021', 25), (201, 'C022', 26), (201, 'C023', 27),
+		 (202, 'C020', 24), (202, 'C021', 25), (202, 'C022', 26), (202, 'C023', 27),
+		 (203, 'C020', 24), (203, 'C021', 25), (203, 'C022', 26), (203, 'C023', 27)`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount) VALUES ('南京优集数据科技有限公司', '2025-10-18', '南京林悦智能科技有限公司', '合同付款', 666, 0)`,
 		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount) VALUES ('南京优集数据科技有限公司', '2025-10-22', '南京众信数通智能科技有限公司', '合同付款', 88, 0)`,
 		`INSERT INTO meta_table_comments(table_name, comment) VALUES ('fin_contracts', 'financeqa_source: {"display":"《合同信息表》","file_names":["优集资金收入计算表-副本.xlsx","优集成本计算表-4.23-池.xlsx"]}')`,

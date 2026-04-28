@@ -82,6 +82,9 @@ func buildSourceNote(primaryDocs, supportingDocs []string) string {
 func sourceDisplaysForTables(tables []string, metadata map[string]dbpkg.TableSourceMetadata) []string {
 	out := make([]string, 0, len(tables))
 	for _, tableName := range tables {
+		if shouldHideSourceTableFromBossNote(tableName) {
+			continue
+		}
 		meta, ok := metadata[tableName]
 		if !ok {
 			meta = dbpkg.DefaultTableSourceMetadata(tableName)
@@ -93,4 +96,16 @@ func sourceDisplaysForTables(tables []string, metadata map[string]dbpkg.TableSou
 		out = append(out, display)
 	}
 	return dedupeSourceTables(out...)
+}
+
+func shouldHideSourceTableFromBossNote(tableName string) bool {
+	switch baseSourceTableName(tableName) {
+	case "fin_fund_income_groups",
+		"fin_fund_income_group_members",
+		"fin_cost_settlement_groups",
+		"fin_cost_settlement_group_members":
+		return true
+	default:
+		return false
+	}
 }

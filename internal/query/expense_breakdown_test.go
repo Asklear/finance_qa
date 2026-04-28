@@ -26,12 +26,18 @@ func TestOverallExpenseBreakdownQuestionReturnsAllPerspectives(t *testing.T) {
 		`CREATE TABLE balance_detail (company TEXT, year INTEGER, period TEXT, account_code TEXT, account_name TEXT, opening_debit REAL, opening_credit REAL, current_debit REAL, current_credit REAL, closing_debit REAL, closing_credit REAL)`,
 		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
 		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL, source_report_type TEXT, source_sheet_name TEXT)`,
+		`CREATE TABLE fin_cost_settlement_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL, source_report_type TEXT, source_sheet_name TEXT, merge_range TEXT)`,
+		`CREATE TABLE fin_cost_settlement_group_members (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER, contract_id TEXT, source_row_number INTEGER)`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES
 		 ('C-001','南京供应商科技有限公司','技术服务项目A'),
-		 ('C-002','上海数据服务有限公司','数据采购项目B')`,
+		 ('C-002','上海数据服务有限公司','数据采购项目B'),
+		 ('C-003','上海合并供应商科技有限公司','合并项目A')`,
 		`INSERT INTO fin_cost_settlements(contract_id, year_month, settlement_amount, paid_amount, invoice_amount, source_report_type, source_sheet_name) VALUES
 		 ('C-001','2026-03',700,400,700,'contract_revenue_cost','成本-月度结算'),
 		 ('C-002','2026-03',300,300,300,'contract_revenue_cost','成本-月度结算')`,
+		`INSERT INTO fin_cost_settlement_groups(id, customer_name, year_month, settlement_amount, paid_amount, invoice_amount, source_report_type, source_sheet_name, merge_range)
+		 VALUES (1, '上海合并供应商科技有限公司', '2026-03', 200, 180, 200, 'contract_revenue_cost', '成本-月度结算', 'U3:U4')`,
+		`INSERT INTO fin_cost_settlement_group_members(group_id, contract_id, source_row_number) VALUES (1, 'C-003', 3)`,
 		`INSERT INTO bank_statement(company, transaction_date, credit_amount, debit_amount, counterparty_name, summary) VALUES
 		 ('测试公司','2026-03-01',0,700,'南京供应商科技有限公司','技术服务付款'),
 		 ('测试公司','2026-03-03',0,200,'张三','工资发放'),
@@ -72,7 +78,7 @@ func TestOverallExpenseBreakdownQuestionReturnsAllPerspectives(t *testing.T) {
 	if !ok {
 		t.Fatalf("breakdown_views missing or wrong type: %T %+v", res.Data["breakdown_views"], res.Data)
 	}
-	assertBreakdownViewTotal(t, views, "contract_project", 1000)
+	assertBreakdownViewTotal(t, views, "contract_project", 1200)
 	assertBreakdownViewTotal(t, views, "cash_category", 960)
 	assertBreakdownViewTotal(t, views, "account_category", 1210)
 

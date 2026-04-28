@@ -130,7 +130,17 @@ func (e *Engine) getLatestPeriodAnchor() time.Time {
 			parser:  parseAnchorMonthValue,
 		},
 		{
+			sqlText: `SELECT MAX(year_month) FROM fin_fund_income_groups`,
+			args:    nil,
+			parser:  parseAnchorMonthValue,
+		},
+		{
 			sqlText: `SELECT MAX(year_month) FROM fin_cost_settlements`,
+			args:    nil,
+			parser:  parseAnchorMonthValue,
+		},
+		{
+			sqlText: `SELECT MAX(year_month) FROM fin_cost_settlement_groups`,
 			args:    nil,
 			parser:  parseAnchorMonthValue,
 		},

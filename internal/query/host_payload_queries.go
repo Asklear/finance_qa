@@ -32,6 +32,18 @@ func (e *Engine) queryHostLLMPayload(question, from, to string) Result {
 		"host_payload(fin_cost_settlements): SELECT * FROM fin_cost_settlements WHERE year_month BETWEEN ? AND ?",
 		"host_payload(fin_fund_income): SELECT * FROM fin_fund_income WHERE year_month BETWEEN ? AND ?",
 	}
+	if e.hasCostSettlementGroupTables() {
+		sqls = append(sqls,
+			"host_payload(fin_cost_settlement_groups): SELECT * FROM fin_cost_settlement_groups WHERE year_month BETWEEN ? AND ?",
+			"host_payload(fin_cost_settlement_group_members): SELECT * FROM fin_cost_settlement_group_members JOIN fin_cost_settlement_groups ... WHERE year_month BETWEEN ? AND ?",
+		)
+	}
+	if e.hasFundIncomeGroupTables() {
+		sqls = append(sqls,
+			"host_payload(fin_fund_income_groups): SELECT * FROM fin_fund_income_groups WHERE year_month BETWEEN ? AND ?",
+			"host_payload(fin_fund_income_group_members): SELECT * FROM fin_fund_income_group_members JOIN fin_fund_income_groups ... WHERE year_month BETWEEN ? AND ?",
+		)
+	}
 	data := map[string]any{
 		"llm_payload": payloadOrEmpty(bundle.payload),
 		"usage":       "请宿主LLM基于 payload.financial_tables、payload.source_catalog 和 payload.trace 进行最终语义判别与回答",
@@ -107,6 +119,14 @@ func (e *Engine) buildHostLLMPayloadBundle(from, to, question string) hostPayloa
 		"fin_cost_settlements",
 		"fin_fund_income",
 	}
+	hasCostGroups := e.hasCostSettlementGroupTables()
+	hasFundGroups := e.hasFundIncomeGroupTables()
+	if hasCostGroups {
+		sourceTables = append(sourceTables, "fin_cost_settlement_groups", "fin_cost_settlement_group_members")
+	}
+	if hasFundGroups {
+		sourceTables = append(sourceTables, "fin_fund_income_groups", "fin_fund_income_group_members")
+	}
 	addTable := func(key, sqlTxt string, args ...any) {
 		rows, err := e.queryRowsAsMapsStrict(sqlTxt, args...)
 		if err != nil {
@@ -152,20 +172,67 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
   AND transaction_date BETWEEN ? AND ?
 ORDER BY transaction_date, transaction_time
 `, e.Company, e.Company, startDate, endDate)
-	addTable("fin_contracts", `
+	contractSQL := `
 SELECT DISTINCT c.contract_id, c.customer_name, c.contract_content, c.contract_start_date, c.contract_end_date, c.settlement_cycle
 FROM fin_contracts c
 LEFT JOIN fin_cost_settlements cs ON cs.contract_id = c.contract_id AND cs.year_month BETWEEN ? AND ?
 LEFT JOIN fin_fund_income f ON f.contract_id = c.contract_id AND f.year_month BETWEEN ? AND ?
-WHERE cs.contract_id IS NOT NULL OR f.contract_id IS NOT NULL
-ORDER BY c.contract_id
-`, from, to, from, to)
+`
+	contractArgs := []any{from, to, from, to}
+	contractWhere := []string{"cs.contract_id IS NOT NULL", "f.contract_id IS NOT NULL"}
+	if hasCostGroups {
+		contractSQL += `LEFT JOIN fin_cost_settlement_group_members cgm ON cgm.contract_id = c.contract_id
+LEFT JOIN fin_cost_settlement_groups cg ON cg.id = cgm.group_id AND cg.year_month BETWEEN ? AND ?
+`
+		contractArgs = append(contractArgs, from, to)
+		contractWhere = append(contractWhere, "cg.id IS NOT NULL")
+	}
+	if hasFundGroups {
+		contractSQL += `LEFT JOIN fin_fund_income_group_members fgm ON fgm.contract_id = c.contract_id
+LEFT JOIN fin_fund_income_groups fg ON fg.id = fgm.group_id AND fg.year_month BETWEEN ? AND ?
+`
+		contractArgs = append(contractArgs, from, to)
+		contractWhere = append(contractWhere, "fg.id IS NOT NULL")
+	}
+	contractSQL += `WHERE ` + strings.Join(contractWhere, " OR ") + `
+ORDER BY c.contract_id`
+	addTable("fin_contracts", contractSQL, contractArgs...)
 	addTable("fin_cost_settlements", `
 SELECT contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
 FROM fin_cost_settlements
 WHERE year_month BETWEEN ? AND ?
 ORDER BY year_month, contract_id
 `, from, to)
+	if hasCostGroups {
+		addTable("fin_cost_settlement_groups", `
+SELECT id, customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
+FROM fin_cost_settlement_groups
+WHERE year_month BETWEEN ? AND ?
+ORDER BY year_month, customer_name, id
+`, from, to)
+		addTable("fin_cost_settlement_group_members", `
+SELECT gm.group_id, gm.contract_id, gm.source_row_number, g.year_month, g.customer_name, g.merge_range
+FROM fin_cost_settlement_group_members gm
+JOIN fin_cost_settlement_groups g ON g.id = gm.group_id
+WHERE g.year_month BETWEEN ? AND ?
+ORDER BY g.year_month, gm.group_id, gm.source_row_number, gm.contract_id
+`, from, to)
+	}
+	if hasFundGroups {
+		addTable("fin_fund_income_groups", `
+SELECT id, customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
+FROM fin_fund_income_groups
+WHERE year_month BETWEEN ? AND ?
+ORDER BY year_month, customer_name, id
+`, from, to)
+		addTable("fin_fund_income_group_members", `
+SELECT gm.group_id, gm.contract_id, gm.source_row_number, g.year_month, g.customer_name, g.merge_range
+FROM fin_fund_income_group_members gm
+JOIN fin_fund_income_groups g ON g.id = gm.group_id
+WHERE g.year_month BETWEEN ? AND ?
+ORDER BY g.year_month, gm.group_id, gm.source_row_number, gm.contract_id
+`, from, to)
+	}
 	addTable("fin_fund_income", `
 SELECT contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
 FROM fin_fund_income

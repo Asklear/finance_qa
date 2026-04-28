@@ -1,10 +1,13 @@
 package query_test
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
 	"financeqa/internal/query"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestCompanyAggregateMetricPrimarySourceTablesPreferMetricTableOverContractDimension(t *testing.T) {
@@ -35,6 +38,12 @@ func TestCompanyAggregateMetricPrimarySourceTablesPreferMetricTableOverContractD
 		if tableName == "tenant_uhub.fin_cost_settlements" {
 			t.Fatalf("source_tables should not include tenant_uhub.fin_cost_settlements for revenue-only aggregate, got %#v", sourceTables)
 		}
+	}
+	if !containsString(sourceTables, "tenant_uhub.fin_fund_income_groups") || !containsString(sourceTables, "tenant_uhub.fin_fund_income_group_members") {
+		t.Fatalf("source_tables should include merged fund income group tables, got %#v", sourceTables)
+	}
+	if containsString(sourceTables, "tenant_uhub.fin_cost_settlement_groups") || containsString(sourceTables, "tenant_uhub.fin_cost_settlement_group_members") {
+		t.Fatalf("source_tables should not include cost group tables for revenue-only aggregate, got %#v", sourceTables)
 	}
 
 	supporting, ok := res.Data["supporting_source_documents"].([]string)
@@ -102,6 +111,20 @@ func TestCompanyAggregateMultiMetricSourceNoteIncludesRevenueAndCostWorkbooks(t 
 	if !containsString(primary, "tenant_uhub.fin_fund_income") || !containsString(primary, "tenant_uhub.fin_cost_settlements") {
 		t.Fatalf("primary_source_tables should include revenue and cost tables, got %#v", primary)
 	}
+	sourceTables, ok := res.Data["source_tables"].([]string)
+	if !ok {
+		t.Fatalf("source_tables missing: %#v", res.Data["source_tables"])
+	}
+	for _, tableName := range []string{
+		"tenant_uhub.fin_fund_income_groups",
+		"tenant_uhub.fin_fund_income_group_members",
+		"tenant_uhub.fin_cost_settlement_groups",
+		"tenant_uhub.fin_cost_settlement_group_members",
+	} {
+		if !containsString(sourceTables, tableName) {
+			t.Fatalf("source_tables should include %s, got %#v", tableName, sourceTables)
+		}
+	}
 
 	sourceNote, _ := res.Data["source_note"].(string)
 	if !containsAll(sourceNote, "优集资金收入计算表-副本.xlsx", "优集成本计算表-4.23-池.xlsx") {
@@ -109,6 +132,50 @@ func TestCompanyAggregateMultiMetricSourceNoteIncludesRevenueAndCostWorkbooks(t 
 	}
 	if !strings.Contains(sourceNote, "补充参考：《合同信息表》") {
 		t.Fatalf("source_note should keep contract table as supporting source, got %q", sourceNote)
+	}
+}
+
+func TestSourceNoteDoesNotExposeMergedGroupHelperTablesToBossReply(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT OR REPLACE INTO meta_table_comments(table_name, comment) VALUES
+('fin_cost_settlement_groups', '合同成本结算合并金额组，记录 Excel 合并单元格代表的供应商级成本事实，不拆分到单个合同。'),
+('fin_cost_settlement_group_members', '合同成本结算合并金额组成员表，关联合并金额组与其覆盖的真实合同。')
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed helper table comments: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("南京林悦智能科技有限公司的应收/应付是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	sourceTables, ok := res.Data["source_tables"].([]string)
+	if !ok {
+		t.Fatalf("source_tables missing: %#v", res.Data["source_tables"])
+	}
+	if len(sourceTables) == 0 {
+		t.Fatalf("source_tables should not be empty")
+	}
+
+	sourceNote, _ := res.Data["source_note"].(string)
+	if strings.Contains(sourceNote, "合并金额组") || strings.Contains(res.Message, "合并金额组") {
+		t.Fatalf("boss-facing source should not expose helper table descriptions, source_note=%q message=%q", sourceNote, res.Message)
+	}
+	if !strings.Contains(sourceNote, "优集成本计算表") {
+		t.Fatalf("source_note should still show business workbook source, got %q", sourceNote)
 	}
 }
 

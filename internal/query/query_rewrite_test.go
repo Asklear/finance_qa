@@ -93,6 +93,22 @@ func TestRewriteBossQueryBareYearCumulativeRevenue(t *testing.T) {
 	}
 }
 
+func TestRewriteBossQueryBareCumulativeRevenueDefaultsToYearToDate(t *testing.T) {
+	anchor := time.Date(2026, time.March, 31, 0, 0, 0, 0, time.UTC)
+
+	got := RewriteBossQuery("飞未云科累计销售额多少？", anchor)
+
+	if got.Metric != BossMetricRevenue {
+		t.Fatalf("Metric = %s, want %s", got.Metric, BossMetricRevenue)
+	}
+	if got.PeriodFrom != "2026-01" || got.PeriodTo != "2026-03" {
+		t.Fatalf("period = %s~%s, want 2026-01~2026-03", got.PeriodFrom, got.PeriodTo)
+	}
+	if got.Granularity != BossGranularityAggregate {
+		t.Fatalf("Granularity = %s, want %s", got.Granularity, BossGranularityAggregate)
+	}
+}
+
 func TestBuildQuerySpecCarriesBossRewrite(t *testing.T) {
 	anchor := time.Date(2026, time.April, 25, 0, 0, 0, 0, time.UTC)
 

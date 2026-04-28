@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -55,13 +56,10 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 	}
 
 	scope := "company"
-	filterClause := ""
-	args := []any{spec.PeriodFrom, spec.PeriodTo}
+	entityLike := ""
 	if entity != "" {
 		scope = "entity"
-		filterClause = " AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)"
-		like := "%" + entity + "%"
-		args = append(args, like, like)
+		entityLike = "%" + entity + "%"
 	}
 
 	requestedMetrics := detectRequestedMetrics(spec.OriginalQuestion)
@@ -80,30 +78,27 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 
 	if needRevenue {
 		summary.ExecutedSQL = append(summary.ExecutedSQL,
-			"contract_aggregate(revenue): SELECT SUM(settlement_amount), SUM(received_amount), SUM(invoice_amount), SUM(unreceived), SUM(invoiced_unreceived), COUNT(DISTINCT contract_id) FROM fin_fund_income JOIN fin_contracts ... WHERE year_month BETWEEN ? AND ?",
+			"contract_aggregate(revenue): SELECT SUM(settlement_amount), SUM(received_amount), SUM(invoice_amount), SUM(unreceived), SUM(invoiced_unreceived), COUNT(DISTINCT contract_id) FROM fin_fund_income + fin_fund_income_groups ... WHERE year_month BETWEEN ? AND ?",
 		)
-		revenueSQL := `
-SELECT COALESCE(SUM(f.settlement_amount), 0),
-       COALESCE(SUM(f.received_amount), 0),
-       COALESCE(SUM(f.invoice_amount), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(f.settlement_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.settlement_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0),
-       COUNT(DISTINCT f.contract_id)
-FROM fin_fund_income f
-JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE f.year_month BETWEEN ? AND ?` + filterClause
-		if err := e.db.QueryRow(revenueSQL, args...).Scan(&summary.RevenueSettlement, &summary.RevenueReceived, &summary.RevenueInvoiced, &summary.RevenueReceivable, &summary.RevenueInvoiceOpen, &summary.ContractCount); err != nil {
+		revenueTotals, err := e.collectFundIncomeTotals(context.Background(), spec.PeriodFrom, spec.PeriodTo, entityLike)
+		if err != nil {
 			return contractAggregateSummary{}, err
 		}
+		summary.RevenueSettlement = revenueTotals.Settlement
+		summary.RevenueReceived = revenueTotals.Received
+		summary.RevenueInvoiced = revenueTotals.Invoice
+		summary.RevenueReceivable = revenueTotals.Receivable
+		summary.RevenueInvoiceOpen = revenueTotals.InvoiceOpen
+		summary.ContractCount = revenueTotals.ContractCount
 		if contractAggregateWantsDetailItems(spec.OriginalQuestion) {
-			items, err := e.collectRevenueItems(filterClause, args)
+			items, err := e.collectRevenueItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
 			summary.RevenueItems = items
 		}
 		if contractAggregateIncludesMetric(requestedMetrics, "已开票未回款") {
-			items, err := e.collectRevenueInvoiceOpenItems(filterClause, args)
+			items, err := e.collectRevenueInvoiceOpenItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
@@ -114,35 +109,27 @@ WHERE f.year_month BETWEEN ? AND ?` + filterClause
 	var costContractCount int
 	if needCost {
 		summary.ExecutedSQL = append(summary.ExecutedSQL,
-			"contract_aggregate(cost): SELECT SUM(settlement_amount), SUM(paid_amount), SUM(invoice_amount), SUM(payable), SUM(invoiced_unpaid), COUNT(DISTINCT contract_id) FROM fin_cost_settlements JOIN fin_contracts ... WHERE year_month BETWEEN ? AND ?",
+			"contract_aggregate(cost): SELECT SUM(settlement_amount), SUM(paid_amount), SUM(invoice_amount), SUM(payable), SUM(invoiced_unpaid), COUNT(DISTINCT contract_id) FROM fin_cost_settlements + fin_cost_settlement_groups ... WHERE year_month BETWEEN ? AND ?",
 		)
-		costArgs := []any{spec.PeriodFrom, spec.PeriodTo}
-		if entity != "" {
-			like := "%" + entity + "%"
-			costArgs = append(costArgs, like, like)
-		}
-		costSQL := `
-SELECT COALESCE(SUM(cs.settlement_amount), 0),
-       COALESCE(SUM(cs.paid_amount), 0),
-       COALESCE(SUM(cs.invoice_amount), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(cs.settlement_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.settlement_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(cs.invoice_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.invoice_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0),
-       COUNT(DISTINCT cs.contract_id)
-FROM fin_cost_settlements cs
-JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE cs.year_month BETWEEN ? AND ?` + filterClause
-		if err := e.db.QueryRow(costSQL, costArgs...).Scan(&summary.CostSettlement, &summary.CostPaid, &summary.CostInvoiced, &summary.CostPayable, &summary.CostInvoiceOpen, &costContractCount); err != nil {
+		costTotals, err := e.collectCostSettlementTotals(context.Background(), spec.PeriodFrom, spec.PeriodTo, entityLike)
+		if err != nil {
 			return contractAggregateSummary{}, err
 		}
+		summary.CostSettlement = costTotals.Settlement
+		summary.CostPaid = costTotals.Paid
+		summary.CostInvoiced = costTotals.Invoice
+		summary.CostPayable = costTotals.Payable
+		summary.CostInvoiceOpen = costTotals.InvoiceOpen
+		costContractCount = costTotals.ContractCount
 		if contractAggregateWantsDetailItems(spec.OriginalQuestion) {
-			items, err := e.collectCostItems(filterClause, costArgs)
+			items, err := e.collectCostItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
 			summary.CostItems = items
 		}
 		if contractAggregateIncludesMetric(requestedMetrics, "已收票未付款") {
-			items, err := e.collectCostInvoiceOpenItems(filterClause, costArgs)
+			items, err := e.collectCostInvoiceOpenItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
@@ -178,35 +165,121 @@ func contractAggregateWantsDetailItems(question string) bool {
 	return containsAny(question, []string{"明细", "列表", "有哪些", "哪些", "分别", "拆", "拆分", "构成"})
 }
 
-func (e *Engine) collectRevenueItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
-	sqlText := `
+func (e *Engine) mergedGroupContractContentSQL(memberTable, groupAlias string) string {
+	if e.usesPostgresSQL() {
+		return fmt.Sprintf(`COALESCE((
+	SELECT '合并行合计（覆盖合同/项目：' || STRING_AGG(COALESCE(NULLIF(TRIM(mc.contract_content), ''), mc.contract_id), '、' ORDER BY gm.source_row_number, mc.contract_id) || '）'
+	FROM %s gm
+	JOIN fin_contracts mc ON mc.contract_id = gm.contract_id
+	WHERE gm.group_id = %s.id
+), '合并行合计')`, memberTable, groupAlias)
+	}
+	return fmt.Sprintf(`COALESCE((
+	SELECT '合并行合计（覆盖合同/项目：' || GROUP_CONCAT(COALESCE(NULLIF(TRIM(mc.contract_content), ''), mc.contract_id), '、') || '）'
+	FROM %s gm
+	JOIN fin_contracts mc ON mc.contract_id = gm.contract_id
+	WHERE gm.group_id = %s.id
+), '合并行合计')`, memberTable, groupAlias)
+}
+
+func (e *Engine) usesPostgresSQL() bool {
+	dbPath := strings.ToLower(strings.TrimSpace(e.dbPath))
+	return strings.Contains(dbPath, "host=") ||
+		strings.HasPrefix(dbPath, "postgres://") ||
+		strings.HasPrefix(dbPath, "postgresql://")
+}
+
+func (e *Engine) collectRevenueItems(periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
+	unionSQL := `
 SELECT c.customer_name,
        c.contract_content,
-       COALESCE(SUM(f.settlement_amount), 0),
-       COALESCE(SUM(f.invoice_amount), 0),
-       COALESCE(SUM(f.received_amount), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(f.settlement_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.settlement_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0)
+       COALESCE(f.settlement_amount, 0) AS settlement_amount,
+       COALESCE(f.invoice_amount, 0) AS invoice_amount,
+       COALESCE(f.received_amount, 0) AS received_amount,
+       CASE WHEN COALESCE(f.settlement_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.settlement_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END AS open_amount
 FROM fin_fund_income f
 JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE f.year_month BETWEEN ? AND ?` + filterClause + `
-GROUP BY c.customer_name, c.contract_content
-ORDER BY 3 DESC, c.customer_name, c.contract_content`
+WHERE f.year_month BETWEEN ? AND ?`
+	args := []any{periodFrom, periodTo}
+	if strings.TrimSpace(like) != "" {
+		unionSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		args = append(args, like, like)
+	}
+	if e.hasFundIncomeGroupTables() {
+		groupContent := e.mergedGroupContractContentSQL("fin_fund_income_group_members", "g")
+		unionSQL += `
+UNION ALL
+SELECT g.customer_name,
+       ` + groupContent + ` AS contract_content,
+       COALESCE(g.settlement_amount, 0) AS settlement_amount,
+       COALESCE(g.invoice_amount, 0) AS invoice_amount,
+       COALESCE(g.received_amount, 0) AS received_amount,
+       CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.received_amount, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.received_amount, 0) ELSE 0 END AS open_amount
+FROM fin_fund_income_groups g
+WHERE g.year_month BETWEEN ? AND ?`
+		args = append(args, periodFrom, periodTo)
+		if strings.TrimSpace(like) != "" {
+			unionSQL += ` AND g.customer_name LIKE ?`
+			args = append(args, like)
+		}
+	}
+	sqlText := `
+SELECT customer_name,
+       contract_content,
+       COALESCE(SUM(settlement_amount), 0),
+       COALESCE(SUM(invoice_amount), 0),
+       COALESCE(SUM(received_amount), 0),
+       COALESCE(SUM(open_amount), 0)
+FROM (` + unionSQL + `) revenue_items
+GROUP BY customer_name, contract_content
+ORDER BY 3 DESC, customer_name, contract_content`
 	return e.collectContractAggregateItems(sqlText, args)
 }
 
-func (e *Engine) collectCostItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
-	sqlText := `
+func (e *Engine) collectCostItems(periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
+	unionSQL := `
 SELECT c.customer_name,
        c.contract_content,
-       COALESCE(SUM(cs.settlement_amount), 0),
-       COALESCE(SUM(cs.invoice_amount), 0),
-       COALESCE(SUM(cs.paid_amount), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(cs.settlement_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.settlement_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0)
+       COALESCE(cs.settlement_amount, 0) AS settlement_amount,
+       COALESCE(cs.invoice_amount, 0) AS invoice_amount,
+       COALESCE(cs.paid_amount, 0) AS paid_amount,
+       CASE WHEN COALESCE(cs.settlement_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.settlement_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END AS open_amount
 FROM fin_cost_settlements cs
 JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE cs.year_month BETWEEN ? AND ?` + filterClause + `
-GROUP BY c.customer_name, c.contract_content
-ORDER BY 3 DESC, c.customer_name, c.contract_content`
+WHERE cs.year_month BETWEEN ? AND ?`
+	args := []any{periodFrom, periodTo}
+	if strings.TrimSpace(like) != "" {
+		unionSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		args = append(args, like, like)
+	}
+	if e.hasCostSettlementGroupTables() {
+		groupContent := e.mergedGroupContractContentSQL("fin_cost_settlement_group_members", "g")
+		unionSQL += `
+UNION ALL
+SELECT g.customer_name,
+       ` + groupContent + ` AS contract_content,
+       COALESCE(g.settlement_amount, 0) AS settlement_amount,
+       COALESCE(g.invoice_amount, 0) AS invoice_amount,
+       COALESCE(g.paid_amount, 0) AS paid_amount,
+       CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.paid_amount, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.paid_amount, 0) ELSE 0 END AS open_amount
+FROM fin_cost_settlement_groups g
+WHERE g.year_month BETWEEN ? AND ?`
+		args = append(args, periodFrom, periodTo)
+		if strings.TrimSpace(like) != "" {
+			unionSQL += ` AND g.customer_name LIKE ?`
+			args = append(args, like)
+		}
+	}
+	sqlText := `
+SELECT customer_name,
+       contract_content,
+       COALESCE(SUM(settlement_amount), 0),
+       COALESCE(SUM(invoice_amount), 0),
+       COALESCE(SUM(paid_amount), 0),
+       COALESCE(SUM(open_amount), 0)
+FROM (` + unionSQL + `) cost_items
+GROUP BY customer_name, contract_content
+ORDER BY 3 DESC, customer_name, contract_content`
 	return e.collectContractAggregateItems(sqlText, args)
 }
 
@@ -235,19 +308,48 @@ func (e *Engine) collectContractAggregateItems(sqlText string, args []any) ([]co
 	return items, nil
 }
 
-func (e *Engine) collectRevenueInvoiceOpenItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
-	sqlText := `
+func (e *Engine) collectRevenueInvoiceOpenItems(periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
+	unionSQL := `
 SELECT c.customer_name,
        c.contract_content,
-       COALESCE(SUM(f.invoice_amount), 0),
-       COALESCE(SUM(f.received_amount), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0)
+       COALESCE(f.invoice_amount, 0) AS invoice_amount,
+       COALESCE(f.received_amount, 0) AS received_amount,
+       CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END AS open_amount
 FROM fin_fund_income f
 JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE f.year_month BETWEEN ? AND ?` + filterClause + `
-GROUP BY c.customer_name, c.contract_content
-HAVING COALESCE(SUM(CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END), 0) > 0
-ORDER BY 5 DESC, c.customer_name, c.contract_content`
+WHERE f.year_month BETWEEN ? AND ?`
+	args := []any{periodFrom, periodTo}
+	if strings.TrimSpace(like) != "" {
+		unionSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		args = append(args, like, like)
+	}
+	if e.hasFundIncomeGroupTables() {
+		groupContent := e.mergedGroupContractContentSQL("fin_fund_income_group_members", "g")
+		unionSQL += `
+UNION ALL
+SELECT g.customer_name,
+       ` + groupContent + ` AS contract_content,
+       COALESCE(g.invoice_amount, 0) AS invoice_amount,
+       COALESCE(g.received_amount, 0) AS received_amount,
+       CASE WHEN COALESCE(g.invoice_amount, 0) > COALESCE(g.received_amount, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.received_amount, 0) ELSE 0 END AS open_amount
+FROM fin_fund_income_groups g
+WHERE g.year_month BETWEEN ? AND ?`
+		args = append(args, periodFrom, periodTo)
+		if strings.TrimSpace(like) != "" {
+			unionSQL += ` AND g.customer_name LIKE ?`
+			args = append(args, like)
+		}
+	}
+	sqlText := `
+SELECT customer_name,
+       contract_content,
+       COALESCE(SUM(invoice_amount), 0),
+       COALESCE(SUM(received_amount), 0),
+       COALESCE(SUM(open_amount), 0)
+FROM (` + unionSQL + `) revenue_invoice_open_items
+GROUP BY customer_name, contract_content
+HAVING COALESCE(SUM(open_amount), 0) > 0
+ORDER BY 5 DESC, customer_name, contract_content`
 	rows, err := e.db.Query(sqlText, args...)
 	if err != nil {
 		return nil, err
@@ -271,19 +373,48 @@ ORDER BY 5 DESC, c.customer_name, c.contract_content`
 	return items, nil
 }
 
-func (e *Engine) collectCostInvoiceOpenItems(filterClause string, args []any) ([]contractAggregateOpenItem, error) {
-	sqlText := `
+func (e *Engine) collectCostInvoiceOpenItems(periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
+	unionSQL := `
 SELECT c.customer_name,
        c.contract_content,
-       COALESCE(SUM(cs.invoice_amount), 0),
-       COALESCE(SUM(cs.paid_amount), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(cs.invoice_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.invoice_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0)
+       COALESCE(cs.invoice_amount, 0) AS invoice_amount,
+       COALESCE(cs.paid_amount, 0) AS paid_amount,
+       CASE WHEN COALESCE(cs.invoice_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.invoice_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END AS open_amount
 FROM fin_cost_settlements cs
 JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE cs.year_month BETWEEN ? AND ?` + filterClause + `
-GROUP BY c.customer_name, c.contract_content
-HAVING COALESCE(SUM(CASE WHEN COALESCE(cs.invoice_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.invoice_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END), 0) > 0
-ORDER BY 5 DESC, c.customer_name, c.contract_content`
+WHERE cs.year_month BETWEEN ? AND ?`
+	args := []any{periodFrom, periodTo}
+	if strings.TrimSpace(like) != "" {
+		unionSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		args = append(args, like, like)
+	}
+	if e.hasCostSettlementGroupTables() {
+		groupContent := e.mergedGroupContractContentSQL("fin_cost_settlement_group_members", "g")
+		unionSQL += `
+UNION ALL
+SELECT g.customer_name,
+       ` + groupContent + ` AS contract_content,
+       COALESCE(g.invoice_amount, 0) AS invoice_amount,
+       COALESCE(g.paid_amount, 0) AS paid_amount,
+       CASE WHEN COALESCE(g.invoice_amount, 0) > COALESCE(g.paid_amount, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.paid_amount, 0) ELSE 0 END AS open_amount
+FROM fin_cost_settlement_groups g
+WHERE g.year_month BETWEEN ? AND ?`
+		args = append(args, periodFrom, periodTo)
+		if strings.TrimSpace(like) != "" {
+			unionSQL += ` AND g.customer_name LIKE ?`
+			args = append(args, like)
+		}
+	}
+	sqlText := `
+SELECT customer_name,
+       contract_content,
+       COALESCE(SUM(invoice_amount), 0),
+       COALESCE(SUM(paid_amount), 0),
+       COALESCE(SUM(open_amount), 0)
+FROM (` + unionSQL + `) cost_invoice_open_items
+GROUP BY customer_name, contract_content
+HAVING COALESCE(SUM(open_amount), 0) > 0
+ORDER BY 5 DESC, customer_name, contract_content`
 	rows, err := e.db.Query(sqlText, args...)
 	if err != nil {
 		return nil, err
@@ -311,10 +442,10 @@ func contractAggregateSourceTablesForMetrics(requestedMetrics []string) []string
 	configured := getRuleConfig().ContractSourceTables(contractAggregateRole)
 	tables := []string{"fin_contracts"}
 	if contractAggregateNeedsRevenueData(requestedMetrics) {
-		tables = append(tables, "fin_fund_income")
+		tables = append(tables, "fin_fund_income", "fin_fund_income_groups", "fin_fund_income_group_members")
 	}
 	if contractAggregateNeedsCostData(requestedMetrics) {
-		tables = append(tables, "fin_cost_settlements")
+		tables = append(tables, "fin_cost_settlements", "fin_cost_settlement_groups", "fin_cost_settlement_group_members")
 	}
 	return filterSourceTables(configured, tables...)
 }
