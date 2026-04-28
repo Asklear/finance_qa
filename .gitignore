@@ -31,6 +31,8 @@ uploads/
 test_data/
 test_questions*.txt
 scratch/
+tmp/
+docs/superpowers/
 tests/scripts/verification_v2.go
 .gstack/
 .env
