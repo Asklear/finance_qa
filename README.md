@@ -62,6 +62,34 @@ go build ./cmd/financeqa/...
 ./financeqa query "今年客户收入总和汇总"
 ```
 
+### 2.1 飞书主动扫描（V1）
+
+V1 不需要 webhook 回调地址，也不需要轮询自己的回调接口；直接由定时任务主动调用飞书 API，扫描已配置的飞书财务表格和 PDF 云盘文件夹。
+
+运行前需要设置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`，并确保飞书应用有云盘文件列表、下载、导出权限，且已被授权访问目标文件/文件夹。
+
+```bash
+# 1. 写入默认飞书来源：1 个财务表格 + 3 个 PDF 文件夹
+./financeqa feishu seed-sources --db "$FINANCEQA_PG_DSN"
+
+# 2. 查看来源状态
+./financeqa feishu sources --db "$FINANCEQA_PG_DSN"
+
+# 3. 扫描全部来源
+./financeqa feishu scan --db "$FINANCEQA_PG_DSN" --company "南京优集数据科技有限公司"
+
+# 4. 只扫描一个来源
+./financeqa feishu sync-once --db "$FINANCEQA_PG_DSN" --source-token Iel5bFZWSoGF7hxjyPpcn5Elnqd
+```
+
+PDF 扫描规则：同文件夹 + 同文件名视为同一业务位置，内容 hash 变化才重新进入待 OCR 状态；云盘中消失的 PDF 会在 `contract_main` 标记为 `sync_status='deleted'`，不会硬删除 OCR 记录。财务表格按整份 `.xlsx` 快照导入，hash 未变则跳过，hash 变化则复用现有导入链路做整表刷新。
+
+定时运行示例：
+
+```cron
+*/10 * * * * cd /root/finance_qa && ./financeqa feishu scan --db "$FINANCEQA_PG_DSN" --company "南京优集数据科技有限公司" >> /var/log/financeqa-feishu.log 2>&1
+```
+
 ### 3. 运行测试套件
 新重构版本的测试已深度囊括各项业务边界：
 ```bash
