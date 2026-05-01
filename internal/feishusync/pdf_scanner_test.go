@@ -231,6 +231,7 @@ func TestPDFScannerSkipsNonPDF(t *testing.T) {
 type fakeFeishuClient struct {
 	files            []feishu.DriveFile
 	downloads        map[string][]byte
+	exported         map[string][]byte
 	downloadedTokens []string
 }
 
@@ -255,8 +256,11 @@ func (c *fakeFeishuClient) DownloadFile(_ context.Context, fileToken, destPath s
 	return os.WriteFile(destPath, c.downloads[fileToken], 0o644)
 }
 
-func (c *fakeFeishuClient) ExportToXLSX(_ context.Context, _, _ string) error {
-	return nil
+func (c *fakeFeishuClient) ExportToXLSX(_ context.Context, fileToken, destPath string) error {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(destPath, c.exported[fileToken], 0o644)
 }
 
 type recordingOCRDispatcher struct {
