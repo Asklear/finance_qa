@@ -229,6 +229,22 @@ func TestContractDetailPageFallbackUsesMarkdownText(t *testing.T) {
 	assertContractDetailResultSafe(t, res)
 }
 
+func TestContractDetailIgnoresDeletedFeishuContracts(t *testing.T) {
+	engine := newContractDetailTestEngine(t)
+	defer engine.Close()
+
+	res := engine.Query("已删合同付款条款是什么？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if strings.Contains(res.Message, "已删合同") || strings.Contains(res.Message, "不应返回") {
+		t.Fatalf("deleted contract should not be returned: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "当前没有在合同明细库里匹配到这份合同") {
+		t.Fatalf("message should explain no active match, got: %s", res.Message)
+	}
+}
+
 func newContractDetailTestEngine(t *testing.T) *query.Engine {
 	t.Helper()
 	dbPath := buildContractDetailTestDB(t)
@@ -266,7 +282,8 @@ func buildContractDetailTestDB(t *testing.T) string {
 			payment_method TEXT,
 			tax_rate REAL,
 			service_scope TEXT,
-			file_name TEXT
+			file_name TEXT,
+			sync_status TEXT
 		)`,
 		`CREATE TABLE contract_pages (
 			id INTEGER PRIMARY KEY,
@@ -317,6 +334,17 @@ func buildContractDetailTestDB(t *testing.T) string {
 			'2026-01-05', '2026-01-01', '2026-12-31', 124500, 'CNY',
 			'按月结算', '资源用量单价', '甲方收到合格发票后30日内付款',
 			'银行转账', 0.06, '边缘计算资源服务', '百度边缘计算资源服务协议.pdf'
+		)`,
+		`INSERT INTO contract_main(
+			id, contract_number, contract_title, party_a, party_b, sign_date,
+			start_date, end_date, contract_amount, amount_currency, settlement_cycle,
+			settlement_unit_price, payment_terms, payment_method, tax_rate, service_scope, file_name, sync_status
+		) VALUES (
+			2, 'DELETED-2026', '已删合同',
+			'已删除客户', '南京优集数据科技有限公司',
+			'2026-02-01', '2026-02-01', '2026-12-31', 10000, 'CNY',
+			'按月结算', '固定单价', '不应返回',
+			'银行转账', 0.06, '已删除服务', '已删合同.pdf', 'deleted'
 		)`,
 		`INSERT INTO contract_pages(id, contract_id, page_num, page_number, markdown_text, plain_text) VALUES
 			(11, 1, 1, 1, '# 服务范围\n乙方提供边缘计算资源服务。', '乙方提供边缘计算资源服务。'),

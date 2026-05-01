@@ -176,6 +176,9 @@ func (e *Engine) matchContractDetailCandidates(ctx context.Context, spec QuerySp
 		selects = append(selects, contractDetailSelectExpr(cols, field))
 	}
 	sqlText := "SELECT " + strings.Join(selects, ", ") + " FROM contract_main"
+	if filter := contractDetailActiveMainFilter(cols); filter != "" {
+		sqlText += " WHERE " + filter
+	}
 	sqlText += " ORDER BY " + contractDetailOrderExpr(cols) + " LIMIT 200"
 
 	args := []any{}
@@ -261,6 +264,13 @@ func contractDetailOrderExpr(cols map[string]bool) string {
 		return "contract_title"
 	}
 	return "id"
+}
+
+func contractDetailActiveMainFilter(cols map[string]bool) string {
+	if cols["sync_status"] {
+		return "(sync_status IS NULL OR sync_status <> 'deleted')"
+	}
+	return ""
 }
 
 func scanContractDetailCandidate(rows *sql.Rows) (contractDetailCandidate, error) {
