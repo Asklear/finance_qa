@@ -96,6 +96,100 @@ func TestRepositoryUpdatesSourceState(t *testing.T) {
 	}
 }
 
+func TestRepositoryContractPDFState(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	ctx := context.Background()
+
+	id, err := repo.UpsertContractPDFState(ctx, feishusync.ContractPDFState{
+		FileName:          "合同A.pdf",
+		FileHash:          "hash-a",
+		StorageKey:        "/tmp/hash-a.pdf",
+		FeishuFileToken:   "token-a",
+		FeishuParentToken: "folder-a",
+		FeishuSlotKey:     "folder-a:合同a.pdf",
+		FileSize:          12,
+		SyncStatus:        feishusync.SyncStatusActive,
+		OCRStatus:         feishusync.OCRStatusPending,
+	})
+	if err != nil {
+		t.Fatalf("upsert contract state: %v", err)
+	}
+	if id == 0 {
+		t.Fatalf("contract id should be set")
+	}
+
+	byHash, ok, err := repo.FindContractByFileHash(ctx, "hash-a")
+	if err != nil {
+		t.Fatalf("find by hash: %v", err)
+	}
+	if !ok || byHash.ID != id || byHash.FileName != "合同A.pdf" {
+		t.Fatalf("find by hash = %#v ok=%v", byHash, ok)
+	}
+
+	bySlot, ok, err := repo.FindActiveContractBySlot(ctx, "folder-a:合同a.pdf")
+	if err != nil {
+		t.Fatalf("find by slot: %v", err)
+	}
+	if !ok || bySlot.ID != id || bySlot.FeishuFileToken != "token-a" {
+		t.Fatalf("find by slot = %#v ok=%v", bySlot, ok)
+	}
+
+	deleted, err := repo.MarkContractDeletedByMissingTokens(ctx, "folder-a", []string{"other-token"})
+	if err != nil {
+		t.Fatalf("mark deleted: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted count = %d, want 1", deleted)
+	}
+	afterDelete, ok, err := repo.FindActiveContractBySlot(ctx, "folder-a:合同a.pdf")
+	if err != nil {
+		t.Fatalf("find after delete: %v", err)
+	}
+	if ok {
+		t.Fatalf("deleted contract should not be active: %#v", afterDelete)
+	}
+}
+
+func TestRepositoryInsertDuplicateLogIsBestEffort(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+
+	err := repo.InsertDuplicateLog(context.Background(), feishusync.DuplicateLog{
+		EventType:          feishusync.DuplicateEventSameHash,
+		SourceFileToken:    "token-new",
+		ExistingContractID: 1,
+		FileHash:           "hash-a",
+		SlotKey:            "folder-a:合同a.pdf",
+		Message:            "same hash duplicate",
+		MetadataJSON:       `{"source":"test"}`,
+	})
+	if err != nil {
+		t.Fatalf("insert duplicate log: %v", err)
+	}
+
+	var count int
+	if err := sqlDB.QueryRow(`SELECT COUNT(1) FROM contract_duplicate_logs WHERE event_type = ?`, feishusync.DuplicateEventSameHash).Scan(&count); err != nil {
+		t.Fatalf("count duplicate logs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("duplicate log count = %d, want 1", count)
+	}
+
+	if _, err := sqlDB.Exec(`DROP TABLE contract_duplicate_logs`); err != nil {
+		t.Fatalf("drop duplicate log table: %v", err)
+	}
+	if err := repo.InsertDuplicateLog(context.Background(), feishusync.DuplicateLog{EventType: feishusync.DuplicateEventSameHash}); err != nil {
+		t.Fatalf("missing duplicate log table should be ignored: %v", err)
+	}
+}
+
 func openFeishuSyncTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -109,6 +203,46 @@ func openFeishuSyncTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	return sqlDB
+}
+
+func createContractPDFStateFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	stmts := []string{
+		`CREATE TABLE contract_main (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_name TEXT,
+			file_hash TEXT,
+			storage_key TEXT,
+			feishu_file_token TEXT,
+			feishu_parent_token TEXT,
+			feishu_slot_key TEXT,
+			feishu_file_name TEXT,
+			file_size INTEGER,
+			sync_status TEXT,
+			ocr_status TEXT,
+			feishu_deleted_at TIMESTAMP,
+			last_seen_at TIMESTAMP
+		)`,
+		`CREATE TABLE contract_duplicate_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_type TEXT,
+			source_file_token TEXT,
+			existing_contract_id INTEGER,
+			target_contract_id INTEGER,
+			file_hash TEXT,
+			old_file_hash TEXT,
+			slot_key TEXT,
+			message TEXT,
+			metadata_json TEXT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec fixture sql: %v\n%s", err, stmt)
+		}
+	}
 }
 
 func mustSingleSource(t *testing.T, repo *feishusync.Repository) feishusync.SyncSource {

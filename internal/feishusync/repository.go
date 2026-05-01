@@ -158,6 +158,236 @@ WHERE id = ?
 	return err
 }
 
+func (r *Repository) FindContractByFileHash(ctx context.Context, hash string) (ContractPDFState, bool, error) {
+	hash = strings.TrimSpace(hash)
+	if hash == "" {
+		return ContractPDFState{}, false, nil
+	}
+	return r.findContractPDFState(ctx, `file_hash = ?`, hash)
+}
+
+func (r *Repository) FindActiveContractBySlot(ctx context.Context, slotKey string) (ContractPDFState, bool, error) {
+	slotKey = strings.TrimSpace(slotKey)
+	if slotKey == "" {
+		return ContractPDFState{}, false, nil
+	}
+	return r.findContractPDFState(ctx, `feishu_slot_key = ? AND (sync_status IS NULL OR sync_status <> ?)`, slotKey, SyncStatusDeleted)
+}
+
+func (r *Repository) UpsertContractPDFState(ctx context.Context, state ContractPDFState) (int64, error) {
+	if state.SyncStatus == "" {
+		state.SyncStatus = SyncStatusActive
+	}
+	if state.OCRStatus == "" {
+		state.OCRStatus = OCRStatusNone
+	}
+	if strings.TrimSpace(state.FeishuFileToken) != "" {
+		if existing, ok, err := r.findContractPDFState(ctx, `feishu_file_token = ?`, strings.TrimSpace(state.FeishuFileToken)); err != nil {
+			return 0, err
+		} else if ok {
+			state.ID = existing.ID
+		}
+	}
+	if state.ID == 0 && strings.TrimSpace(state.FeishuSlotKey) != "" {
+		if existing, ok, err := r.findContractPDFState(ctx, `feishu_slot_key = ?`, strings.TrimSpace(state.FeishuSlotKey)); err != nil {
+			return 0, err
+		} else if ok {
+			state.ID = existing.ID
+		}
+	}
+
+	if state.ID != 0 {
+		_, err := r.db.ExecContext(ctx, `
+UPDATE contract_main
+SET file_name = ?,
+    file_hash = ?,
+    storage_key = ?,
+    feishu_file_token = ?,
+    feishu_parent_token = ?,
+    feishu_slot_key = ?,
+    feishu_file_name = ?,
+    file_size = ?,
+    sync_status = ?,
+    ocr_status = ?,
+    feishu_deleted_at = NULL,
+    last_seen_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`, nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuSlotKey), nullableString(state.FileName), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
+		return state.ID, err
+	}
+
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+INSERT INTO contract_main(
+	file_name, file_hash, storage_key, feishu_file_token, feishu_parent_token,
+	feishu_slot_key, feishu_file_name, file_size, sync_status, ocr_status, last_seen_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+RETURNING id
+`, nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuSlotKey), nullableString(state.FileName), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
+	return id, err
+}
+
+func (r *Repository) MarkContractDeletedByMissingTokens(ctx context.Context, folderToken string, activeTokens []string) (int64, error) {
+	folderToken = strings.TrimSpace(folderToken)
+	if folderToken == "" {
+		return 0, nil
+	}
+	args := []any{SyncStatusDeleted, folderToken}
+	filter := `feishu_parent_token = ? AND feishu_file_token IS NOT NULL AND TRIM(feishu_file_token) <> '' AND (sync_status IS NULL OR sync_status <> 'deleted')`
+	if len(activeTokens) > 0 {
+		placeholders := make([]string, 0, len(activeTokens))
+		for _, token := range activeTokens {
+			token = strings.TrimSpace(token)
+			if token == "" {
+				continue
+			}
+			placeholders = append(placeholders, "?")
+			args = append(args, token)
+		}
+		if len(placeholders) > 0 {
+			filter += ` AND feishu_file_token NOT IN (` + strings.Join(placeholders, ",") + `)`
+		}
+	}
+	res, err := r.db.ExecContext(ctx, `
+UPDATE contract_main
+SET sync_status = ?,
+    feishu_deleted_at = CURRENT_TIMESTAMP,
+    last_seen_at = CURRENT_TIMESTAMP
+WHERE `+filter, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (r *Repository) InsertDuplicateLog(ctx context.Context, log DuplicateLog) error {
+	if ok, err := r.tableExists(ctx, "contract_duplicate_logs"); err != nil || !ok {
+		return nil
+	}
+	if ok, err := r.columnsExist(ctx, "contract_duplicate_logs", []string{
+		"event_type",
+		"source_file_token",
+		"existing_contract_id",
+		"target_contract_id",
+		"file_hash",
+		"old_file_hash",
+		"slot_key",
+		"message",
+		"metadata_json",
+	}); err != nil || !ok {
+		return nil
+	}
+
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO contract_duplicate_logs(
+	event_type, source_file_token, existing_contract_id, target_contract_id,
+	file_hash, old_file_hash, slot_key, message, metadata_json
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, nullableString(log.EventType), nullableString(log.SourceFileToken), nullableInt64(log.ExistingContractID), nullableInt64(log.TargetContractID), nullableString(log.FileHash), nullableString(log.OldFileHash), nullableString(log.SlotKey), nullableString(log.Message), nullableString(log.MetadataJSON))
+	return err
+}
+
+func (r *Repository) findContractPDFState(ctx context.Context, filter string, args ...any) (ContractPDFState, bool, error) {
+	query := `
+SELECT
+	id,
+	COALESCE(file_name, ''),
+	COALESCE(file_hash, ''),
+	COALESCE(storage_key, ''),
+	COALESCE(feishu_file_token, ''),
+	COALESCE(feishu_parent_token, ''),
+	COALESCE(feishu_slot_key, ''),
+	COALESCE(file_size, 0),
+	COALESCE(sync_status, ''),
+	COALESCE(ocr_status, '')
+FROM contract_main
+WHERE ` + filter + `
+ORDER BY id DESC
+LIMIT 1`
+	var state ContractPDFState
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&state.ID,
+		&state.FileName,
+		&state.FileHash,
+		&state.StorageKey,
+		&state.FeishuFileToken,
+		&state.FeishuParentToken,
+		&state.FeishuSlotKey,
+		&state.FileSize,
+		&state.SyncStatus,
+		&state.OCRStatus,
+	)
+	if err == sql.ErrNoRows {
+		return ContractPDFState{}, false, nil
+	}
+	if err != nil {
+		return ContractPDFState{}, false, err
+	}
+	return state, true, nil
+}
+
+func (r *Repository) tableExists(ctx context.Context, tableName string) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name = ?`, tableName).Scan(&count)
+	if err == nil {
+		return count > 0, nil
+	}
+
+	var regclass sql.NullString
+	err = r.db.QueryRowContext(ctx, `SELECT to_regclass(?)`, tableName).Scan(&regclass)
+	if err != nil {
+		return false, err
+	}
+	return regclass.Valid && strings.TrimSpace(regclass.String) != "", nil
+}
+
+func (r *Repository) columnsExist(ctx context.Context, tableName string, columns []string) (bool, error) {
+	existing := map[string]bool{}
+	rows, err := r.db.QueryContext(ctx, `PRAGMA table_info(`+tableName+`)`)
+	if err == nil {
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var cid int
+			var name string
+			var typ string
+			var notNull int
+			var defaultValue sql.NullString
+			var pk int
+			if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+				return false, err
+			}
+			existing[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+		return containsAllColumns(existing, columns), nil
+	}
+
+	rows, err = r.db.QueryContext(ctx, `
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name = ?
+`, tableName)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return containsAllColumns(existing, columns), nil
+}
+
 func nullableString(value string) any {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -171,6 +401,22 @@ func nullableTime(value time.Time) any {
 		return nil
 	}
 	return value.UTC()
+}
+
+func nullableInt64(value int64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
+}
+
+func containsAllColumns(existing map[string]bool, columns []string) bool {
+	for _, column := range columns {
+		if !existing[column] {
+			return false
+		}
+	}
+	return true
 }
 
 func parseDBTime(value string) time.Time {

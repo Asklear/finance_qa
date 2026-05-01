@@ -11,6 +11,16 @@ const (
 	SyncStatusMissing  = "missing"
 	SyncStatusError    = "error"
 	SyncStatusDisabled = "disabled"
+	SyncStatusDeleted  = "deleted"
+
+	OCRStatusNone    = "none"
+	OCRStatusPending = "pending"
+	OCRStatusDone    = "done"
+	OCRStatusFailed  = "failed"
+
+	DuplicateEventSameHash        = "same_hash_duplicate"
+	DuplicateEventSameSlotReplace = "same_slot_replaced"
+	DuplicateEventDeletedReupload = "deleted_then_reuploaded"
 )
 
 type SyncSource struct {
@@ -35,4 +45,29 @@ type SourceFilter struct {
 	SourceType      string
 	DueOnly         bool
 	IncludeDisabled bool
+}
+
+type ContractPDFState struct {
+	ID                int64  `json:"id"`
+	FileName          string `json:"file_name"`
+	FileHash          string `json:"file_hash"`
+	StorageKey        string `json:"storage_key"`
+	FeishuFileToken   string `json:"feishu_file_token"`
+	FeishuParentToken string `json:"feishu_parent_token"`
+	FeishuSlotKey     string `json:"feishu_slot_key"`
+	FileSize          int64  `json:"file_size"`
+	SyncStatus        string `json:"sync_status"`
+	OCRStatus         string `json:"ocr_status"`
+}
+
+type DuplicateLog struct {
+	EventType          string
+	SourceFileToken    string
+	ExistingContractID int64
+	TargetContractID   int64
+	FileHash           string
+	OldFileHash        string
+	SlotKey            string
+	Message            string
+	MetadataJSON       string
 }
