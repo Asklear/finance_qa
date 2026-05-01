@@ -52,6 +52,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runHostData(args[1:], stdout, stderr)
 	case "dimensions":
 		return runDimensions(args[1:], stdout, stderr)
+	case "feishu":
+		return runFeishu(args[1:], stdout, stderr)
 	default:
 		return runQuery(args, stdout, stderr)
 	}
@@ -324,4 +326,8 @@ func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "  financeqa dimensions import-members --db <dsn> --dimension <code> --file <file> [--validate-only] [--skip-existing] [--update-existing]")
 	fmt.Fprintln(out, "  financeqa dimensions import-rules --db <dsn> --file <file> [--company <name>] [--validate-only] [--skip-existing] [--update-existing]")
 	fmt.Fprintln(out, "  financeqa dimensions preview-import --db <dsn> --type <dimensions|members> --file <file> [--dimension <code>]")
+	fmt.Fprintln(out, "  financeqa feishu seed-sources [--db <dsn>]")
+	fmt.Fprintln(out, "  financeqa feishu sources [--db <dsn>] [--source-type <type>]")
+	fmt.Fprintln(out, "  financeqa feishu scan [--db <dsn>] [--company <name>]")
+	fmt.Fprintln(out, "  financeqa feishu sync-once [--db <dsn>] --source-token <token>")
 }
