@@ -110,6 +110,31 @@ func TestBootstrapSeedsIdempotencyPolicies(t *testing.T) {
 	}
 }
 
+func TestBootstrapCreatesFeishuSyncSources(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "feishu-sync.sqlite")
+	if err := db.Bootstrap(context.Background(), dbPath); err != nil {
+		t.Fatalf("bootstrap failed: %v", err)
+	}
+
+	sqlDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	assertSQLiteTableExists(t, sqlDB, "feishu_sync_sources")
+	assertSQLiteColumnsExist(t, sqlDB, "feishu_sync_sources",
+		"source_type",
+		"source_token",
+		"source_url",
+		"sync_status",
+		"last_content_hash",
+		"metadata_json",
+	)
+}
+
 func TestBootstrapAddsContractExtensionColumnsToLegacySQLiteTables(t *testing.T) {
 	t.Parallel()
 
@@ -245,6 +270,19 @@ func TestBootstrapAddsContractExtensionColumnsToLegacySQLiteTables(t *testing.T)
 	assertSQLiteColumnsExist(t, sqlDB, "fin_fund_income_group_members",
 		"source_row_number",
 	)
+}
+
+func assertSQLiteTableExists(t *testing.T, db *sql.DB, table string) {
+	t.Helper()
+
+	var count int
+	err := db.QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name = ?`, table).Scan(&count)
+	if err != nil {
+		t.Fatalf("query sqlite_master for table %s: %v", table, err)
+	}
+	if count != 1 {
+		t.Fatalf("expected table %q to exist", table)
+	}
 }
 
 func assertSQLiteColumnsExist(t *testing.T, db *sql.DB, table string, columns ...string) {

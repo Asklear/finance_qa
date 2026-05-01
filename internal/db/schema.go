@@ -195,6 +195,27 @@ CREATE TABLE IF NOT EXISTS table_idempotency_policies (
     enabled INTEGER NOT NULL DEFAULT 1,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS feishu_sync_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_type TEXT NOT NULL,
+    source_token TEXT NOT NULL,
+    source_url TEXT,
+    display_name TEXT,
+    parent_token TEXT,
+    sync_mode TEXT NOT NULL DEFAULT 'active_scan',
+    sync_status TEXT NOT NULL DEFAULT 'active',
+    last_revision TEXT,
+    last_content_hash TEXT,
+    last_event_at TIMESTAMP,
+    next_scan_at TIMESTAMP,
+    last_sync_at TIMESTAMP,
+    last_success_at TIMESTAMP,
+    error_message TEXT,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source_type, source_token)
+);
 CREATE TABLE IF NOT EXISTS meta_table_comments (
     table_name TEXT PRIMARY KEY,
     comment TEXT,
@@ -225,6 +246,7 @@ CREATE INDEX IF NOT EXISTS idx_fin_fund_income_groups_period ON fin_fund_income_
 CREATE INDEX IF NOT EXISTS idx_fin_fund_income_group_members_group ON fin_fund_income_group_members(group_id);
 CREATE INDEX IF NOT EXISTS idx_fin_fund_income_group_members_contract ON fin_fund_income_group_members(contract_id);
 CREATE INDEX IF NOT EXISTS idx_table_idempotency_enabled ON table_idempotency_policies(enabled);
+CREATE INDEX IF NOT EXISTS idx_feishu_sync_sources_status ON feishu_sync_sources(sync_status, next_scan_at);
 CREATE TABLE IF NOT EXISTS dimensions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     code TEXT UNIQUE NOT NULL,       
