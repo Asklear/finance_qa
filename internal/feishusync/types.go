@@ -1,6 +1,9 @@
 package feishusync
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 const (
 	SourceTypePDFFolder       = "pdf_folder"
@@ -70,4 +73,26 @@ type DuplicateLog struct {
 	SlotKey            string
 	Message            string
 	MetadataJSON       string
+}
+
+type ScanResult struct {
+	SourceID  int64  `json:"source_id,omitempty"`
+	Source    string `json:"source,omitempty"`
+	Scanned   int    `json:"scanned"`
+	Skipped   int    `json:"skipped"`
+	Created   int    `json:"created"`
+	Reused    int    `json:"reused"`
+	Replaced  int    `json:"replaced"`
+	Deleted   int64  `json:"deleted"`
+	OCRQueued int    `json:"ocr_queued"`
+}
+
+type OCRDispatcher interface {
+	EnqueueOCR(ctx context.Context, contractID int64, filePath string, fileHash string) error
+}
+
+type NoopOCRDispatcher struct{}
+
+func (NoopOCRDispatcher) EnqueueOCR(context.Context, int64, string, string) error {
+	return nil
 }
