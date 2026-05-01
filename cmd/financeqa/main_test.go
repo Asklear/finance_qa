@@ -98,6 +98,47 @@ func TestRunFeishuSeedSources(t *testing.T) {
 	}
 }
 
+func TestRunFeishuSourcesListsSeededSources(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "feishu-sources.sqlite")
+	code, _, stderr := runCLIForTest(t, "feishu", "seed-sources", "--db", dbPath)
+	if code != 0 {
+		t.Fatalf("seed code = %d, stderr = %s", code, stderr)
+	}
+
+	code, stdout, stderr := runCLIForTest(t, "feishu", "sources", "--db", dbPath, "--source-type", "pdf_folder")
+	if code != 0 {
+		t.Fatalf("sources code = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "JeTEfS3qQly8RJd0CJNcASumnCg") {
+		t.Fatalf("sources stdout = %q", stdout)
+	}
+	if strings.Contains(stdout, "Iel5bFZWSoGF7hxjyPpcn5Elnqd") {
+		t.Fatalf("source type filter should exclude workbook: %q", stdout)
+	}
+}
+
+func TestRunFeishuScanRequiresCredentials(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "feishu-scan.sqlite")
+	code, _, stderr := runCLIForTest(t, "feishu", "scan", "--db", dbPath)
+	if code != 1 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "FEISHU_APP_ID and FEISHU_APP_SECRET are required") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestRunFeishuSyncOnceRequiresSourceToken(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "feishu-sync-once.sqlite")
+	code, _, stderr := runCLIForTest(t, "feishu", "sync-once", "--db", dbPath)
+	if code != 2 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "--source-token is required") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
 func TestRunDimensionsListReturnsJSON(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dims.sqlite")
 	code, _, stderr := runCLIForTest(t, "init-db", "--db", dbPath)
@@ -164,6 +205,8 @@ func runCLIForTest(t *testing.T, args ...string) (int, string, string) {
 
 	t.Setenv("FINANCEQA_DB", "")
 	t.Setenv("FINANCEQA_PG_DSN", "")
+	t.Setenv("FEISHU_APP_ID", "")
+	t.Setenv("FEISHU_APP_SECRET", "")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
