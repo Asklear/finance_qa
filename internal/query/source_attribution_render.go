@@ -2,6 +2,8 @@ package query
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"strings"
 
 	dbpkg "financeqa/internal/db"
@@ -36,6 +38,7 @@ func (e *Engine) annotateSourceAttribution(spec QuerySpec, result Result) Result
 	if sourceNote == "" {
 		return result
 	}
+	sourceUpdateNote := e.buildSourceUpdateNote(collected, metadata)
 
 	result.Data["source_tables"] = collected
 	result.Data["primary_source_tables"] = primaryTables
@@ -58,9 +61,15 @@ func (e *Engine) annotateSourceAttribution(spec QuerySpec, result Result) Result
 	}
 	result.Data["source_note"] = sourceNote
 	result.Data["source_summary"] = sourceNote
+	if sourceUpdateNote != "" {
+		result.Data["source_update_note"] = sourceUpdateNote
+	}
 
 	if !strings.Contains(result.Message, "来源：") {
 		result.Message = strings.TrimSpace(result.Message) + "\n" + sourceNote
+	}
+	if sourceUpdateNote != "" && !strings.Contains(result.Message, "来源更新时间：") {
+		result.Message = strings.TrimSpace(result.Message) + "\n" + sourceUpdateNote
 	}
 	return result
 }
@@ -108,4 +117,91 @@ func shouldHideSourceTableFromBossNote(tableName string) bool {
 	default:
 		return false
 	}
+}
+
+func (e *Engine) buildSourceUpdateNote(tables []string, metadata map[string]dbpkg.TableSourceMetadata) string {
+	updatedAt := e.latestSourceUpdatedAt(tables, metadata)
+	if updatedAt == "" {
+		return ""
+	}
+	return "来源更新时间：" + updatedAt
+}
+
+func (e *Engine) latestSourceUpdatedAt(tables []string, metadata map[string]dbpkg.TableSourceMetadata) string {
+	rowLatest := ""
+	metaLatest := ""
+	for _, tableName := range tables {
+		if !shouldSkipSourceTableRowUpdate(tableName) {
+			if fromRows := e.latestTableUpdatedAt(tableName); fromRows != "" && fromRows > rowLatest {
+				rowLatest = fromRows
+				continue
+			}
+		}
+		if shouldHideSourceTableFromBossNote(tableName) {
+			continue
+		}
+		if meta, ok := metadata[tableName]; ok {
+			if fromMeta := normalizeSourceUpdatedAt(meta.UpdatedAt); fromMeta != "" && fromMeta > metaLatest {
+				metaLatest = fromMeta
+			}
+		}
+	}
+	if rowLatest != "" {
+		return rowLatest
+	}
+	return metaLatest
+}
+
+func shouldSkipSourceTableRowUpdate(tableName string) bool {
+	switch baseSourceTableName(tableName) {
+	case "fin_fund_income_group_members", "fin_cost_settlement_group_members":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *Engine) latestTableUpdatedAt(tableName string) string {
+	base := baseSourceTableName(tableName)
+	cols := e.tableColumns(base)
+	if len(cols) == 0 {
+		cols = e.tableColumns(tableName)
+	}
+	col := ""
+	switch {
+	case cols["updated_at"]:
+		col = "updated_at"
+	case cols["created_at"]:
+		col = "created_at"
+	default:
+		return ""
+	}
+	target := tableName
+	if len(e.tableColumns(target)) == 0 && len(e.tableColumns(base)) > 0 {
+		target = base
+	}
+	var raw sql.NullString
+	query := fmt.Sprintf("SELECT COALESCE(CAST(MAX(%s) AS TEXT), '') FROM %s", col, target)
+	if err := e.db.QueryRow(query).Scan(&raw); err != nil {
+		return ""
+	}
+	return normalizeSourceUpdatedAt(raw.String)
+}
+
+func normalizeSourceUpdatedAt(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if idx := strings.Index(value, "T"); idx > 0 {
+		value = strings.Replace(value, "T", " ", 1)
+	}
+	value = strings.TrimSuffix(value, "Z")
+	if idx := strings.Index(value, "."); idx > 0 {
+		value = value[:idx]
+	}
+	if len(value) >= len("2006-01-02 15:04:05") {
+		return value[:len("2006-01-02 15:04:05")]
+	}
+	return value
 }

@@ -12,11 +12,25 @@ import (
 
 func TestCompanyAggregateMetricPrimarySourceTablesPreferMetricTableOverContractDimension(t *testing.T) {
 	dbPath := buildContractQueryTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
+		_ = db.Close()
 		t.Fatalf("new engine: %v", err)
 	}
 	defer engine.Close()
+	if _, err := db.Exec(`
+UPDATE fin_fund_income SET updated_at = '2026-05-05 08:30:00';
+UPDATE fin_fund_income_groups SET updated_at = '2026-05-05 09:00:00';
+UPDATE fin_contracts SET updated_at = '2026-05-04 18:00:00';
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed source updated_at: %v", err)
+	}
+	_ = db.Close()
 
 	res := engine.Query("2025年10月收入是多少？")
 	if !res.Success {
@@ -88,6 +102,13 @@ func TestCompanyAggregateMetricPrimarySourceTablesPreferMetricTableOverContractD
 	}
 	if sourceSummary == "" || !containsAll(sourceSummary, "优集资金收入计算表-副本.xlsx", "25年Q4收入明细") {
 		t.Fatalf("source_summary should expose concrete workbook lineage, got %q", sourceSummary)
+	}
+	sourceUpdateNote, _ := res.Data["source_update_note"].(string)
+	if sourceUpdateNote == "" || !strings.Contains(sourceUpdateNote, "来源更新时间：") || !strings.Contains(sourceUpdateNote, "2026-05-05 09:00:00") {
+		t.Fatalf("source_update_note should expose latest source update time, got %q", sourceUpdateNote)
+	}
+	if !strings.Contains(res.Message, sourceUpdateNote) {
+		t.Fatalf("message should append source update note %q, got %q", sourceUpdateNote, res.Message)
 	}
 }
 
