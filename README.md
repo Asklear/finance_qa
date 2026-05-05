@@ -48,11 +48,52 @@
 注意：
 1. `.env` 已加入 `.gitignore`，不会提交到仓库。
 2. 线上建议把 `.env` 放在 `/root/finance_qa/.env`，并设置权限 `600`。
+3. 飞书、OSS、Gemini 等密钥只放 `.env` 或线上 secret，不写入 README、日志或数据库。
+
+线上 `.env` 至少需要包含：
+
+```env
+# PostgreSQL
+PGHOST=...
+PGPORT=5432
+PGUSER=...
+PGPASSWORD=...
+PGDATABASE=...
+FINANCEQA_PG_SCHEMA=tenant_uhub
+
+# Feishu active scan
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=replace_with_secret
+FEISHU_AUTH_MODE=tenant
+# FEISHU_AUTH_MODE=user
+# FEISHU_USER_TOKEN_FILE=/root/finance_qa/secrets/feishu_user_token.json
+# FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
+FINANCEQA_FEISHU_SNAPSHOT_DIR=tmp/feishu_snapshots
+
+# OSS ODS
+OSS_ACCESS_KEY_ID=replace_with_access_key_id
+OSS_ACCESS_KEY_SECRET=replace_with_access_key_secret
+OSS_BUCKET=boss-agent
+OSS_ENDPOINT=https://oss-cn-shenzhen.aliyuncs.com
+OSS_CONTRACT_PREFIX=tenant/uhub/contract
+OSS_FINANCE_PREFIX=tenant/uhub/finance
+OSS_SMOKE_PREFIX=tmp/financeqa-smoke
+
+# Gemini OCR
+GEMINI_API_KEY=replace_with_key
+GOOGLE_GEMINI_BASE_URL=https://api.ikuncode.cc
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_PROXY=
+OCR_WORKER_CONCURRENCY=2
+```
 
 ### 2. 构建与运行
 ```bash
 # 1. 编译系统
 go build ./cmd/financeqa/...
+
+# 如果从 macOS 本机部署到 Linux 服务器，使用交叉编译
+GOOS=linux GOARCH=amd64 go build -o financeqa ./cmd/financeqa
 
 # 2. 从本地文件夹全量导入初始化数据库
 ./financeqa sync "/path/to/exported/excel/files"
@@ -64,31 +105,169 @@ go build ./cmd/financeqa/...
 
 ### 2.1 飞书主动扫描（V1）
 
-V1 不需要 webhook 回调地址，也不需要轮询自己的回调接口；直接由定时任务主动调用飞书 API，扫描已配置的飞书财务表格和 PDF 云盘文件夹。
+V1 不需要 webhook 回调地址，也不需要轮询自己的回调接口；由服务器定时任务主动调用飞书 API，扫描已配置的飞书财务表格和 PDF 云盘文件夹。线上推荐用 `systemd timer` 管理扫描和 OCR，而不是 cron：可以用 `systemctl` 查看下次运行、失败状态和日志，并且 `oneshot` service 未结束时不会叠加启动同一个任务。
 
 运行前需要设置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`，并确保飞书应用有云盘文件列表、下载、导出权限，且已被授权访问目标文件/文件夹。
 
+飞书应用权限可导入：
+
+```json
+{
+  "scopes": {
+    "tenant": [
+      "drive:drive:readonly",
+      "drive:drive.metadata:readonly",
+      "drive:file:readonly",
+      "drive:export:readonly",
+      "sheets:spreadsheet:readonly"
+    ],
+    "user": []
+  }
+}
+```
+
+还需要把应用授权到具体文档：PDF 来源文件夹至少可阅读/可下载，财务表格至少可阅读/可导出。只开应用权限但没有文档协作者授权时，真实扫描仍会被飞书拒绝。
+
+如果目标文件夹/表格无法把应用加入协作者，可以改用用户身份扫描。先在飞书开放平台把 OAuth 回调地址配置为：
+
+```text
+http://127.0.0.1:8787/feishu/oauth/callback
+```
+
+然后通过 SSH 端口转发在服务器上执行一次用户授权：
+
 ```bash
-# 1. 写入默认飞书来源：1 个财务表格 + 3 个 PDF 文件夹
-./financeqa feishu seed-sources --db "$FINANCEQA_PG_DSN"
+ssh -L 8787:127.0.0.1:8787 lzh 'cd /root/finance_qa && ./financeqa feishu oauth-login --token-file /root/finance_qa/secrets/feishu_user_token.json'
+```
+
+命令会打印授权链接，在本机浏览器打开并同意授权；回调会通过 SSH 隧道写入服务器 token file。授权后服务器 `.env` 配置：
+
+```env
+FEISHU_AUTH_MODE=user
+FEISHU_USER_TOKEN_FILE=/root/finance_qa/secrets/feishu_user_token.json
+FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
+```
+
+后续 `feishu scan` 会自动刷新 `user_access_token`，不需要每次打开浏览器。
+
+`seed-sources` 不再内置任何租户 token，必须先通过环境变量或 JSON 文件配置来源。服务器推荐使用文件，避免把很长的 JSON 写进 systemd unit：
+
+```json
+[
+  {
+    "source_type": "finance_workbook",
+    "source_token": "replace_with_workbook_token",
+    "source_url": "https://example.feishu.cn/file/replace_with_workbook_token",
+    "display_name": "飞书财务表格",
+    "metadata_json": {"oss_prefix": "tenant/uhub/finance"}
+  },
+  {
+    "source_type": "pdf_folder",
+    "source_token": "replace_with_folder_token",
+    "source_url": "https://example.feishu.cn/drive/folder/replace_with_folder_token",
+    "display_name": "飞书 PDF 文件夹",
+    "metadata_json": {"oss_prefix": "tenant/uhub/contract"}
+  }
+]
+```
+
+```env
+FEISHU_SYNC_SOURCES_FILE=/root/finance_qa/secrets/feishu_sources.json
+# 或 FEISHU_SYNC_SOURCES_JSON='[...]'
+```
+
+```bash
+# 1. 写入已配置的飞书来源
+./financeqa feishu seed-sources
 
 # 2. 查看来源状态
-./financeqa feishu sources --db "$FINANCEQA_PG_DSN"
+./financeqa feishu sources
 
 # 3. 扫描全部来源
-./financeqa feishu scan --db "$FINANCEQA_PG_DSN" --company "南京优集数据科技有限公司"
+./financeqa feishu scan --company "南京优集数据科技有限公司"
 
 # 4. 只扫描一个来源
-./financeqa feishu sync-once --db "$FINANCEQA_PG_DSN" --source-token Iel5bFZWSoGF7hxjyPpcn5Elnqd
+./financeqa feishu sync-once --source-token replace_with_source_token
 ```
 
-PDF 扫描规则：同文件夹 + 同文件名视为同一业务位置，内容 hash 变化才重新进入待 OCR 状态；云盘中消失的 PDF 会在 `contract_main` 标记为 `sync_status='deleted'`，不会硬删除 OCR 记录。财务表格按整份 `.xlsx` 快照导入，hash 未变则跳过，hash 变化则复用现有导入链路做整表刷新。
+PDF 扫描规则：扫描器会递归遍历飞书来源文件夹，按“来源根目录 + 相对路径 + 文件名”识别同一业务位置，内容 hash 变化才重新进入待 OCR 状态；合同 PDF 写入 `contract_main`，发票 PDF 写入 `contract_invoices`，云盘中消失的文件会在对应表标记为 `sync_status='deleted'`，不会硬删除 OCR 记录。路径中包含 `发票`、`开票` 或 `invoice` 的 PDF 会标记为发票，关系 key 取去掉发票目录后的业务目录；同一关系 key 下的发票通过 `contract_invoices.contract_id` 关联到合同，支持发票晚于合同上传。未匹配到合同的发票不会猜测落库，会等待下一轮扫描。财务表格按整份 `.xlsx` 快照导入，hash 未变则跳过，hash 变化则复用现有导入链路做整表刷新；导出的 Excel 批注/单元格备注会按单元格坐标保存到 `source_cell_notes`，覆盖 `fin_fund_income`、`fin_cost_settlements` 及对应合并组表。
 
-定时运行示例：
+如果配置了 `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET`、`OSS_BUCKET`、`OSS_ENDPOINT`，扫描会把飞书原始 PDF/XLSX 快照上传到 OSS ODS 层，但只使用现有历史业务前缀：合同/发票默认在 `tenant/uhub/contract` 并保留飞书相对目录，财务表默认在 `tenant/uhub/finance`；只有文件名能识别年份，或 `feishu_sync_sources.metadata_json.oss_prefix` 明确指定 `tenant/uhub/finance/2025`、`tenant/uhub/finance/2026` 时，才进入年份子目录。合同/发票的 `contract_main.storage_key`、`contract_invoices.storage_key` 和财务来源的 `feishu_sync_sources.metadata_json.storage_key` 都保存 OSS object key 相对路径，例如 `tenant/uhub/contract/...pdf`，不保存 `s3://bucket/...`。上传前会先按 SHA256 查数据库；同 hash 直接复用已有 `storage_key`，不会重复上传。若目标 OSS key 已存在，会尝试读取远端对象 SHA256，一致时复用远端对象，不覆盖上传；不一致时才写入带 hash 后缀的新对象。未配置 OSS 时仍保留本地 snapshot 路径，便于本地开发。
 
-```cron
-*/10 * * * * cd /root/finance_qa && ./financeqa feishu scan --db "$FINANCEQA_PG_DSN" --company "南京优集数据科技有限公司" >> /var/log/financeqa-feishu.log 2>&1
+历史库如果已有 `s3://boss-agent/...` 形式的 `storage_key`，执行一次迁移即可改成相对 key：
+
+```bash
+psql "$FINANCEQA_PG_DSN" -v ON_ERROR_STOP=1 -f db/migrations/20260505_relative_storage_keys.sql
 ```
+
+如果飞书应用仍在审核中，无法真实调用飞书 API，可以先验证下游链路：
+
+```bash
+# OSS 真实上传/下载 smoke
+RUN_LIVE_OSS_SMOKE=1 go test ./internal/storage -run TestLiveOSSUploadDownloadSmoke -count=1 -v
+
+# 假设飞书已经返回文件后的 PDF/财务表处理逻辑
+go test ./internal/feishusync -run 'TestPDFScanner|TestWorkbookScanner' -count=1
+```
+
+systemd 定时运行：
+
+```bash
+# 安装或更新 unit
+sudo cp deploy/systemd/financeqa-feishu-scan.* /etc/systemd/system/
+sudo cp deploy/systemd/financeqa-ocr-worker.* /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# 启用定时器：飞书扫描在上次结束 10 分钟后再跑；OCR 在上次结束 5 分钟后再跑
+sudo systemctl enable --now financeqa-feishu-scan.timer
+sudo systemctl enable --now financeqa-ocr-worker.timer
+
+# 查看运行计划、最近一次状态和日志
+systemctl list-timers 'financeqa-*'
+systemctl status financeqa-feishu-scan.service
+journalctl -u financeqa-feishu-scan.service -n 100 --no-pager
+```
+
+### 2.2 Gemini OCR Worker
+
+飞书扫描只负责把发生变化的 PDF 写入待 OCR 状态：合同进入 `contract_main.ocr_status='pending'`，发票进入 `contract_invoices.ocr_status='pending'`。OCR 独立运行，按批次消费两张表的 pending 记录；合同结果写回 `contract_main` 和 `contract_pages` 全文，发票结果更新同一条 `contract_invoices` 记录，不再把发票 PDF 放进 `contract_main`。
+
+```bash
+# 处理待 OCR 的 PDF
+./financeqa ocr process-pending --limit 10 --concurrency 2
+
+# 使用 ikuncode 时不需要 GEMINI_PROXY；只有直连官方 Gemini 且网络需要时才设置代理
+
+# 调试单个 PDF，不写数据库
+./financeqa ocr process-file --file "/path/to/sample.pdf"
+
+# 也可以直接处理 contract_main.storage_key 中的 OSS 相对路径 PDF
+./financeqa ocr process-file --file "tenant/uhub/contract/优集客户合同/合同A.pdf"
+
+# 调试单个 PDF，并写回指定 contract_main.id
+./financeqa ocr process-file --file "/path/to/sample.pdf" --contract-id 123
+```
+
+OCR worker 的 timer 使用 `deploy/systemd/financeqa-ocr-worker.*`。默认命令会读取 `.env` 中的 `OCR_WORKER_LIMIT` 和 `OCR_WORKER_CONCURRENCY`；也可以直接手动运行：
+
+```bash
+./financeqa ocr process-pending --limit 10 --concurrency 2
+systemctl status financeqa-ocr-worker.service
+journalctl -u financeqa-ocr-worker.service -n 100 --no-pager
+```
+
+上线验收建议按顺序执行：
+
+```bash
+go test ./... -count=1
+go build -o financeqa ./cmd/financeqa/...
+RUN_LIVE_OSS_SMOKE=1 go test ./internal/storage -run TestLiveOSSUploadDownloadSmoke -count=1 -v
+./financeqa feishu seed-sources
+./financeqa feishu scan --company "南京优集数据科技有限公司"
+./financeqa ocr process-pending --limit 10 --concurrency 2
+```
+
+飞书审核通过前，最后两步真实扫描可能失败；这时只代表飞书访问尚未完成，不代表 OSS、OCR 或数据库下游不可用。
 
 ### 3. 运行测试套件
 新重构版本的测试已深度囊括各项业务边界：

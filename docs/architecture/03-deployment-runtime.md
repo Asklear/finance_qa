@@ -64,7 +64,12 @@ flowchart LR
         RT1["宿主 LLM"]
         RT2["finance_bridge.py"]
         RT3["/root/finance_qa/financeqa"]
+        RT4["systemd timer: feishu scan"]
+        RT5["systemd timer: ocr process-pending"]
         DB[("PostgreSQL default<br/>explicit SQLite only")]
+        FS["Feishu Drive API<br/>folders + workbook"]
+        OSS[("Aliyun OSS boss-agent<br/>tenant/uhub/contract<br/>tenant/uhub/finance")]
+        GM["Gemini OCR API<br/>ikuncode base url"]
         OUT["content[0].text JSON<br/>success + data + boss_reply + route_decision + bridge_meta"]
         RT1 --> RT2
         RT2 --> RT3
@@ -72,6 +77,12 @@ flowchart LR
         RT2 -. 校验 appendix 相对路径 .-> HR2
         RT3 --> DB
         RT3 -. 加载环境和规则 .-> HR5
+        RT4 --> RT3
+        RT4 --> FS
+        RT3 --> OSS
+        RT5 --> RT3
+        RT5 --> GM
+        RT5 --> OSS
         RT2 --> OUT
     end
 
@@ -119,3 +130,132 @@ flowchart LR
 3. `financeqa` 默认读取 PostgreSQL 配置；只有显式传入 SQLite 路径才使用本地兼容模式。
 4. 查询结果 JSON 会保留 `route_decision/probe_results/trace/executed_sql` 等审计字段，但宿主给老板回复时必须净化成业务语言。
 5. 如果 `finance-query` 无法稳定回答，bridge 会补调 `financeqa host-data`；若 `extraction_errors` 存在，宿主不能把半截 payload 当完整事实回答。
+
+## 飞书、OSS 与 OCR 部署
+
+V1 使用主动扫描，不部署 webhook 服务。线上用 `systemd timer` 管理两个后台任务，不再使用 cron。原因是 `systemd` 能统一管理状态、日志、失败记录和下次触发时间；`oneshot` service 还可以避免同一个任务在上一次未结束时重叠启动。
+
+```bash
+sudo cp deploy/systemd/financeqa-feishu-scan.* /etc/systemd/system/
+sudo cp deploy/systemd/financeqa-ocr-worker.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now financeqa-feishu-scan.timer
+sudo systemctl enable --now financeqa-ocr-worker.timer
+
+systemctl list-timers 'financeqa-*'
+systemctl status financeqa-feishu-scan.service
+systemctl status financeqa-ocr-worker.service
+journalctl -u financeqa-feishu-scan.service -n 100 --no-pager
+journalctl -u financeqa-ocr-worker.service -n 100 --no-pager
+```
+
+当前 timer 策略：`financeqa-feishu-scan.timer` 在上一次扫描结束 10 分钟后再次触发；`financeqa-ocr-worker.timer` 在上一次 OCR worker 结束 5 分钟后再次触发。这样扫描或 OCR 偶尔变慢时不会并发叠加。
+
+如果从 macOS 本机部署到 Linux 服务器，先交叉编译 Linux 二进制，避免把 macOS Mach-O 文件覆盖到服务器：
+
+```bash
+GOOS=linux GOARCH=amd64 go build -o financeqa ./cmd/financeqa
+```
+
+运行链路：
+
+1. `feishu scan` 主动调用飞书 API，扫描 `feishu_sync_sources` 中已配置的财务表格和 PDF 文件夹；来源由 `FEISHU_SYNC_SOURCES_FILE` 或 `FEISHU_SYNC_SOURCES_JSON` 通过 `feishu seed-sources` 写入，不在代码里固化租户 token。
+2. PDF 下载到本地 snapshot 后计算 SHA256；hash 已存在时直接复用已有 `storage_key`，不重复上传。合同 PDF 写入 `contract_main`，发票 PDF 写入 `contract_invoices`，发票只按去掉 `发票/开票/invoice` 目录后的关系 key 关联到同目录合同，不按文件名猜测。hash 新增或同业务位置内容变化时，才上传到 `boss-agent` 的历史合同前缀，默认 `tenant/uhub/contract`，可用 `feishu_sync_sources.metadata_json.oss_prefix` 精确到 `tenant/uhub/contract/优集客户合同` 等子目录。
+3. 财务表格下载或导出为 `.xlsx`，hash 未变则跳过上传和导入；hash 变化则先写入 `tenant/uhub/finance` 或显式配置的 `tenant/uhub/finance/2025`、`tenant/uhub/finance/2026` 历史前缀，再复用现有导入链路刷新 `fin_contracts`、`fin_fund_income`、`fin_cost_settlements` 及合并组表；导出文件中的 Excel 批注/单元格备注会按单元格坐标保存到各财务事实表的 `source_cell_notes`；OSS 快照 key 写入 `feishu_sync_sources.metadata_json.storage_key`。
+4. `ocr process-pending` 消费 `contract_main.ocr_status='pending'` 和 `contract_invoices.ocr_status='pending'` 的 PDF；如果 `storage_key` 是 OSS object key 相对路径，例如 `tenant/uhub/contract/...pdf`，先从 `OSS_BUCKET` 下载临时文件，再调用 Gemini。旧的 `s3://bucket/...` 值仍兼容读取，但新写入统一保存相对路径。
+5. OCR 结果写回对应表：合同写回 `contract_main` 并保存 `contract_pages` 全文；发票更新同一条 `contract_invoices`。未匹配到合同的发票不会落库，等待后续合同出现后再扫描。
+
+历史数据迁移到相对 `storage_key`：
+
+```bash
+psql "$FINANCEQA_PG_DSN" -v ON_ERROR_STOP=1 -f db/migrations/20260505_relative_storage_keys.sql
+```
+
+飞书应用权限导入 JSON：
+
+```json
+{
+  "scopes": {
+    "tenant": [
+      "drive:drive:readonly",
+      "drive:drive.metadata:readonly",
+      "drive:file:readonly",
+      "drive:export:readonly",
+      "sheets:spreadsheet:readonly"
+    ],
+    "user": []
+  }
+}
+```
+
+应用权限之外，还必须把应用授权到目标飞书文档：PDF 文件夹至少可阅读/可下载，财务表格至少可阅读/可导出。
+
+## 线上环境变量
+
+`.env` 放在 `/root/finance_qa/.env`，权限建议为 `600`。必填项分组如下：
+
+```env
+# PostgreSQL
+PGHOST=...
+PGPORT=5432
+PGUSER=...
+PGPASSWORD=...
+PGDATABASE=...
+FINANCEQA_PG_SCHEMA=tenant_uhub
+
+# Feishu active scan
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=replace_with_secret
+FEISHU_AUTH_MODE=tenant
+# FEISHU_AUTH_MODE=user
+# FEISHU_USER_TOKEN_FILE=/root/finance_qa/secrets/feishu_user_token.json
+# FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
+FINANCEQA_FEISHU_SNAPSHOT_DIR=tmp/feishu_snapshots
+
+# Aliyun OSS ODS
+OSS_ACCESS_KEY_ID=replace_with_access_key_id
+OSS_ACCESS_KEY_SECRET=replace_with_access_key_secret
+OSS_BUCKET=boss-agent
+OSS_ENDPOINT=https://oss-cn-shenzhen.aliyuncs.com
+OSS_CONTRACT_PREFIX=tenant/uhub/contract
+OSS_FINANCE_PREFIX=tenant/uhub/finance
+OSS_SMOKE_PREFIX=tmp/financeqa-smoke
+
+# Gemini OCR
+GEMINI_API_KEY=replace_with_key
+GOOGLE_GEMINI_BASE_URL=https://api.ikuncode.cc
+GEMINI_MODEL=gemini-3-flash-preview
+GEMINI_PROXY=
+GEMINI_OCR_TIMEOUT_SECONDS=240
+GEMINI_OCR_MAX_FILE_MB=50
+OCR_WORKER_LIMIT=10
+OCR_WORKER_CONCURRENCY=2
+```
+
+## 部署验收
+
+审核通过前可以先验证飞书下游链路：
+
+```bash
+go test ./... -count=1
+go build -o financeqa ./cmd/financeqa/...
+RUN_LIVE_OSS_SMOKE=1 go test ./internal/storage -run TestLiveOSSUploadDownloadSmoke -count=1 -v
+go test ./internal/feishusync -run 'TestPDFScanner|TestWorkbookScanner' -count=1
+./financeqa ocr process-file --file tmp/pdfs/gemini-smoke-contract.pdf
+```
+
+飞书应用审核通过且文档授权完成后，再跑真实闭环：
+
+```bash
+# 需先配置 FEISHU_SYNC_SOURCES_FILE=/root/finance_qa/secrets/feishu_sources.json
+# 或配置等价的 FEISHU_SYNC_SOURCES_JSON
+./financeqa feishu seed-sources
+./financeqa feishu scan --company "南京优集数据科技有限公司"
+./financeqa ocr process-pending --limit 10 --concurrency 2
+```
+
+常见边界：
+
+1. 飞书返回 403：优先检查应用审核、scope 导入、文档协作者授权。
+2. OSS 返回 403 且提示 second-level domain：必须使用 `https://oss-cn-shenzhen.aliyuncs.com`，代码会自动转为 bucket 三段域名访问。
+3. OCR pending 未消费：检查 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`、`contract_main.storage_key` 是否为空，以及 `sync_status` 是否为 `active`。

@@ -7,7 +7,7 @@
 1. `SKILL_APPENDIX_FULL.md`：OpenClaw / Claude Code 按需读取的完整财务问答规则附录。
 2. `architecture/01-layered-architecture.md`：当前分层架构图。
 3. `architecture/02-query-sequence.md`：当前查询请求时序图。
-4. `architecture/03-deployment-runtime.md`：当前部署与运行图。
+4. `architecture/03-deployment-runtime.md`：当前部署与运行图，包含 OpenClaw/Claude bridge、飞书主动扫描、OSS ODS、Gemini OCR worker、定时任务和上线验收步骤。
 5. `calc-plan.md`：`calc_plan` 结构化计算协议说明。
 
 ## 不再保留的文档类型

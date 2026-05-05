@@ -1,0 +1,18 @@
+[Unit]
+Description=FinanceQA Feishu active scan
+Documentation=file:/root/finance_qa/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/root/finance_qa
+EnvironmentFile=/root/finance_qa/.env
+ExecStart=/root/finance_qa/financeqa feishu scan
+TimeoutStartSec=20min
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+SyslogIdentifier=financeqa-feishu-scan

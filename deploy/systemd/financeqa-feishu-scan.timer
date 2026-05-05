@@ -1,0 +1,11 @@
+[Unit]
+Description=Run FinanceQA Feishu active scan every 10 minutes
+Documentation=/root/finance_qa/README.md
+
+[Timer]
+OnUnitInactiveSec=10min
+AccuracySec=30s
+Unit=financeqa-feishu-scan.service
+
+[Install]
+WantedBy=timers.target
