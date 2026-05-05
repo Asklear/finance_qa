@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -24,6 +25,7 @@ const (
 	contractWorkbookUnknown     contractWorkbookKind = ""
 	contractWorkbookRevenueCost contractWorkbookKind = "contract_revenue_cost"
 	contractWorkbookFund        contractWorkbookKind = "contract_fund_income"
+	contractWorkbookMixed       contractWorkbookKind = "contract_mixed_finance"
 )
 
 type contractKey struct {
@@ -49,6 +51,7 @@ type contractRevenueSettlementRow struct {
 	ContractEndDate     string
 	SettlementCycle     string
 	SettlementUnitPrice string
+	SourceCellNotes     string
 }
 
 type contractCostSettlementRow struct {
@@ -65,6 +68,7 @@ type contractCostSettlementRow struct {
 	ContractEndDate     string
 	SettlementCycle     string
 	SettlementUnitPrice string
+	SourceCellNotes     string
 }
 
 type contractCostSettlementCleanupRow struct {
@@ -90,6 +94,7 @@ type contractCostSettlementGroupRow struct {
 	SourceStartRow      int
 	SourceEndRow        int
 	MergeRange          string
+	SourceCellNotes     string
 	Members             []contractKey
 	MemberSourceRows    map[contractKey]int
 }
@@ -107,6 +112,7 @@ type contractFundIncomeRow struct {
 	ContractEndDate     string
 	SettlementCycle     string
 	SettlementUnitPrice string
+	SourceCellNotes     string
 }
 
 type contractFundIncomeCleanupRow struct {
@@ -131,9 +137,17 @@ type contractFundIncomeGroupRow struct {
 	SourceStartRow      int
 	SourceEndRow        int
 	MergeRange          string
+	SourceCellNotes     string
 	Members             []contractKey
 	MemberSourceRows    map[contractKey]int
 }
+
+type contractSourceCellNote struct {
+	Author string `json:"author,omitempty"`
+	Text   string `json:"text"`
+}
+
+type contractSourceCellNotes map[string]contractSourceCellNote
 
 type contractMergedCellRange struct {
 	StartRow int
@@ -181,6 +195,8 @@ func detectContractWorkbookKind(path string) (contractWorkbookKind, bool, error)
 	hasFundQuarter := len(fundQuarterSheetNames(sheets)) > 0
 
 	switch {
+	case (hasRevenue || hasCost) && hasFundQuarter:
+		return contractWorkbookMixed, true, nil
 	case hasRevenue || hasCost:
 		return contractWorkbookRevenueCost, true, nil
 	case hasFundQuarter:
@@ -218,9 +234,14 @@ func (i *Importer) importContractWorkbook(ctx context.Context, dbPath, filePath 
 	}
 
 	switch kind {
-	case contractWorkbookRevenueCost:
+	case contractWorkbookRevenueCost, contractWorkbookMixed:
 		if err := replaceRevenueCostSettlements(ctx, tx, bundle, contractIDs, opts.Incremental); err != nil {
 			return ImportSummary{}, err
+		}
+		if kind == contractWorkbookMixed {
+			if err := replaceFundIncomeRows(ctx, tx, bundle, contractIDs, opts.Incremental); err != nil {
+				return ImportSummary{}, err
+			}
 		}
 	case contractWorkbookFund:
 		if err := replaceFundIncomeRows(ctx, tx, bundle, contractIDs, opts.Incremental); err != nil {
@@ -264,7 +285,7 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 		TableSourceSheets: map[string][]string{},
 	}
 	switch kind {
-	case contractWorkbookRevenueCost:
+	case contractWorkbookRevenueCost, contractWorkbookMixed:
 		if containsString(f.GetSheetList(), "收入-月度结算") {
 			rows, err := readContractSheetRows(f, "收入-月度结算")
 			if err != nil {
@@ -274,8 +295,12 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 			if err != nil {
 				return contractImportBundle{}, fmt.Errorf("read merged ranges 收入-月度结算: %w", err)
 			}
+			cellNotes, err := readContractSourceCellNotes(f, "收入-月度结算")
+			if err != nil {
+				return contractImportBundle{}, fmt.Errorf("read cell notes 收入-月度结算: %w", err)
+			}
 			addContractDimensionRows(&bundle, rows, mergedRanges, 0, 1, 2, 3, 4, 5)
-			bundle.RevenueRows = parseRevenueSettlementRows("收入-月度结算", rows, mergedRanges)
+			bundle.RevenueRows = parseRevenueSettlementRows("收入-月度结算", rows, mergedRanges, cellNotes)
 			bundle.TableSourceSheets["fin_fund_income"] = append(bundle.TableSourceSheets["fin_fund_income"], "收入-月度结算")
 			bundle.ContractSourceSheets = append(bundle.ContractSourceSheets, "收入-月度结算")
 		}
@@ -288,14 +313,22 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 			if err != nil {
 				return contractImportBundle{}, fmt.Errorf("read merged ranges 成本-月度结算: %w", err)
 			}
+			cellNotes, err := readContractSourceCellNotes(f, "成本-月度结算")
+			if err != nil {
+				return contractImportBundle{}, fmt.Errorf("read cell notes 成本-月度结算: %w", err)
+			}
 			addContractDimensionRows(&bundle, rows, mergedRanges, 0, 1, 2, 3, 4, 5, 6)
-			costRows, groupRows, cleanupRows := parseCostSettlementRows("成本-月度结算", rows, mergedRanges)
+			costRows, groupRows, cleanupRows := parseCostSettlementRows("成本-月度结算", rows, mergedRanges, cellNotes)
 			bundle.CostRows = append(bundle.CostRows, costRows...)
 			bundle.CostGroupRows = append(bundle.CostGroupRows, groupRows...)
 			bundle.CostCleanupRows = append(bundle.CostCleanupRows, cleanupRows...)
 			bundle.TableSourceSheets["fin_cost_settlements"] = append(bundle.TableSourceSheets["fin_cost_settlements"], "成本-月度结算")
 			bundle.ContractSourceSheets = append(bundle.ContractSourceSheets, "成本-月度结算")
 		}
+		if kind != contractWorkbookMixed {
+			break
+		}
+		fallthrough
 	case contractWorkbookFund:
 		for _, sheetName := range fundQuarterSheetNames(f.GetSheetList()) {
 			rows, err := readContractSheetRows(f, sheetName)
@@ -306,8 +339,12 @@ func parseContractWorkbook(path string, kind contractWorkbookKind) (contractImpo
 			if err != nil {
 				return contractImportBundle{}, fmt.Errorf("read merged ranges %s: %w", sheetName, err)
 			}
+			cellNotes, err := readContractSourceCellNotes(f, sheetName)
+			if err != nil {
+				return contractImportBundle{}, fmt.Errorf("read cell notes %s: %w", sheetName, err)
+			}
 			addContractDimensionRows(&bundle, rows, mergedRanges, 0, 1, 2, 3, 4, 5)
-			fundRows, groupRows, cleanupRows := parseFundIncomeQuarterRows(sheetName, rows, mergedRanges)
+			fundRows, groupRows, cleanupRows := parseFundIncomeQuarterRows(sheetName, rows, mergedRanges, cellNotes)
 			bundle.FundRows = append(bundle.FundRows, fundRows...)
 			bundle.FundGroupRows = append(bundle.FundGroupRows, groupRows...)
 			bundle.FundCleanupRows = append(bundle.FundCleanupRows, cleanupRows...)
@@ -451,7 +488,129 @@ func readContractMergedCellRanges(f *excelize.File, sheetName string) ([]contrac
 	return ranges, nil
 }
 
-func parseRevenueSettlementRows(sheetName string, rows [][]string, mergedRanges []contractMergedCellRange) []contractRevenueSettlementRow {
+func readContractSourceCellNotes(f *excelize.File, sheetName string) (contractSourceCellNotes, error) {
+	comments, err := f.GetComments(sheetName)
+	if err != nil {
+		return nil, err
+	}
+	out := contractSourceCellNotes{}
+	for _, comment := range comments {
+		cell := strings.ToUpper(strings.TrimSpace(comment.Cell))
+		text := contractSourceCellNoteText(comment)
+		if cell == "" || text == "" {
+			continue
+		}
+		out[cell] = contractSourceCellNote{
+			Author: strings.TrimSpace(comment.Author),
+			Text:   text,
+		}
+	}
+	return out, nil
+}
+
+func contractSourceCellNoteText(comment excelize.Comment) string {
+	text := strings.TrimSpace(comment.Text)
+	if text != "" {
+		return text
+	}
+	var parts []string
+	for _, run := range comment.Paragraph {
+		if part := strings.TrimSpace(run.Text); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, ""))
+}
+
+func cellNotesForRowColumns(notes contractSourceCellNotes, mergedRanges []contractMergedCellRange, rowIdx int, cols ...int) contractSourceCellNotes {
+	return cellNotesForRowRangeColumns(notes, mergedRanges, rowIdx, rowIdx, cols...)
+}
+
+func cellNotesForRowRangeColumns(notes contractSourceCellNotes, mergedRanges []contractMergedCellRange, startRow, endRow int, cols ...int) contractSourceCellNotes {
+	if len(notes) == 0 || len(cols) == 0 {
+		return nil
+	}
+	if startRow > endRow {
+		startRow, endRow = endRow, startRow
+	}
+	selectedCols := map[int]struct{}{}
+	for _, col := range cols {
+		if col < 0 {
+			continue
+		}
+		selectedCols[col] = struct{}{}
+	}
+	if len(selectedCols) == 0 {
+		return nil
+	}
+
+	out := contractSourceCellNotes{}
+	for cell, note := range notes {
+		col, row, err := excelize.CellNameToCoordinates(cell)
+		if err != nil {
+			continue
+		}
+		row--
+		col--
+		if sourceCellInSelection(row, col, startRow, endRow, selectedCols) || sourceCellMergeIntersectsSelection(row, col, startRow, endRow, selectedCols, mergedRanges) {
+			out[cell] = note
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sourceCellInSelection(row, col, startRow, endRow int, selectedCols map[int]struct{}) bool {
+	if row < startRow || row > endRow {
+		return false
+	}
+	_, ok := selectedCols[col]
+	return ok
+}
+
+func sourceCellMergeIntersectsSelection(row, col, startRow, endRow int, selectedCols map[int]struct{}, mergedRanges []contractMergedCellRange) bool {
+	for _, mergeRange := range mergedRanges {
+		if row < mergeRange.StartRow || row > mergeRange.EndRow || col < mergeRange.StartCol || col > mergeRange.EndCol {
+			continue
+		}
+		if mergeRange.EndRow < startRow || mergeRange.StartRow > endRow {
+			return false
+		}
+		for selectedCol := range selectedCols {
+			if selectedCol >= mergeRange.StartCol && selectedCol <= mergeRange.EndCol {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func sourceCellNotesJSON(notes contractSourceCellNotes) string {
+	if len(notes) == 0 {
+		return ""
+	}
+	data, err := json.Marshal(notes)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func intRange(start, end int) []int {
+	if end < start {
+		return nil
+	}
+	out := make([]int, 0, end-start+1)
+	for idx := start; idx <= end; idx++ {
+		out = append(out, idx)
+	}
+	return out
+}
+
+func parseRevenueSettlementRows(sheetName string, rows [][]string, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) []contractRevenueSettlementRow {
 	if len(rows) < 3 {
 		return nil
 	}
@@ -491,13 +650,14 @@ func parseRevenueSettlementRows(sheetName string, rows [][]string, mergedRanges 
 				ContractEndDate:     contractEndDate,
 				SettlementCycle:     settlementCycle,
 				SettlementUnitPrice: settlementUnitPrice,
+				SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 5), intRange(monthCol.Index, monthCol.Index+3)...)...)),
 			})
 		}
 	}
 	return out
 }
 
-func parseCostSettlementRows(sheetName string, rows [][]string, mergedRanges []contractMergedCellRange) ([]contractCostSettlementRow, []contractCostSettlementGroupRow, []contractCostSettlementCleanupRow) {
+func parseCostSettlementRows(sheetName string, rows [][]string, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) ([]contractCostSettlementRow, []contractCostSettlementGroupRow, []contractCostSettlementCleanupRow) {
 	if len(rows) < 3 {
 		return nil, nil, nil
 	}
@@ -532,7 +692,7 @@ func parseCostSettlementRows(sheetName string, rows [][]string, mergedRanges []c
 				}
 				for _, metricGroup := range metricGroups {
 					cleanup = append(cleanup, mergedCostSettlementCleanupRows(sheetName, rows, metricGroup.Range, yearMonth)...)
-					mergedRow, ok := buildMergedCostSettlementGroupRow(sheetName, rows, idx, metricGroup.Range, monthCol, yearMonth, metricGroup.Metrics)
+					mergedRow, ok := buildMergedCostSettlementGroupRow(sheetName, rows, idx, metricGroup.Range, monthCol, yearMonth, metricGroup.Metrics, mergedRanges, cellNotes)
 					if ok {
 						groups = append(groups, mergedRow)
 					}
@@ -540,7 +700,8 @@ func parseCostSettlementRows(sheetName string, rows [][]string, mergedRanges []c
 				continue
 			}
 			directMetricRanges := costMergedAmountContainingRanges(mergedRanges, idx, monthCol)
-			if directRow, ok := buildDirectCostSettlementRow(sheetName, row, monthCol, yearMonth, contractKey{Name: name, Content: content}, accountCode, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, directMetricRanges); ok {
+			sourceNotes := sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 6), intRange(monthCol.Index, monthCol.Index+4)...)...))
+			if directRow, ok := buildDirectCostSettlementRow(sheetName, row, monthCol, yearMonth, contractKey{Name: name, Content: content}, accountCode, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, directMetricRanges, sourceNotes); ok {
 				out = append(out, directRow)
 			}
 		}
@@ -548,7 +709,7 @@ func parseCostSettlementRows(sheetName string, rows [][]string, mergedRanges []c
 	return out, groups, cleanup
 }
 
-func buildDirectCostSettlementRow(sheetName string, row []string, monthCol monthColumn, yearMonth string, key contractKey, accountCode, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice string, metricRanges map[string]contractMergedCellRange) (contractCostSettlementRow, bool) {
+func buildDirectCostSettlementRow(sheetName string, row []string, monthCol monthColumn, yearMonth string, key contractKey, accountCode, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice string, metricRanges map[string]contractMergedCellRange, sourceCellNotes string) (contractCostSettlementRow, bool) {
 	settlement := 0.0
 	if _, merged := metricRanges["settlement"]; !merged {
 		settlement = parseContractFloat(cellValue(row, monthCol.Index+1))
@@ -578,6 +739,7 @@ func buildDirectCostSettlementRow(sheetName string, row []string, monthCol month
 		ContractEndDate:     contractEndDate,
 		SettlementCycle:     settlementCycle,
 		SettlementUnitPrice: settlementUnitPrice,
+		SourceCellNotes:     sourceCellNotes,
 	}, true
 }
 
@@ -705,7 +867,7 @@ func mergedCostSettlementCleanupRows(sheetName string, rows [][]string, mergeRan
 	return out
 }
 
-func buildMergedCostSettlementGroupRow(sheetName string, rows [][]string, rowIdx int, mergeRange contractMergedCellRange, monthCol monthColumn, yearMonth string, metrics map[string]bool) (contractCostSettlementGroupRow, bool) {
+func buildMergedCostSettlementGroupRow(sheetName string, rows [][]string, rowIdx int, mergeRange contractMergedCellRange, monthCol monthColumn, yearMonth string, metrics map[string]bool, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) (contractCostSettlementGroupRow, bool) {
 	if rowIdx < 0 || rowIdx >= len(rows) {
 		return contractCostSettlementGroupRow{}, false
 	}
@@ -747,12 +909,13 @@ func buildMergedCostSettlementGroupRow(sheetName string, rows [][]string, rowIdx
 		SourceStartRow:      mergeRange.StartRow + 1,
 		SourceEndRow:        mergeRange.EndRow + 1,
 		MergeRange:          mergeRangeLabel(mergeRange),
+		SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 6), intRange(monthCol.Index, monthCol.Index+4)...)...)),
 		Members:             members,
 		MemberSourceRows:    memberSourceRows,
 	}, true
 }
 
-func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges []contractMergedCellRange) ([]contractFundIncomeRow, []contractFundIncomeGroupRow, []contractFundIncomeCleanupRow) {
+func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) ([]contractFundIncomeRow, []contractFundIncomeGroupRow, []contractFundIncomeCleanupRow) {
 	if len(rows) < 3 {
 		return nil, nil, nil
 	}
@@ -794,7 +957,7 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 				}
 				for _, metricGroup := range metricGroups {
 					cleanup = append(cleanup, mergedFundIncomeCleanupRows(sheetName, rows, metricGroup.Range, yearMonth)...)
-					mergedRow, ok := buildMergedFundIncomeGroupRow(sheetName, rows, idx, metricGroup.Range, monthCol, yearMonth, simpleAmountLayout, metricGroup.Metrics)
+					mergedRow, ok := buildMergedFundIncomeGroupRow(sheetName, rows, idx, metricGroup.Range, monthCol, yearMonth, simpleAmountLayout, metricGroup.Metrics, mergedRanges, cellNotes)
 					if ok {
 						groups = append(groups, mergedRow)
 					}
@@ -802,7 +965,12 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 				continue
 			}
 			directMetricRanges := fundMergedAmountContainingRanges(mergedRanges, idx, monthCol, simpleAmountLayout)
-			if directRow, ok := buildDirectFundIncomeRow(sheetName, row, monthCol, yearMonth, contractKey{Name: name, Content: content}, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, simpleAmountLayout, directMetricRanges); ok {
+			metricEnd := monthCol.Index
+			if !simpleAmountLayout {
+				metricEnd = monthCol.Index + 4
+			}
+			sourceNotes := sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 5), intRange(monthCol.Index, metricEnd)...)...))
+			if directRow, ok := buildDirectFundIncomeRow(sheetName, row, monthCol, yearMonth, contractKey{Name: name, Content: content}, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, simpleAmountLayout, directMetricRanges, sourceNotes); ok {
 				out = append(out, directRow)
 			}
 		}
@@ -810,7 +978,7 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 	return out, groups, cleanup
 }
 
-func buildDirectFundIncomeRow(sheetName string, row []string, monthCol monthColumn, yearMonth string, key contractKey, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice string, simpleAmountLayout bool, metricRanges map[string]contractMergedCellRange) (contractFundIncomeRow, bool) {
+func buildDirectFundIncomeRow(sheetName string, row []string, monthCol monthColumn, yearMonth string, key contractKey, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice string, simpleAmountLayout bool, metricRanges map[string]contractMergedCellRange, sourceCellNotes string) (contractFundIncomeRow, bool) {
 	if simpleAmountLayout {
 		if _, merged := metricRanges["settlement"]; merged {
 			return contractFundIncomeRow{}, false
@@ -833,6 +1001,7 @@ func buildDirectFundIncomeRow(sheetName string, row []string, monthCol monthColu
 			ContractEndDate:     contractEndDate,
 			SettlementCycle:     settlementCycle,
 			SettlementUnitPrice: settlementUnitPrice,
+			SourceCellNotes:     sourceCellNotes,
 		}, true
 	}
 
@@ -864,6 +1033,7 @@ func buildDirectFundIncomeRow(sheetName string, row []string, monthCol monthColu
 		ContractEndDate:     contractEndDate,
 		SettlementCycle:     settlementCycle,
 		SettlementUnitPrice: settlementUnitPrice,
+		SourceCellNotes:     sourceCellNotes,
 	}, true
 }
 
@@ -935,7 +1105,7 @@ func mergedFundIncomeCleanupRows(sheetName string, rows [][]string, mergeRange c
 	return out
 }
 
-func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int, mergeRange contractMergedCellRange, monthCol monthColumn, yearMonth string, simpleAmountLayout bool, metrics map[string]bool) (contractFundIncomeGroupRow, bool) {
+func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int, mergeRange contractMergedCellRange, monthCol monthColumn, yearMonth string, simpleAmountLayout bool, metrics map[string]bool, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) (contractFundIncomeGroupRow, bool) {
 	if rowIdx < 0 || rowIdx >= len(rows) {
 		return contractFundIncomeGroupRow{}, false
 	}
@@ -977,6 +1147,7 @@ func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int
 			SourceStartRow:      mergeRange.StartRow + 1,
 			SourceEndRow:        mergeRange.EndRow + 1,
 			MergeRange:          mergeRangeLabel(mergeRange),
+			SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 5), monthCol.Index)...)),
 			Members:             members,
 			MemberSourceRows:    memberSourceRows,
 		}, true
@@ -1013,6 +1184,7 @@ func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int
 		SourceStartRow:      mergeRange.StartRow + 1,
 		SourceEndRow:        mergeRange.EndRow + 1,
 		MergeRange:          mergeRangeLabel(mergeRange),
+		SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 5), intRange(monthCol.Index, monthCol.Index+4)...)...)),
 		Members:             members,
 		MemberSourceRows:    memberSourceRows,
 	}, true
@@ -1104,7 +1276,7 @@ FROM fin_contracts
 			merged := mergeContractDimensionMeta(existingDetails[key], incoming)
 			if _, err := tx.ExecContext(ctx, `
 UPDATE fin_contracts
-SET contract_start_date = ?, contract_end_date = ?, settlement_cycle = ?
+SET contract_start_date = ?, contract_end_date = ?, settlement_cycle = ?, updated_at = CURRENT_TIMESTAMP
 WHERE contract_id = ?
 `, nullableContractValue(merged.ContractStartDate), nullableContractValue(merged.ContractEndDate), nullableContractValue(merged.SettlementCycle), contractID); err != nil {
 				return nil, fmt.Errorf("update fin_contracts: %w", err)
@@ -1116,8 +1288,8 @@ WHERE contract_id = ?
 		contractID := fmt.Sprintf("C%03d", maxSeq)
 		merged := mergeContractDimensionMeta(contractDimensionMeta{}, incoming)
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO fin_contracts(contract_id, customer_name, contract_content, contract_start_date, contract_end_date, settlement_cycle)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO fin_contracts(contract_id, customer_name, contract_content, contract_start_date, contract_end_date, settlement_cycle, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 `, contractID, key.Name, key.Content, nullableContractValue(merged.ContractStartDate), nullableContractValue(merged.ContractEndDate), nullableContractValue(merged.SettlementCycle)); err != nil {
 			return nil, fmt.Errorf("insert fin_contracts: %w", err)
 		}
@@ -1130,15 +1302,18 @@ VALUES (?, ?, ?, ?, ?, ?)
 func replaceRevenueCostSettlements(ctx context.Context, tx *sql.Tx, bundle contractImportBundle, contractIDs map[contractKey]string, incremental bool) error {
 	if !incremental {
 		if contractBundleTouchesTable(bundle, "fin_cost_settlements") {
-			if err := deleteContractRowsBySourceScope(ctx, tx, "fin_cost_settlements", bundle.Kind, bundle.TableSourceSheets["fin_cost_settlements"]); err != nil {
+			if err := deleteContractRowsBySourceScope(ctx, tx, "fin_cost_settlements", compatibleContractReportTypes(bundle.Kind, contractWorkbookRevenueCost), bundle.TableSourceSheets["fin_cost_settlements"]); err != nil {
 				return err
 			}
-			if err := deleteCostSettlementGroupsBySourceScope(ctx, tx, bundle.Kind, bundle.TableSourceSheets["fin_cost_settlements"]); err != nil {
+			if err := deleteCostSettlementGroupsBySourceScope(ctx, tx, compatibleContractReportTypes(bundle.Kind, contractWorkbookRevenueCost), bundle.TableSourceSheets["fin_cost_settlements"]); err != nil {
 				return err
 			}
 		}
 		if contractBundleTouchesTable(bundle, "fin_fund_income") {
-			if err := deleteContractRowsBySourceScope(ctx, tx, "fin_fund_income", bundle.Kind, bundle.TableSourceSheets["fin_fund_income"]); err != nil {
+			if err := deleteContractRowsBySourceScope(ctx, tx, "fin_fund_income", compatibleContractReportTypes(bundle.Kind, contractWorkbookRevenueCost, contractWorkbookFund), bundle.TableSourceSheets["fin_fund_income"]); err != nil {
+				return err
+			}
+			if err := deleteFundIncomeGroupsBySourceScope(ctx, tx, compatibleContractReportTypes(bundle.Kind, contractWorkbookFund), bundle.TableSourceSheets["fin_fund_income"]); err != nil {
 				return err
 			}
 		}
@@ -1179,10 +1354,10 @@ func replaceRevenueCostSettlements(ctx context.Context, tx *sql.Tx, bundle contr
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO fin_fund_income(
 	contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount,
-	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
+	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, 0, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice)); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, 0, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
 			return fmt.Errorf("insert fin_fund_income from revenue workbook: %w", err)
 		}
 	}
@@ -1193,10 +1368,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO fin_cost_settlements(
 	contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code,
-	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
+	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice)); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
 			return fmt.Errorf("insert fin_cost_settlements: %w", err)
 		}
 	}
@@ -1211,8 +1386,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `
-INSERT INTO fin_cost_settlement_group_members(group_id, contract_id, source_row_number)
-VALUES (?, ?, ?)
+INSERT INTO fin_cost_settlement_group_members(group_id, contract_id, source_row_number, updated_at)
+VALUES (?, ?, ?, CURRENT_TIMESTAMP)
 `, groupID, contractID, sourceRowNumberForCostGroupMember(row, member)); err != nil {
 				return fmt.Errorf("insert fin_cost_settlement_group_members: %w", err)
 			}
@@ -1225,28 +1400,57 @@ func contractBundleTouchesTable(bundle contractImportBundle, tableName string) b
 	return len(bundle.TableSourceSheets[tableName]) > 0
 }
 
-func deleteContractRowsBySourceScope(ctx context.Context, tx *sql.Tx, tableName string, reportType contractWorkbookKind, sheetNames []string) error {
+func deleteContractRowsBySourceScope(ctx context.Context, tx *sql.Tx, tableName string, reportTypes []contractWorkbookKind, sheetNames []string) error {
 	sheetNames = dedupeContractStrings(sheetNames)
-	if len(sheetNames) == 0 {
+	reportTypes = dedupeContractWorkbookKinds(reportTypes)
+	if len(sheetNames) == 0 || len(reportTypes) == 0 {
 		return nil
 	}
 
-	args := make([]any, 0, len(sheetNames)+1)
-	args = append(args, string(reportType))
-	placeholders := make([]string, 0, len(sheetNames))
+	args := make([]any, 0, len(reportTypes)+len(sheetNames))
+	reportPlaceholders := make([]string, 0, len(reportTypes))
+	for _, reportType := range reportTypes {
+		reportPlaceholders = append(reportPlaceholders, "?")
+		args = append(args, string(reportType))
+	}
+	sheetPlaceholders := make([]string, 0, len(sheetNames))
 	for _, sheetName := range sheetNames {
-		placeholders = append(placeholders, "?")
+		sheetPlaceholders = append(sheetPlaceholders, "?")
 		args = append(args, sheetName)
 	}
 
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 DELETE FROM %s
-WHERE source_report_type = ?
+WHERE source_report_type IN (%s)
   AND source_sheet_name IN (%s)
-`, tableName, strings.Join(placeholders, ", ")), args...); err != nil {
+`, tableName, strings.Join(reportPlaceholders, ", "), strings.Join(sheetPlaceholders, ", ")), args...); err != nil {
 		return fmt.Errorf("clear %s by source scope: %w", tableName, err)
 	}
 	return nil
+}
+
+func compatibleContractReportTypes(current contractWorkbookKind, legacyKinds ...contractWorkbookKind) []contractWorkbookKind {
+	out := []contractWorkbookKind{current}
+	if current == contractWorkbookMixed {
+		out = append(out, legacyKinds...)
+	}
+	return out
+}
+
+func dedupeContractWorkbookKinds(values []contractWorkbookKind) []contractWorkbookKind {
+	out := make([]contractWorkbookKind, 0, len(values))
+	seen := map[contractWorkbookKind]struct{}{}
+	for _, value := range values {
+		if strings.TrimSpace(string(value)) == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func deleteContractRowByIdentity(ctx context.Context, tx *sql.Tx, tableName string, reportType contractWorkbookKind, sheetName, contractID, yearMonth string) error {
@@ -1295,20 +1499,25 @@ WHERE contract_content LIKE '合并金额组%'
 	return nil
 }
 
-func deleteCostSettlementGroupsBySourceScope(ctx context.Context, tx *sql.Tx, reportType contractWorkbookKind, sheetNames []string) error {
+func deleteCostSettlementGroupsBySourceScope(ctx context.Context, tx *sql.Tx, reportTypes []contractWorkbookKind, sheetNames []string) error {
 	sheetNames = dedupeContractStrings(sheetNames)
-	if len(sheetNames) == 0 {
+	reportTypes = dedupeContractWorkbookKinds(reportTypes)
+	if len(sheetNames) == 0 || len(reportTypes) == 0 {
 		return nil
 	}
 
-	args := make([]any, 0, len(sheetNames)+1)
-	args = append(args, string(reportType))
-	placeholders := make([]string, 0, len(sheetNames))
+	args := make([]any, 0, len(reportTypes)+len(sheetNames))
+	reportPlaceholders := make([]string, 0, len(reportTypes))
+	for _, reportType := range reportTypes {
+		reportPlaceholders = append(reportPlaceholders, "?")
+		args = append(args, string(reportType))
+	}
+	sheetPlaceholders := make([]string, 0, len(sheetNames))
 	for _, sheetName := range sheetNames {
-		placeholders = append(placeholders, "?")
+		sheetPlaceholders = append(sheetPlaceholders, "?")
 		args = append(args, sheetName)
 	}
-	filter := fmt.Sprintf(`source_report_type = ? AND source_sheet_name IN (%s)`, strings.Join(placeholders, ", "))
+	filter := fmt.Sprintf(`source_report_type IN (%s) AND source_sheet_name IN (%s)`, strings.Join(reportPlaceholders, ", "), strings.Join(sheetPlaceholders, ", "))
 	if err := deleteCostSettlementGroupsByFilter(ctx, tx, filter, args...); err != nil {
 		return fmt.Errorf("clear fin_cost_settlement_groups by source scope: %w", err)
 	}
@@ -1357,20 +1566,25 @@ func deleteCostSettlementGroupsByFilter(ctx context.Context, tx *sql.Tx, filter 
 	return nil
 }
 
-func deleteFundIncomeGroupsBySourceScope(ctx context.Context, tx *sql.Tx, reportType contractWorkbookKind, sheetNames []string) error {
+func deleteFundIncomeGroupsBySourceScope(ctx context.Context, tx *sql.Tx, reportTypes []contractWorkbookKind, sheetNames []string) error {
 	sheetNames = dedupeContractStrings(sheetNames)
-	if len(sheetNames) == 0 {
+	reportTypes = dedupeContractWorkbookKinds(reportTypes)
+	if len(sheetNames) == 0 || len(reportTypes) == 0 {
 		return nil
 	}
 
-	args := make([]any, 0, len(sheetNames)+1)
-	args = append(args, string(reportType))
-	placeholders := make([]string, 0, len(sheetNames))
+	args := make([]any, 0, len(reportTypes)+len(sheetNames))
+	reportPlaceholders := make([]string, 0, len(reportTypes))
+	for _, reportType := range reportTypes {
+		reportPlaceholders = append(reportPlaceholders, "?")
+		args = append(args, string(reportType))
+	}
+	sheetPlaceholders := make([]string, 0, len(sheetNames))
 	for _, sheetName := range sheetNames {
-		placeholders = append(placeholders, "?")
+		sheetPlaceholders = append(sheetPlaceholders, "?")
 		args = append(args, sheetName)
 	}
-	filter := fmt.Sprintf(`source_report_type = ? AND source_sheet_name IN (%s)`, strings.Join(placeholders, ", "))
+	filter := fmt.Sprintf(`source_report_type IN (%s) AND source_sheet_name IN (%s)`, strings.Join(reportPlaceholders, ", "), strings.Join(sheetPlaceholders, ", "))
 	if err := deleteFundIncomeGroupsByFilter(ctx, tx, filter, args...); err != nil {
 		return fmt.Errorf("clear fin_fund_income_groups by source scope: %w", err)
 	}
@@ -1424,10 +1638,10 @@ func replaceFundIncomeRows(ctx context.Context, tx *sql.Tx, bundle contractImpor
 		return err
 	}
 	if !incremental {
-		if err := deleteContractRowsBySourceScope(ctx, tx, "fin_fund_income", bundle.Kind, bundle.TableSourceSheets["fin_fund_income"]); err != nil {
+		if err := deleteContractRowsBySourceScope(ctx, tx, "fin_fund_income", compatibleContractReportTypes(bundle.Kind, contractWorkbookFund), bundle.TableSourceSheets["fin_fund_income"]); err != nil {
 			return err
 		}
-		if err := deleteFundIncomeGroupsBySourceScope(ctx, tx, bundle.Kind, bundle.TableSourceSheets["fin_fund_income"]); err != nil {
+		if err := deleteFundIncomeGroupsBySourceScope(ctx, tx, compatibleContractReportTypes(bundle.Kind, contractWorkbookFund), bundle.TableSourceSheets["fin_fund_income"]); err != nil {
 			return err
 		}
 	} else {
@@ -1462,10 +1676,10 @@ func replaceFundIncomeRows(ctx context.Context, tx *sql.Tx, bundle contractImpor
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO fin_fund_income(
 	contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount,
-	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
+	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice)); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
 			return fmt.Errorf("insert fin_fund_income: %w", err)
 		}
 	}
@@ -1480,8 +1694,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `
-INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number)
-VALUES (?, ?, ?)
+INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number, updated_at)
+VALUES (?, ?, ?, CURRENT_TIMESTAMP)
 `, groupID, contractID, sourceRowNumberForGroupMember(row, member)); err != nil {
 				return fmt.Errorf("insert fin_fund_income_group_members: %w", err)
 			}
@@ -1496,11 +1710,11 @@ func insertFundIncomeGroup(ctx context.Context, tx *sql.Tx, reportType contractW
 INSERT INTO fin_fund_income_groups(
 	customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range,
 	quantity, settlement_amount, received_amount, is_invoiced, invoice_amount,
-	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
+	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 RETURNING id
-`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice)).Scan(&groupID); err != nil {
+`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)).Scan(&groupID); err != nil {
 		return 0, fmt.Errorf("insert fin_fund_income_groups: %w", err)
 	}
 	return groupID, nil
@@ -1512,11 +1726,11 @@ func insertCostSettlementGroup(ctx context.Context, tx *sql.Tx, reportType contr
 INSERT INTO fin_cost_settlement_groups(
 	customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range,
 	quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code,
-	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price
+	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 RETURNING id
-`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice)).Scan(&groupID); err != nil {
+`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)).Scan(&groupID); err != nil {
 		return 0, fmt.Errorf("insert fin_cost_settlement_groups: %w", err)
 	}
 	return groupID, nil
@@ -1668,10 +1882,23 @@ func nullContractString(v sql.NullString) string {
 }
 
 func normalizeContractDateString(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if isContractBlankDate(raw) {
+		return ""
+	}
 	if parsed, ok := parseContractDate(raw); ok {
 		return parsed.Format("2006-01-02")
 	}
-	return strings.TrimSpace(raw)
+	return raw
+}
+
+func isContractBlankDate(raw string) bool {
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, ",", ""))
+	if raw == "" {
+		return true
+	}
+	numeric, err := strconv.ParseFloat(raw, 64)
+	return err == nil && numeric == 0
 }
 
 func mergeContractDimensionMeta(existing, incoming contractDimensionMeta) contractDimensionMeta {
@@ -1858,7 +2085,7 @@ func inferYearMonthFromContractRange(monthLabel, startText, endText string) stri
 
 func parseContractDate(raw string) (time.Time, bool) {
 	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	if isContractBlankDate(raw) {
 		return time.Time{}, false
 	}
 	layouts := []string{
@@ -1866,6 +2093,10 @@ func parseContractDate(raw string) (time.Time, bool) {
 		"2006-01-02",
 		"2006/01/02",
 		"2006/1/2",
+		"01-02-2006",
+		"1-2-2006",
+		"01-02-06",
+		"1-2-06",
 		"1/2/2006",
 		"1/2/06",
 		"2006.01.02",

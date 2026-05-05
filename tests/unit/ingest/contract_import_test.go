@@ -45,6 +45,9 @@ func TestImportFileWithOptions_ContractRevenueCostWorkbookLoadsFinTables(t *test
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_contracts`, 2)
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income`, 1)
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 1)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_contracts WHERE updated_at IS NOT NULL`, 2)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income WHERE updated_at IS NOT NULL`, 1)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements WHERE updated_at IS NOT NULL`, 1)
 
 	var settlement float64
 	if err := db.QueryRow(`SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2025-01'`).Scan(&settlement); err != nil {
@@ -53,6 +56,174 @@ func TestImportFileWithOptions_ContractRevenueCostWorkbookLoadsFinTables(t *test
 	if settlement != 1000 {
 		t.Fatalf("settlement_amount = %.2f, want 1000", settlement)
 	}
+}
+
+func TestImportFileWithOptions_ContractWorkbookPersistsSourceCellNotes(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-cell-notes.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集收入、支出月度计算表-备注.xlsx")
+	if err := createRevenueCostWorkbookWithCellComments(workbook); err != nil {
+		t.Fatalf("create revenue-cost workbook with comments: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import contract workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCellNotesContain(t, db, `
+SELECT source_cell_notes
+FROM fin_fund_income
+WHERE source_sheet_name='收入-月度结算' AND year_month='2025-01'
+`, "H3", "收入按验收金额确认")
+
+	assertCellNotesContain(t, db, `
+SELECT source_cell_notes
+FROM fin_cost_settlements
+WHERE source_sheet_name='成本-月度结算' AND year_month='2025-01'
+`, "I3", "成本按供应商账单确认", "L3", "付款待审批")
+}
+
+func TestImportFileWithOptions_ContractWorkbookPersistsSourceCellNotesOnMergedGroups(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-group-cell-notes.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集资金收入计算表-合并金额备注.xlsx")
+	if err := createFundWorkbookWithMergedMonthlyAmountsAndComments(workbook); err != nil {
+		t.Fatalf("create fund workbook with merged comments: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import fund workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCellNotesContain(t, db, `
+SELECT source_cell_notes
+FROM fin_fund_income_groups
+WHERE source_sheet_name='26年Q1收入明细' AND year_month='2026-01'
+`, "H3", "合并收入由四个合同共同确认", "B4", "成员合同备注也要保留")
+}
+
+func TestImportFileWithOptions_ContractWorkbookImportsMixedFundAndCostSheets(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-mixed-fund-cost.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集收入成本计算表-混合.xlsx")
+	if err := createMixedFundAndCostWorkbook(workbook); err != nil {
+		t.Fatalf("create mixed workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	summary, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	})
+	if err != nil {
+		t.Fatalf("import mixed workbook failed: %v", err)
+	}
+	if summary.ReportType != "contract_mixed_finance" {
+		t.Fatalf("report_type = %q, want contract_mixed_finance", summary.ReportType)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_fund_income`, 1)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 1)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2026-01'`, 1200)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlements WHERE year_month='2026-01'`, 888)
+}
+
+func TestImportFileWithOptions_MixedWorkbookFullReplaceClearsPriorSingleKindRows(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-mixed-replaces-single-kind.sqlite")
+	fundWorkbook := filepath.Join(t.TempDir(), "优集资金收入计算表 - 副本.xlsx")
+	costWorkbook := filepath.Join(t.TempDir(), "优集成本计算表-仅成本.xlsx")
+	mixedWorkbook := filepath.Join(t.TempDir(), "优集收入成本计算表-混合.xlsx")
+	if err := createFundWorkbook(fundWorkbook); err != nil {
+		t.Fatalf("create fund workbook: %v", err)
+	}
+	if err := createCostOnlyWorkbook(costWorkbook); err != nil {
+		t.Fatalf("create cost workbook: %v", err)
+	}
+	if err := createMixedFundAndCostWorkbook(mixedWorkbook); err != nil {
+		t.Fatalf("create mixed workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	for _, workbook := range []string{fundWorkbook, costWorkbook, mixedWorkbook} {
+		if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+			Incremental:     false,
+			CompanyOverride: "南京优集数据科技有限公司",
+		}); err != nil {
+			t.Fatalf("import %s failed: %v", filepath.Base(workbook), err)
+		}
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_fund_income
+WHERE source_report_type='contract_fund_income'
+  AND source_sheet_name='26年Q1收入明细'
+`, 0)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_cost_settlements
+WHERE source_report_type='contract_revenue_cost'
+  AND source_sheet_name='成本-月度结算'
+`, 0)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_fund_income
+WHERE source_report_type='contract_mixed_finance'
+  AND source_sheet_name='26年Q1收入明细'
+`, 1)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_cost_settlements
+WHERE source_report_type='contract_mixed_finance'
+  AND source_sheet_name='成本-月度结算'
+`, 1)
+	assertCount(t, db, `
+SELECT COUNT(1)
+FROM fin_fund_income
+WHERE source_report_type='contract_fund_income'
+  AND source_sheet_name='25年Q4收入明细'
+`, 1)
 }
 
 func TestImportFileWithOptions_ContractFundWorkbookLoadsFundIncome(t *testing.T) {
@@ -219,6 +390,43 @@ SELECT quantity, contract_start_date, contract_end_date, settlement_cycle, settl
 FROM fin_fund_income
 WHERE year_month='2026-01'
 `, "12", "2026-01-01", "2026-03-31", "月结", "100")
+}
+
+func TestImportFileWithOptions_ContractWorkbookNormalizesContractDates(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-normalized-dates.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集资金收入计算表-日期标准化.xlsx")
+	if err := createFundWorkbookWithDateFormats(workbook); err != nil {
+		t.Fatalf("create date format workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:     false,
+		CompanyOverride: "南京优集数据科技有限公司",
+	}); err != nil {
+		t.Fatalf("import date format workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertRowString(t, db, `
+SELECT contract_start_date, contract_end_date
+FROM fin_contracts
+WHERE customer_name='短横线客户' AND contract_content='短横线合同'
+`, "2026-03-01", "2027-02-28")
+
+	assertRowString(t, db, `
+SELECT contract_start_date, contract_end_date
+FROM fin_contracts
+WHERE customer_name='Janchor Partners Limited' AND contract_content='框架合同'
+`, "2025-03-13", "")
 }
 
 func TestImportFileWithOptions_ContractRevenueCostWorkbookInfersYearMonthAndCarriesForwardCustomer(t *testing.T) {
@@ -902,6 +1110,39 @@ func createRevenueCostWorkbook(path string) error {
 	return f.SaveAs(path)
 }
 
+func createRevenueCostWorkbookWithCellComments(path string) error {
+	f := excelize.NewFile()
+	f.SetSheetName("Sheet1", "收入-月度结算")
+	if err := writeSheetRows(f, "收入-月度结算", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "1月", "", "", ""},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额"},
+		{"辽宁金程信息科技有限公司", "行业商品数据采购合同-A01", "2025-01-01", "2025-12-31", "月结", 100, 10, 1000, "是", 1000},
+	}); err != nil {
+		return err
+	}
+	if err := f.AddComment("收入-月度结算", excelize.Comment{Cell: "H3", Author: "财务", Text: "收入按验收金额确认"}); err != nil {
+		return err
+	}
+	if _, err := f.NewSheet("成本-月度结算"); err != nil {
+		return err
+	}
+	if err := writeSheetRows(f, "成本-月度结算", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "入账科目", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "付款金额"},
+		{"南京林悦智能科技有限公司", "技术服务采购合同-LY01", "2025-01-01", "2025-12-31", "月结", 50, "640101", "1人月", 888, "是", 888, 666},
+	}); err != nil {
+		return err
+	}
+	if err := f.AddComment("成本-月度结算", excelize.Comment{Cell: "I3", Author: "财务", Text: "成本按供应商账单确认"}); err != nil {
+		return err
+	}
+	if err := f.AddComment("成本-月度结算", excelize.Comment{Cell: "L3", Author: "财务", Text: "付款待审批"}); err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
 func createFundWorkbook(path string) error {
 	f := excelize.NewFile()
 	f.SetSheetName("Sheet1", "26年Q1收入明细")
@@ -1022,6 +1263,21 @@ func createAnyQuarterFundWorkbook(path string) error {
 		return err
 	}
 	if err := f.MergeCell("27年Q2收入明细", "A3", "A4"); err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createFundWorkbookWithDateFormats(path string) error {
+	f := excelize.NewFile()
+	f.SetSheetName("Sheet1", "26年Q1收入明细")
+	if err := writeSheetRows(f, "26年Q1收入明细", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额"},
+		{"短横线客户", "短横线合同", "03-01-26", "02-28-27", "月结", 100, 1, 100, "是", 100, 100},
+		{"Janchor Partners Limited", "框架合同", "2025/3/13", 0, "月度", "", 1, 100, "否", 0, 0},
+	}); err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
@@ -1192,6 +1448,59 @@ func createFundWorkbookWithMergedMonthlyAmounts(path string) error {
 	return f.SaveAs(path)
 }
 
+func createFundWorkbookWithMergedMonthlyAmountsAndComments(path string) error {
+	f := excelize.NewFile()
+	sheet := "26年Q1收入明细"
+	f.SetSheetName("Sheet1", sheet)
+	if err := writeSheetRows(f, sheet, [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额"},
+		{"Yipit,LLC", "数据采购合同-快手", "2026/1/1", "2026/3/31", "月结", "固定金额", "/", 100, "是", 100, 100},
+		{"Yipit,LLC", "数据采购合同-抖音", "2026/1/1", "2026/3/31", "月结", "固定金额", "", "", "", "", ""},
+		{"Yipit,LLC", "数据采购合同-shopee", "2026/1/1", "2026/3/31", "月结", "固定金额", "", "", "", "", ""},
+		{"Yipit,LLC", "数据采购合同-Tmal", "2026/1/1", "2026/3/31", "月结", "固定金额", "", "", "", "", ""},
+	}); err != nil {
+		return err
+	}
+	for _, col := range []string{"G", "H", "I", "J", "K"} {
+		if err := f.MergeCell(sheet, col+"3", col+"6"); err != nil {
+			return err
+		}
+	}
+	if err := f.AddComment(sheet, excelize.Comment{Cell: "H3", Author: "财务", Text: "合并收入由四个合同共同确认"}); err != nil {
+		return err
+	}
+	if err := f.AddComment(sheet, excelize.Comment{Cell: "B4", Author: "财务", Text: "成员合同备注也要保留"}); err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
+func createMixedFundAndCostWorkbook(path string) error {
+	f := excelize.NewFile()
+	f.SetSheetName("Sheet1", "26年Q1收入明细")
+	if err := writeSheetRows(f, "26年Q1收入明细", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额"},
+		{"辽宁金程信息科技有限公司", "行业商品数据采购合同-A01", "2026-01-01", "2026-03-31", "月结", 100, 12, 1200, "是", 1200, 1000},
+	}); err != nil {
+		return err
+	}
+	if _, err := f.NewSheet("成本-月度结算"); err != nil {
+		return err
+	}
+	if err := writeSheetRows(f, "成本-月度结算", [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价", "入账科目", "1月", "", "", "", ""},
+		{"", "", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "付款金额"},
+		{"南京林悦智能科技有限公司", "技术服务采购合同-LY01", "2026-01-01", "2026-12-31", "月结", 50, "640101", "1人月", 888, "是", 888, 666},
+	}); err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.SaveAs(path)
+}
+
 func createCostWorkbookWithMergedMonthlyAmounts(path string) error {
 	f := excelize.NewFile()
 	sheet := "成本-月度结算"
@@ -1295,6 +1604,22 @@ func assertRowStringFloat(t *testing.T, db *sql.DB, query string, s1, s2, s3, s4
 	}
 	if !n2.Valid || n2.Float64 != f2 {
 		t.Fatalf("float column 2 for %q = %v, want %.2f", query, n2.Float64, f2)
+	}
+}
+
+func assertCellNotesContain(t *testing.T, db *sql.DB, query string, want ...string) {
+	t.Helper()
+	var notes sql.NullString
+	if err := db.QueryRow(query).Scan(&notes); err != nil {
+		t.Fatalf("query source cell notes failed: %v", err)
+	}
+	if !notes.Valid || strings.TrimSpace(notes.String) == "" {
+		t.Fatalf("source_cell_notes for %q is empty", query)
+	}
+	for _, expected := range want {
+		if !strings.Contains(notes.String, expected) {
+			t.Fatalf("source_cell_notes for %q = %q, want to contain %q", query, notes.String, expected)
+		}
 	}
 }
 
