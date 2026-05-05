@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS fin_contracts (
     contract_start_date TEXT,
     contract_end_date TEXT,
     settlement_cycle TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS fin_revenue_settlements (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,7 +115,9 @@ CREATE TABLE IF NOT EXISTS fin_cost_settlements (
     contract_end_date TEXT,
     settlement_cycle TEXT,
     settlement_unit_price TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    source_cell_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS fin_cost_settlement_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,14 +138,17 @@ CREATE TABLE IF NOT EXISTS fin_cost_settlement_groups (
     contract_end_date TEXT,
     settlement_cycle TEXT,
     settlement_unit_price TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    source_cell_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS fin_cost_settlement_group_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     group_id INTEGER NOT NULL,
     contract_id TEXT NOT NULL,
     source_row_number INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS fin_fund_income (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,7 +165,9 @@ CREATE TABLE IF NOT EXISTS fin_fund_income (
     contract_end_date TEXT,
     settlement_cycle TEXT,
     settlement_unit_price TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    source_cell_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS fin_fund_income_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,14 +187,17 @@ CREATE TABLE IF NOT EXISTS fin_fund_income_groups (
     contract_end_date TEXT,
     settlement_cycle TEXT,
     settlement_unit_price TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    source_cell_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS fin_fund_income_group_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     group_id INTEGER NOT NULL,
     contract_id TEXT NOT NULL,
     source_row_number INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS table_idempotency_policies (
     table_name TEXT PRIMARY KEY,
