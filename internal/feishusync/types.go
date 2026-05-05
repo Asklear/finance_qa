@@ -51,16 +51,48 @@ type SourceFilter struct {
 }
 
 type ContractPDFState struct {
-	ID                int64  `json:"id"`
-	FileName          string `json:"file_name"`
-	FileHash          string `json:"file_hash"`
-	StorageKey        string `json:"storage_key"`
-	FeishuFileToken   string `json:"feishu_file_token"`
-	FeishuParentToken string `json:"feishu_parent_token"`
-	FeishuSlotKey     string `json:"feishu_slot_key"`
-	FileSize          int64  `json:"file_size"`
-	SyncStatus        string `json:"sync_status"`
-	OCRStatus         string `json:"ocr_status"`
+	ID                 int64  `json:"id"`
+	FileName           string `json:"file_name"`
+	FileHash           string `json:"file_hash"`
+	StorageKey         string `json:"storage_key"`
+	FeishuFileToken    string `json:"feishu_file_token"`
+	FeishuRootToken    string `json:"feishu_root_token"`
+	FeishuParentToken  string `json:"feishu_parent_token"`
+	FeishuRelativePath string `json:"feishu_relative_path"`
+	FeishuFolderPath   string `json:"feishu_folder_path"`
+	FeishuSlotKey      string `json:"feishu_slot_key"`
+	RelationKey        string `json:"feishu_relation_key"`
+	FileSize           int64  `json:"file_size"`
+	SyncStatus         string `json:"sync_status"`
+	OCRStatus          string `json:"ocr_status"`
+}
+
+type InvoicePDFState struct {
+	ID                 int64  `json:"id"`
+	ContractID         int64  `json:"contract_id"`
+	InvoiceNumber      string `json:"invoice_number"`
+	FileName           string `json:"file_name"`
+	FileHash           string `json:"file_hash"`
+	StorageKey         string `json:"storage_key"`
+	FeishuFileToken    string `json:"feishu_file_token"`
+	FeishuRootToken    string `json:"feishu_root_token"`
+	FeishuParentToken  string `json:"feishu_parent_token"`
+	FeishuRelativePath string `json:"feishu_relative_path"`
+	FeishuFolderPath   string `json:"feishu_folder_path"`
+	FeishuSlotKey      string `json:"feishu_slot_key"`
+	RelationKey        string `json:"feishu_relation_key"`
+	FileSize           int64  `json:"file_size"`
+	SyncStatus         string `json:"sync_status"`
+	OCRStatus          string `json:"ocr_status"`
+}
+
+type ContractPDFDuplicate struct {
+	ID          int64
+	FileHash    string
+	StorageKey  string
+	OCRStatus   string
+	SyncStatus  string
+	FeishuToken string
 }
 
 type DuplicateLog struct {

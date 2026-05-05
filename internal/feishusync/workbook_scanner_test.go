@@ -2,6 +2,7 @@ package feishusync_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -39,6 +40,175 @@ func TestWorkbookScannerSkipsUnchangedHash(t *testing.T) {
 	updated := mustSingleSource(t, repo)
 	if updated.LastContentHash != hash || updated.SyncStatus != feishusync.SyncStatusActive {
 		t.Fatalf("source after skip = %#v", updated)
+	}
+}
+
+func TestWorkbookScannerSkipsUnchangedHashWithoutUploadingDuplicate(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	hash := writeSnapshotAndHash(t, "workbook-v1")
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集资金收入计算表-2026.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
+		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
+	}
+	store := &recordingObjectStore{
+		uri:    "tenant/uhub/finance/2026/优集资金收入计算表-2026.xlsx",
+		hashes: map[string]string{"tenant/uhub/finance/2026/优集资金收入计算表-2026.xlsx": hash},
+	}
+	importer := &recordingWorkbookImporter{}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司", store)
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Skipped != 1 || len(store.puts) != 0 || len(importer.calls) != 0 {
+		t.Fatalf("result=%#v puts=%#v imports=%#v", result, store.puts, importer.calls)
+	}
+}
+
+func TestWorkbookScannerBackfillsStorageKeyWhenUnchanged(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	hash := writeSnapshotAndHash(t, "workbook-v1")
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集资金收入计算表-2026.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
+		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
+	}
+	store := &recordingObjectStore{
+		hashes: map[string]string{"tenant/uhub/finance/2026/优集资金收入计算表-2026.xlsx": hash},
+	}
+	importer := &recordingWorkbookImporter{}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司", store)
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Skipped != 1 || len(store.puts) != 0 || len(importer.calls) != 0 {
+		t.Fatalf("result=%#v puts=%#v imports=%#v", result, store.puts, importer.calls)
+	}
+	updated := mustSingleSource(t, repo)
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["storage_key"] != "tenant/uhub/finance/2026/优集资金收入计算表-2026.xlsx" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+}
+
+func TestWorkbookScannerUploadsSnapshotWhenUnchangedStorageKeyMissing(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	hash := writeSnapshotAndHash(t, "workbook-v1")
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集资金收入计算表-2026.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
+		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
+	}
+	store := &recordingObjectStore{}
+	importer := &recordingWorkbookImporter{}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司", store)
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Skipped != 1 || len(store.puts) != 1 || len(importer.calls) != 0 {
+		t.Fatalf("result=%#v puts=%#v imports=%#v", result, store.puts, importer.calls)
+	}
+	updated := mustSingleSource(t, repo)
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["storage_key"] != "tenant/uhub/finance/2026/优集资金收入计算表-2026.xlsx" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+}
+
+func TestWorkbookScannerFindsExistingOSSObjectByHashBeforeUploading(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, "old-hash", `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集收入、成本计算表 - 上传", MimeType: "application/octet-stream", Revision: "rev-2"}},
+		exported:  map[string][]byte{src.SourceToken: []byte("workbook-v2")},
+		downloads: map[string][]byte{},
+	}
+	hash := writeSnapshotAndHash(t, "workbook-v2")
+	existingOSSKey := "tenant/uhub/finance/2026/优集资金收入计算表-2026.xlsx"
+	store := &recordingObjectStore{
+		hashKeys: map[string]string{hash: existingOSSKey},
+	}
+	importer := &recordingWorkbookImporter{
+		summary: ingest.ImportSummary{ReportType: "contract_workbook", RecordCount: 12},
+	}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司", store)
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Created != 1 || len(store.puts) != 0 {
+		t.Fatalf("result=%#v puts=%#v", result, store.puts)
+	}
+	updated := mustSingleSource(t, repo)
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["storage_key"] != existingOSSKey {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+}
+
+func TestWorkbookScannerAvoidsOverwritingOccupiedOSSPathWithDifferentHash(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, "old-hash", `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集收入、成本计算表 - 上传.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-2"}},
+		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v2")},
+	}
+	hash := writeSnapshotAndHash(t, "workbook-v2")
+	targetKey := "tenant/uhub/finance/2026/优集收入、成本计算表 - 上传.xlsx"
+	store := &recordingObjectStore{
+		hashes: map[string]string{targetKey: "existing-different-hash"},
+	}
+	importer := &recordingWorkbookImporter{
+		summary: ingest.ImportSummary{ReportType: "contract_workbook", RecordCount: 12},
+	}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司", store)
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	wantKey := "tenant/uhub/finance/2026/优集收入、成本计算表 - 上传.sha256-" + hash[:12] + ".xlsx"
+	if result.Created != 1 || len(store.puts) != 1 || store.puts[0].key != wantKey {
+		t.Fatalf("result=%#v puts=%#v want key %q", result, store.puts, wantKey)
+	}
+	updated := mustSingleSource(t, repo)
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["storage_key"] != wantKey {
+		t.Fatalf("metadata = %#v", metadata)
 	}
 }
 
@@ -81,6 +251,43 @@ func TestWorkbookScannerImportsChangedSnapshotNonIncrementally(t *testing.T) {
 	updated := mustSingleSource(t, repo)
 	if updated.LastContentHash == "" || updated.LastContentHash == "old-hash" || updated.LastRevision != "rev-2" {
 		t.Fatalf("source after import = %#v", updated)
+	}
+}
+
+func TestWorkbookScannerUploadsSnapshotToObjectStore(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, "old-hash", `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集成本计算表-4.23-池", MimeType: "application/octet-stream", Revision: "rev-2"}},
+		exported:  map[string][]byte{src.SourceToken: []byte("workbook-v2")},
+		downloads: map[string][]byte{},
+	}
+	store := &recordingObjectStore{uri: "tenant/uhub/finance/2026/优集成本计算表-4.23-池.xlsx"}
+	importer := &recordingWorkbookImporter{
+		summary: ingest.ImportSummary{ReportType: "contract_workbook", RecordCount: 12},
+	}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司", store)
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Created != 1 || len(store.puts) != 1 {
+		t.Fatalf("result=%#v puts=%#v", result, store.puts)
+	}
+	if store.puts[0].key != "tenant/uhub/finance/2026/优集成本计算表-4.23-池.xlsx" {
+		t.Fatalf("object key should follow historical finance path: %#v", store.puts[0])
+	}
+	updated := mustSingleSource(t, repo)
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["storage_key"] != store.uri {
+		t.Fatalf("metadata = %#v", metadata)
 	}
 }
 
@@ -128,6 +335,10 @@ func (i *recordingWorkbookImporter) ImportFileWithOptions(_ context.Context, dbP
 }
 
 func mustSeedWorkbookSource(t *testing.T, repo *feishusync.Repository, lastHash string) feishusync.SyncSource {
+	return mustSeedWorkbookSourceWithMetadata(t, repo, lastHash, "")
+}
+
+func mustSeedWorkbookSourceWithMetadata(t *testing.T, repo *feishusync.Repository, lastHash, metadata string) feishusync.SyncSource {
 	t.Helper()
 
 	src := feishusync.SyncSource{
@@ -136,6 +347,7 @@ func mustSeedWorkbookSource(t *testing.T, repo *feishusync.Repository, lastHash 
 		DisplayName:     "飞书财务表",
 		SyncStatus:      feishusync.SyncStatusActive,
 		LastContentHash: lastHash,
+		MetadataJSON:    metadata,
 	}
 	if err := repo.UpsertSource(context.Background(), src); err != nil {
 		t.Fatalf("seed source: %v", err)

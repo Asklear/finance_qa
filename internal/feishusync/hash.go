@@ -1,6 +1,7 @@
 package feishusync
 
 import (
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -41,6 +42,20 @@ func FileSHA256(path string) (string, error) {
 	defer func() { _ = file.Close() }()
 
 	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func FileMD5(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+
+	hash := md5.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", err
 	}

@@ -100,6 +100,120 @@ func TestHTTPClientFetchesTenantTokenAndListsFolderFiles(t *testing.T) {
 	}
 }
 
+func TestHTTPClientUsesUserTokenFileForRequests(t *testing.T) {
+	t.Parallel()
+
+	tokenFile := filepath.Join(t.TempDir(), "feishu_user_token.json")
+	writeUserTokenFile(t, tokenFile, map[string]any{
+		"access_token":  "user-token",
+		"refresh_token": "refresh-token",
+		"expires_at":    time.Now().Add(time.Hour).Format(time.RFC3339),
+	})
+
+	var seenAuthHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/open-apis/drive/v1/files" {
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+		seenAuthHeader = r.Header.Get("Authorization")
+		writeFeishuJSON(t, w, map[string]any{
+			"code": 0,
+			"data": map[string]any{"has_more": false, "files": []map[string]any{}},
+		})
+	}))
+	defer server.Close()
+
+	client := feishu.NewHTTPClient("app-id", "app-secret",
+		feishu.WithBaseURL(server.URL),
+		feishu.WithUserTokenFile(tokenFile),
+	)
+	if _, err := client.ListFolderFiles(t.Context(), "folder-token"); err != nil {
+		t.Fatalf("list folder files: %v", err)
+	}
+	if seenAuthHeader != "Bearer user-token" {
+		t.Fatalf("authorization header = %q", seenAuthHeader)
+	}
+}
+
+func TestHTTPClientRefreshesExpiredUserToken(t *testing.T) {
+	t.Parallel()
+
+	tokenFile := filepath.Join(t.TempDir(), "feishu_user_token.json")
+	writeUserTokenFile(t, tokenFile, map[string]any{
+		"access_token":  "expired-user-token",
+		"refresh_token": "refresh-token",
+		"expires_at":    time.Now().Add(-time.Minute).Format(time.RFC3339),
+	})
+
+	var seenAuthHeader string
+	var refreshRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/app_access_token/internal":
+			writeFeishuJSON(t, w, map[string]any{
+				"code":             0,
+				"app_access_token": "app-token",
+				"expire":           7200,
+			})
+		case "/open-apis/authen/v1/refresh_access_token":
+			refreshRequests++
+			if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
+				t.Fatalf("refresh authorization = %q", got)
+			}
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode refresh body: %v", err)
+			}
+			if body["grant_type"] != "refresh_token" || body["refresh_token"] != "refresh-token" {
+				t.Fatalf("refresh body = %#v", body)
+			}
+			writeFeishuJSON(t, w, map[string]any{
+				"code": 0,
+				"data": map[string]any{
+					"access_token":       "new-user-token",
+					"refresh_token":      "new-refresh-token",
+					"expires_in":         6900,
+					"refresh_expires_in": 86400,
+				},
+			})
+		case "/open-apis/drive/v1/files":
+			seenAuthHeader = r.Header.Get("Authorization")
+			writeFeishuJSON(t, w, map[string]any{
+				"code": 0,
+				"data": map[string]any{"has_more": false, "files": []map[string]any{}},
+			})
+		default:
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := feishu.NewHTTPClient("app-id", "app-secret",
+		feishu.WithBaseURL(server.URL),
+		feishu.WithUserTokenFile(tokenFile),
+	)
+	if _, err := client.ListFolderFiles(t.Context(), "folder-token"); err != nil {
+		t.Fatalf("list folder files: %v", err)
+	}
+	if refreshRequests != 1 {
+		t.Fatalf("refresh requests = %d, want 1", refreshRequests)
+	}
+	if seenAuthHeader != "Bearer new-user-token" {
+		t.Fatalf("authorization header = %q", seenAuthHeader)
+	}
+	var saved map[string]any
+	data, err := os.ReadFile(tokenFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved["access_token"] != "new-user-token" || saved["refresh_token"] != "new-refresh-token" {
+		t.Fatalf("saved token = %#v", saved)
+	}
+}
+
 func TestHTTPClientDownloadsFile(t *testing.T) {
 	t.Parallel()
 
@@ -132,21 +246,22 @@ func TestHTTPClientGetsFileMetadata(t *testing.T) {
 	t.Parallel()
 
 	server := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/open-apis/drive/v1/files/file-token" {
+		if r.URL.Path != "/open-apis/drive/v1/metas/batch_query" {
 			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode metadata body: %v", err)
 		}
 		writeFeishuJSON(t, w, map[string]any{
 			"code": 0,
 			"data": map[string]any{
-				"file": map[string]any{
-					"token":         "file-token",
-					"name":          "财务表.xlsx",
-					"type":          "file",
-					"mime_type":     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-					"parent_token":  "folder-token",
-					"size":          "1024",
-					"modified_time": "1714560000",
-				},
+				"metas": []map[string]any{{
+					"doc_token":          "file-token",
+					"title":              "财务表.xlsx",
+					"doc_type":           "file",
+					"latest_modify_time": "1714560000",
+				}},
 			},
 		})
 	})
@@ -157,7 +272,7 @@ func TestHTTPClientGetsFileMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get file metadata: %v", err)
 	}
-	if meta.Token != "file-token" || meta.Name != "财务表.xlsx" || meta.Size != 1024 {
+	if meta.Token != "file-token" || meta.Name != "财务表.xlsx" || meta.Type != "file" {
 		t.Fatalf("metadata = %#v", meta)
 	}
 }
@@ -166,16 +281,17 @@ func TestHTTPClientGetsDirectFileMetadata(t *testing.T) {
 	t.Parallel()
 
 	server := newTokenServer(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/open-apis/drive/v1/files/file-token" {
+		if r.URL.Path != "/open-apis/drive/v1/metas/batch_query" {
 			t.Fatalf("unexpected request %s", r.URL.Path)
 		}
 		writeFeishuJSON(t, w, map[string]any{
 			"code": 0,
 			"data": map[string]any{
-				"token": "file-token",
-				"name":  "财务表.xlsx",
-				"type":  "file",
-				"size":  2048,
+				"metas": []map[string]any{{
+					"doc_token": "file-token",
+					"title":     "财务表.xlsx",
+					"doc_type":  "file",
+				}},
 			},
 		})
 	})
@@ -186,7 +302,7 @@ func TestHTTPClientGetsDirectFileMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get file metadata: %v", err)
 	}
-	if meta.Token != "file-token" || meta.Size != 2048 {
+	if meta.Token != "file-token" || meta.Name != "财务表.xlsx" || meta.Type != "file" {
 		t.Fatalf("metadata = %#v", meta)
 	}
 }
@@ -288,5 +404,17 @@ func writeFeishuJSON(t *testing.T, w http.ResponseWriter, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		t.Fatalf("encode response: %v", err)
+	}
+}
+
+func writeUserTokenFile(t *testing.T, path string, payload any) {
+	t.Helper()
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
