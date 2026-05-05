@@ -33,17 +33,13 @@ func (e *Engine) collectContractDetail(ctx context.Context, spec QuerySpec, prob
 	}
 	ids := contractDetailInternalIDs(primaryCandidates)
 	if probe.Intent == ContractDetailIntentInvoice {
-		summary, ok := e.collectContractInvoiceSummary(ids)
-		if ok {
-			result.InvoiceSummary = summary
-			result.SourceTables = appendUniqueStrings(result.SourceTables, "contract_invoice_summaries")
-		}
 		invoices, err := e.collectContractInvoices(ids)
 		if err != nil {
 			return result, err
 		}
 		if len(invoices) > 0 {
 			result.Invoices = invoices
+			result.InvoiceSummary = summarizeContractInvoices(primaryCandidates, invoices)
 			result.SourceTables = appendUniqueStrings(result.SourceTables, "contract_invoices")
 		}
 	}
@@ -125,59 +121,6 @@ func contractDetailMatchesFromCandidates(candidates []contractDetailCandidate) [
 	return out
 }
 
-func (e *Engine) collectContractInvoiceSummary(ids []string) (ContractInvoiceSummaryDetail, bool) {
-	if len(ids) == 0 || len(e.tableColumns("contract_invoice_summaries")) == 0 {
-		return ContractInvoiceSummaryDetail{}, false
-	}
-	cols := e.tableColumns("contract_invoice_summaries")
-	if !cols["contract_id"] {
-		return ContractInvoiceSummaryDetail{}, false
-	}
-	selects := []string{
-		contractDetailNumericSelectExpr(cols, "invoice_count"),
-		contractDetailNumericSelectExpr(cols, "total_invoiced_amount"),
-		contractDetailNumericSelectExpr(cols, "total_tax_amount"),
-		contractDetailNumericSelectExpr(cols, "contract_amount"),
-		contractDetailNumericSelectExpr(cols, "invoiced_ratio"),
-		contractDetailTextSelectExpr(cols, "latest_invoice_date"),
-		contractDetailTextSelectExpr(cols, "latest_invoice_number"),
-	}
-	rows, err := e.db.Query("SELECT "+strings.Join(selects, ", ")+" FROM contract_invoice_summaries WHERE CAST(contract_id AS TEXT) IN ("+contractDetailPlaceholders(len(ids))+")", stringsToAny(ids)...)
-	if err != nil {
-		return ContractInvoiceSummaryDetail{}, false
-	}
-	defer rows.Close()
-
-	var summary ContractInvoiceSummaryDetail
-	found := false
-	for rows.Next() {
-		var count, total, tax, contractAmount, ratio float64
-		var latestDate, latestNumber string
-		if err := rows.Scan(&count, &total, &tax, &contractAmount, &ratio, &latestDate, &latestNumber); err != nil {
-			return ContractInvoiceSummaryDetail{}, false
-		}
-		found = true
-		summary.InvoiceCount += int(count)
-		summary.TotalInvoicedAmount += total
-		summary.TotalTaxAmount += tax
-		if summary.ContractAmount == 0 {
-			summary.ContractAmount = contractAmount
-		} else {
-			summary.ContractAmount += contractAmount
-		}
-		if latestDate > summary.LatestInvoiceDate {
-			summary.LatestInvoiceDate = latestDate
-			summary.LatestInvoiceNumber = latestNumber
-		}
-	}
-	if summary.ContractAmount != 0 {
-		summary.InvoicedRatio = summary.TotalInvoicedAmount / summary.ContractAmount
-	} else {
-		summary.InvoicedRatio = 0
-	}
-	return summary, found
-}
-
 func (e *Engine) collectContractInvoices(ids []string) ([]ContractInvoiceDetail, error) {
 	if len(ids) == 0 || len(e.tableColumns("contract_invoices")) == 0 {
 		return nil, nil
@@ -232,6 +175,25 @@ func (e *Engine) collectContractInvoices(ids []string) ([]ContractInvoiceDetail,
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func summarizeContractInvoices(candidates []contractDetailCandidate, invoices []ContractInvoiceDetail) ContractInvoiceSummaryDetail {
+	summary := ContractInvoiceSummaryDetail{InvoiceCount: len(invoices)}
+	for _, invoice := range invoices {
+		summary.TotalInvoicedAmount += invoice.TotalAmount
+		summary.TotalTaxAmount += invoice.TotalTaxAmount
+		if invoice.IssueDate > summary.LatestInvoiceDate {
+			summary.LatestInvoiceDate = invoice.IssueDate
+			summary.LatestInvoiceNumber = invoice.InvoiceNumber
+		}
+	}
+	for _, candidate := range candidates {
+		summary.ContractAmount += candidate.ContractAmount
+	}
+	if summary.ContractAmount != 0 {
+		summary.InvoicedRatio = summary.TotalInvoicedAmount / summary.ContractAmount
+	}
+	return summary
 }
 
 func (e *Engine) collectContractPages(ids []string) ([]rawContractPage, error) {

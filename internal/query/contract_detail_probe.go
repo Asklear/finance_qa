@@ -76,7 +76,7 @@ func inferContractDetailIntent(question string) ContractDetailIntent {
 func contractDetailCandidateTables(intent ContractDetailIntent) []string {
 	switch intent {
 	case ContractDetailIntentInvoice:
-		return []string{"contract_main", "contract_invoice_summaries", "contract_invoices"}
+		return []string{"contract_main", "contract_invoices"}
 	case ContractDetailIntentPage:
 		return []string{"contract_main", "contract_pages"}
 	case ContractDetailIntentClause:
@@ -132,15 +132,7 @@ func (e *Engine) hasContractDetailInvoiceRows(candidates []contractDetailCandida
 	if len(ids) == 0 {
 		return false
 	}
-	for _, tableName := range []string{"contract_invoice_summaries", "contract_invoices"} {
-		if len(e.tableColumns(tableName)) == 0 {
-			continue
-		}
-		if e.countContractDetailRowsByContractIDs(tableName, ids) > 0 {
-			return true
-		}
-	}
-	return false
+	return e.countContractDetailRowsByContractIDs("contract_invoices", ids) > 0
 }
 
 func (e *Engine) countContractDetailRowsByContractIDs(tableName string, ids []string) int {

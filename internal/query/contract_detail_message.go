@@ -275,8 +275,6 @@ func contractDetailSourceNote(tables []string) string {
 			labels = append(labels, "合同主表")
 		case "contract_invoices":
 			labels = append(labels, "合同发票明细")
-		case "contract_invoice_summaries":
-			labels = append(labels, "合同发票汇总")
 		case "contract_pages":
 			labels = append(labels, "合同分页正文")
 		}

@@ -74,7 +74,7 @@ func TestContractDetailProbeInvoiceChoosesInvoiceTables(t *testing.T) {
 	if probe.Intent != query.ContractDetailIntentInvoice {
 		t.Fatalf("intent = %s, want %s", probe.Intent, query.ContractDetailIntentInvoice)
 	}
-	if !hasString(probe.CandidateTables, "contract_invoice_summaries") || !hasString(probe.CandidateTables, "contract_invoices") {
+	if hasString(probe.CandidateTables, "contract_invoice_summaries") || !hasString(probe.CandidateTables, "contract_invoices") {
 		t.Fatalf("candidate tables = %#v", probe.CandidateTables)
 	}
 	if !probe.HasStructuredAnswer {
@@ -195,7 +195,44 @@ func TestContractDetailInvoiceQueryReturnsAmountsAndDatesSafely(t *testing.T) {
 	if !ok {
 		t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
 	}
-	if !hasString(sourceTables, "contract_invoice_summaries") || !hasString(sourceTables, "contract_invoices") {
+	if hasString(sourceTables, "contract_invoice_summaries") || !hasString(sourceTables, "contract_invoices") {
+		t.Fatalf("source_tables = %#v", sourceTables)
+	}
+}
+
+func TestContractDetailInvoiceQueryAggregatesWithoutSummaryTable(t *testing.T) {
+	dbPath := buildContractDetailTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`DROP TABLE contract_invoice_summaries`); err != nil {
+		t.Fatalf("drop summary table: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	engine, err := query.NewEngine(dbPath, "南京优集数据科技有限公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("百度边缘计算资源服务协议发票金额和开票日期是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	for _, want := range []string{"累计开票83000.00元", "最近开票日期2026-03-28", "发票号INV-EDGE-002"} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message should contain %q, got: %s", want, res.Message)
+		}
+	}
+	sourceTables, ok := res.Data["source_tables"].([]string)
+	if !ok {
+		t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
+	}
+	if hasString(sourceTables, "contract_invoice_summaries") || !hasString(sourceTables, "contract_invoices") {
 		t.Fatalf("source_tables = %#v", sourceTables)
 	}
 }
