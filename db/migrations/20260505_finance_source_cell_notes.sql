@@ -25,4 +25,3 @@ COMMENT ON COLUMN fin_fund_income_groups.source_cell_notes IS '导入来源单�
 COMMENT ON COLUMN fin_cost_settlement_groups.source_cell_notes IS '导入来源单元格备注 JSON，按 Excel 单元格坐标保存作者和备注文本';
 
 COMMIT;
-
