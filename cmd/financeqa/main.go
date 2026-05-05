@@ -54,6 +54,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDimensions(args[1:], stdout, stderr)
 	case "feishu":
 		return runFeishu(args[1:], stdout, stderr)
+	case "ocr":
+		return runOCR(args[1:], stdout, stderr)
 	default:
 		return runQuery(args, stdout, stderr)
 	}
@@ -77,8 +79,26 @@ func runInitDB(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "database initialized at %s\n", *dbPath)
+	fmt.Fprintf(stdout, "database initialized at %s\n", redactDBTargetForCLI(*dbPath))
 	return 0
+}
+
+func redactDBTargetForCLI(target string) string {
+	parts := strings.Fields(strings.TrimSpace(target))
+	if len(parts) == 0 {
+		return target
+	}
+	changed := false
+	for i, part := range parts {
+		if strings.HasPrefix(strings.ToLower(part), "password=") {
+			parts[i] = "password=<redacted>"
+			changed = true
+		}
+	}
+	if changed {
+		return strings.Join(parts, " ")
+	}
+	return target
 }
 
 func runConfig(args []string, stdout, stderr io.Writer) int {
@@ -330,4 +350,7 @@ func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "  financeqa feishu sources [--db <dsn>] [--source-type <type>]")
 	fmt.Fprintln(out, "  financeqa feishu scan [--db <dsn>] [--company <name>]")
 	fmt.Fprintln(out, "  financeqa feishu sync-once [--db <dsn>] --source-token <token>")
+	fmt.Fprintln(out, "  financeqa ocr process-pending [--db <dsn>] [--limit <n>]")
+	fmt.Fprintln(out, "  financeqa ocr process-file [--db <dsn>] --file <pdf> [--contract-id <id>]")
+	fmt.Fprintln(out, "  financeqa ocr retry-failed [--db <dsn>] [--limit <n>]")
 }

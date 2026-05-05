@@ -3,6 +3,8 @@ package feishusync
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -166,12 +168,170 @@ func (r *Repository) FindContractByFileHash(ctx context.Context, hash string) (C
 	return r.findContractPDFState(ctx, `file_hash = ?`, hash)
 }
 
+func (r *Repository) FindContractByAnyFileHash(ctx context.Context, hashes ...string) (ContractPDFState, bool, error) {
+	cleaned := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		hash = strings.TrimSpace(hash)
+		if hash == "" || containsHash(cleaned, hash) {
+			continue
+		}
+		cleaned = append(cleaned, hash)
+	}
+	if len(cleaned) == 0 {
+		return ContractPDFState{}, false, nil
+	}
+	if len(cleaned) == 1 {
+		return r.FindContractByFileHash(ctx, cleaned[0])
+	}
+	placeholders := make([]string, len(cleaned))
+	args := make([]any, len(cleaned))
+	for i, hash := range cleaned {
+		placeholders[i] = "?"
+		args[i] = hash
+	}
+	return r.findContractPDFState(ctx, `file_hash IN (`+strings.Join(placeholders, ",")+`)`, args...)
+}
+
+func (r *Repository) DeleteDuplicateContractRows(ctx context.Context, keepID int64, hashes []string, storageKey string) (int64, error) {
+	return r.deleteDuplicateContractRows(ctx, r.db, keepID, hashes, storageKey)
+}
+
+func (r *Repository) deleteDuplicateContractRows(ctx context.Context, exec sqlExecer, keepID int64, hashes []string, storageKey string) (int64, error) {
+	if keepID == 0 {
+		return 0, nil
+	}
+	cleaned := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		hash = strings.TrimSpace(hash)
+		if hash == "" || containsHash(cleaned, hash) {
+			continue
+		}
+		cleaned = append(cleaned, hash)
+	}
+	storageKey = strings.TrimSpace(storageKey)
+	if len(cleaned) == 0 || storageKey == "" {
+		return 0, nil
+	}
+	placeholders := make([]string, len(cleaned))
+	args := make([]any, 0, len(cleaned)+2)
+	args = append(args, keepID, storageKey)
+	for i, hash := range cleaned {
+		placeholders[i] = "?"
+		args = append(args, hash)
+	}
+	res, err := exec.ExecContext(ctx, `
+DELETE FROM contract_main
+WHERE id <> ?
+  AND storage_key = ?
+  AND file_hash IN (`+strings.Join(placeholders, ",")+`)
+`, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+type sqlExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func containsHash(items []string, want string) bool {
+	for _, item := range items {
+		if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(want)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Repository) FindActiveContractBySlot(ctx context.Context, slotKey string) (ContractPDFState, bool, error) {
 	slotKey = strings.TrimSpace(slotKey)
 	if slotKey == "" {
 		return ContractPDFState{}, false, nil
 	}
 	return r.findContractPDFState(ctx, `feishu_slot_key = ? AND (sync_status IS NULL OR sync_status <> ?)`, slotKey, SyncStatusDeleted)
+}
+
+func (r *Repository) FindContractRelationTarget(ctx context.Context, rootToken, relationKey string) (ContractPDFState, bool, error) {
+	rootToken = strings.TrimSpace(rootToken)
+	relationKey = strings.TrimSpace(relationKey)
+	if rootToken == "" || relationKey == "" {
+		return ContractPDFState{}, false, nil
+	}
+	query := `
+SELECT
+	id,
+	COALESCE(file_name, ''),
+	COALESCE(file_hash, ''),
+	COALESCE(storage_key, ''),
+	COALESCE(feishu_file_token, ''),
+	COALESCE(feishu_root_token, ''),
+	COALESCE(feishu_parent_token, ''),
+	COALESCE(feishu_relative_path, ''),
+	COALESCE(feishu_folder_path, ''),
+	COALESCE(feishu_slot_key, ''),
+	COALESCE(feishu_relation_key, ''),
+	COALESCE(file_size, 0),
+	COALESCE(sync_status, ''),
+	COALESCE(ocr_status, '')
+FROM contract_main
+WHERE feishu_root_token = ?
+  AND feishu_relation_key = ?
+  AND (sync_status IS NULL OR sync_status <> ?)
+ORDER BY id DESC
+LIMIT 1`
+	var state ContractPDFState
+	err := r.db.QueryRowContext(ctx, query, rootToken, relationKey, SyncStatusDeleted).Scan(
+		&state.ID,
+		&state.FileName,
+		&state.FileHash,
+		&state.StorageKey,
+		&state.FeishuFileToken,
+		&state.FeishuRootToken,
+		&state.FeishuParentToken,
+		&state.FeishuRelativePath,
+		&state.FeishuFolderPath,
+		&state.FeishuSlotKey,
+		&state.RelationKey,
+		&state.FileSize,
+		&state.SyncStatus,
+		&state.OCRStatus,
+	)
+	if err == sql.ErrNoRows {
+		return ContractPDFState{}, false, nil
+	}
+	if err != nil {
+		return ContractPDFState{}, false, err
+	}
+	return state, true, nil
+}
+
+func (r *Repository) LinkPendingInvoicesToContract(ctx context.Context, rootToken, relationKey string, contractID int64) (int64, error) {
+	rootToken = strings.TrimSpace(rootToken)
+	relationKey = strings.TrimSpace(relationKey)
+	if rootToken == "" || relationKey == "" || contractID == 0 {
+		return 0, nil
+	}
+	if ok, err := r.tableExists(ctx, "contract_invoices"); err != nil || !ok {
+		return 0, err
+	}
+	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{"contract_id", "feishu_root_token", "feishu_relation_key", "last_seen_at"}); err != nil || !ok {
+		return 0, err
+	}
+	res, err := r.db.ExecContext(ctx, `
+UPDATE contract_invoices
+SET contract_id = ?,
+    last_seen_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
+WHERE feishu_root_token = ?
+  AND feishu_relation_key = ?
+  AND contract_id = ?
+  AND (sync_status IS NULL OR sync_status <> ?)
+`, contractID, rootToken, relationKey, contractID, SyncStatusDeleted)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (r *Repository) UpsertContractPDFState(ctx context.Context, state ContractPDFState) (int64, error) {
@@ -181,7 +341,10 @@ func (r *Repository) UpsertContractPDFState(ctx context.Context, state ContractP
 	if state.OCRStatus == "" {
 		state.OCRStatus = OCRStatusNone
 	}
-	if strings.TrimSpace(state.FeishuFileToken) != "" {
+	if strings.TrimSpace(state.FeishuRootToken) == "" {
+		state.FeishuRootToken = state.FeishuParentToken
+	}
+	if state.ID == 0 && strings.TrimSpace(state.FeishuFileToken) != "" {
 		if existing, ok, err := r.findContractPDFState(ctx, `feishu_file_token = ?`, strings.TrimSpace(state.FeishuFileToken)); err != nil {
 			return 0, err
 		} else if ok {
@@ -197,44 +360,282 @@ func (r *Repository) UpsertContractPDFState(ctx context.Context, state ContractP
 	}
 
 	if state.ID != 0 {
-		_, err := r.db.ExecContext(ctx, `
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return 0, fmt.Errorf("begin contract state upsert: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := r.deleteDuplicateContractRows(ctx, tx, state.ID, []string{state.FileHash}, state.StorageKey); err != nil {
+			return 0, err
+		}
+		_, err = tx.ExecContext(ctx, `
 UPDATE contract_main
 SET file_name = ?,
     file_hash = ?,
     storage_key = ?,
     feishu_file_token = ?,
+    feishu_root_token = ?,
     feishu_parent_token = ?,
+    feishu_relative_path = ?,
+    feishu_folder_path = ?,
     feishu_slot_key = ?,
     feishu_file_name = ?,
+    feishu_relation_key = ?,
     file_size = ?,
     sync_status = ?,
     ocr_status = ?,
     feishu_deleted_at = NULL,
-    last_seen_at = CURRENT_TIMESTAMP
+    last_seen_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-`, nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuSlotKey), nullableString(state.FileName), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
-		return state.ID, err
+`, nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
+		if err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("commit contract state upsert: %w", err)
+		}
+		return state.ID, nil
 	}
 
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
 INSERT INTO contract_main(
-	file_name, file_hash, storage_key, feishu_file_token, feishu_parent_token,
-	feishu_slot_key, feishu_file_name, file_size, sync_status, ocr_status, last_seen_at
+	job_id, file_name, file_hash, storage_key, feishu_file_token, feishu_root_token,
+	feishu_parent_token, feishu_relative_path, feishu_folder_path,
+	feishu_slot_key, feishu_file_name, feishu_relation_key,
+	category_id, file_size, sync_status, ocr_status, last_seen_at, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 RETURNING id
-`, nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuSlotKey), nullableString(state.FileName), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
+`, generatedJobID(state), nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), r.defaultContractCategoryID(ctx), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
 	return id, err
 }
 
-func (r *Repository) MarkContractDeletedByMissingTokens(ctx context.Context, folderToken string, activeTokens []string) (int64, error) {
-	folderToken = strings.TrimSpace(folderToken)
-	if folderToken == "" {
+func (r *Repository) defaultContractCategoryID(ctx context.Context) int64 {
+	if ok, err := r.tableExists(ctx, "contract_categories"); err != nil || !ok {
+		return 1
+	}
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+SELECT id
+FROM contract_categories
+ORDER BY COALESCE(sort_order, id), id
+LIMIT 1
+`).Scan(&id)
+	if err != nil || id == 0 {
+		return 1
+	}
+	return id
+}
+
+func generatedJobID(state ContractPDFState) string {
+	if token := strings.TrimSpace(state.FeishuFileToken); token != "" {
+		return "feishu:" + token
+	}
+	if hash := strings.TrimSpace(state.FileHash); hash != "" {
+		return "feishu:sha256:" + hash
+	}
+	return fmt.Sprintf("feishu:manual:%d", time.Now().UnixNano())
+}
+
+func (r *Repository) FindInvoiceByAnyFileHash(ctx context.Context, hashes ...string) (InvoicePDFState, bool, error) {
+	cleaned := make([]string, 0, len(hashes))
+	for _, hash := range hashes {
+		hash = strings.TrimSpace(hash)
+		if hash == "" || containsHash(cleaned, hash) {
+			continue
+		}
+		cleaned = append(cleaned, hash)
+	}
+	if len(cleaned) == 0 {
+		return InvoicePDFState{}, false, nil
+	}
+	placeholders := make([]string, len(cleaned))
+	args := make([]any, len(cleaned))
+	for i, hash := range cleaned {
+		placeholders[i] = "?"
+		args[i] = hash
+	}
+	return r.findInvoicePDFState(ctx, `file_hash IN (`+strings.Join(placeholders, ",")+`)`, args...)
+}
+
+func (r *Repository) FindActiveInvoiceBySlot(ctx context.Context, slotKey string) (InvoicePDFState, bool, error) {
+	slotKey = strings.TrimSpace(slotKey)
+	if slotKey == "" {
+		return InvoicePDFState{}, false, nil
+	}
+	return r.findInvoicePDFState(ctx, `feishu_slot_key = ? AND (sync_status IS NULL OR sync_status <> ?)`, slotKey, SyncStatusDeleted)
+}
+
+func (r *Repository) UpsertInvoicePDFState(ctx context.Context, state InvoicePDFState) (int64, error) {
+	if state.ContractID == 0 {
+		return 0, errors.New("invoice PDF state requires a linked contract_id")
+	}
+	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{
+		"contract_id",
+		"invoice_number",
+		"file_name",
+		"storage_key",
+		"file_hash",
+		"feishu_file_token",
+		"feishu_root_token",
+		"feishu_parent_token",
+		"feishu_relative_path",
+		"feishu_folder_path",
+		"feishu_slot_key",
+		"feishu_file_name",
+		"feishu_relation_key",
+		"file_size",
+		"sync_status",
+		"ocr_status",
+		"feishu_deleted_at",
+		"last_seen_at",
+		"created_at",
+		"updated_at",
+	}); err != nil {
+		return 0, err
+	} else if !ok {
+		return 0, errors.New("contract_invoices is missing feishu invoice sync columns; run database bootstrap")
+	}
+	if state.SyncStatus == "" {
+		state.SyncStatus = SyncStatusActive
+	}
+	if state.OCRStatus == "" {
+		state.OCRStatus = OCRStatusNone
+	}
+	if strings.TrimSpace(state.FeishuRootToken) == "" {
+		state.FeishuRootToken = state.FeishuParentToken
+	}
+	if strings.TrimSpace(state.InvoiceNumber) == "" {
+		state.InvoiceNumber = placeholderInvoiceNumber(state)
+	}
+	if state.ID == 0 && strings.TrimSpace(state.FeishuFileToken) != "" {
+		if existing, ok, err := r.findInvoicePDFState(ctx, `feishu_file_token = ?`, strings.TrimSpace(state.FeishuFileToken)); err != nil {
+			return 0, err
+		} else if ok {
+			state.ID = existing.ID
+			if state.ContractID == 0 {
+				state.ContractID = existing.ContractID
+			}
+			if strings.TrimSpace(state.InvoiceNumber) == "" {
+				state.InvoiceNumber = existing.InvoiceNumber
+			}
+		}
+	}
+	if state.ID == 0 && strings.TrimSpace(state.FeishuSlotKey) != "" {
+		if existing, ok, err := r.findInvoicePDFState(ctx, `feishu_slot_key = ?`, strings.TrimSpace(state.FeishuSlotKey)); err != nil {
+			return 0, err
+		} else if ok {
+			state.ID = existing.ID
+			if state.ContractID == 0 {
+				state.ContractID = existing.ContractID
+			}
+			if strings.TrimSpace(state.InvoiceNumber) == "" {
+				state.InvoiceNumber = existing.InvoiceNumber
+			}
+		}
+	}
+
+	if state.ID != 0 {
+		_, err := r.db.ExecContext(ctx, `
+UPDATE contract_invoices
+SET contract_id = ?,
+    invoice_number = ?,
+    file_name = ?,
+    storage_key = ?,
+    file_hash = ?,
+    feishu_file_token = ?,
+    feishu_root_token = ?,
+    feishu_parent_token = ?,
+    feishu_relative_path = ?,
+    feishu_folder_path = ?,
+    feishu_slot_key = ?,
+    feishu_file_name = ?,
+    feishu_relation_key = ?,
+    file_size = ?,
+    sync_status = ?,
+    ocr_status = ?,
+    feishu_deleted_at = NULL,
+    last_seen_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?
+`, state.ContractID, state.InvoiceNumber, nullableString(state.FileName), nullableString(state.StorageKey), nullableString(state.FileHash), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
+		return state.ID, err
+	}
+
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+INSERT INTO contract_invoices(
+	contract_id, invoice_number, file_name, storage_key, file_hash,
+	feishu_file_token, feishu_root_token, feishu_parent_token,
+	feishu_relative_path, feishu_folder_path, feishu_slot_key,
+	feishu_file_name, feishu_relation_key, file_size, sync_status, ocr_status,
+	last_seen_at, created_at, updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+RETURNING id
+`, state.ContractID, state.InvoiceNumber, nullableString(state.FileName), nullableString(state.StorageKey), nullableString(state.FileHash), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
+	return id, err
+}
+
+func placeholderInvoiceNumber(state InvoicePDFState) string {
+	if hash := strings.TrimSpace(state.FileHash); hash != "" {
+		return pendingInvoiceNumber(hash)
+	}
+	if token := strings.TrimSpace(state.FeishuFileToken); token != "" {
+		return pendingInvoiceNumber(token)
+	}
+	return pendingInvoiceNumber(fmt.Sprintf("%x", time.Now().UnixNano()))
+}
+
+func pendingInvoiceNumber(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
+			return r
+		}
+		return -1
+	}, value)
+	if value == "" {
+		value = "unknown"
+	}
+	if len(value) > 12 {
+		value = value[:12]
+	}
+	return "pending:" + value
+}
+
+func (r *Repository) MarkDeletedByMissingTokens(ctx context.Context, rootToken string, activeTokens []string) (int64, error) {
+	rootToken = strings.TrimSpace(rootToken)
+	if rootToken == "" {
 		return 0, nil
 	}
-	args := []any{SyncStatusDeleted, folderToken}
-	filter := `feishu_parent_token = ? AND feishu_file_token IS NOT NULL AND TRIM(feishu_file_token) <> '' AND (sync_status IS NULL OR sync_status <> 'deleted')`
+	contractDeleted, err := r.markContractDeletedByMissingTokens(ctx, rootToken, activeTokens)
+	if err != nil {
+		return 0, err
+	}
+	invoiceDeleted, err := r.markInvoiceDeletedByMissingTokens(ctx, rootToken, activeTokens)
+	if err != nil {
+		return 0, err
+	}
+	return contractDeleted + invoiceDeleted, nil
+}
+
+func (r *Repository) MarkContractDeletedByMissingTokens(ctx context.Context, rootToken string, activeTokens []string) (int64, error) {
+	return r.markContractDeletedByMissingTokens(ctx, rootToken, activeTokens)
+}
+
+func (r *Repository) markContractDeletedByMissingTokens(ctx context.Context, rootToken string, activeTokens []string) (int64, error) {
+	rootToken = strings.TrimSpace(rootToken)
+	if rootToken == "" {
+		return 0, nil
+	}
+	args := []any{SyncStatusDeleted, rootToken, rootToken}
+	filter := `(
+		feishu_root_token = ?
+		OR ((feishu_root_token IS NULL OR TRIM(feishu_root_token) = '') AND feishu_parent_token = ?)
+	) AND feishu_file_token IS NOT NULL AND TRIM(feishu_file_token) <> '' AND (sync_status IS NULL OR sync_status <> 'deleted')`
 	if len(activeTokens) > 0 {
 		placeholders := make([]string, 0, len(activeTokens))
 		for _, token := range activeTokens {
@@ -253,7 +654,51 @@ func (r *Repository) MarkContractDeletedByMissingTokens(ctx context.Context, fol
 UPDATE contract_main
 SET sync_status = ?,
     feishu_deleted_at = CURRENT_TIMESTAMP,
-    last_seen_at = CURRENT_TIMESTAMP
+    last_seen_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
+WHERE `+filter, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+func (r *Repository) markInvoiceDeletedByMissingTokens(ctx context.Context, rootToken string, activeTokens []string) (int64, error) {
+	rootToken = strings.TrimSpace(rootToken)
+	if rootToken == "" {
+		return 0, nil
+	}
+	if ok, err := r.tableExists(ctx, "contract_invoices"); err != nil || !ok {
+		return 0, err
+	}
+	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{"sync_status", "feishu_deleted_at", "last_seen_at", "feishu_root_token", "feishu_parent_token", "feishu_file_token"}); err != nil || !ok {
+		return 0, err
+	}
+	args := []any{SyncStatusDeleted, rootToken, rootToken}
+	filter := `(
+		feishu_root_token = ?
+		OR ((feishu_root_token IS NULL OR TRIM(feishu_root_token) = '') AND feishu_parent_token = ?)
+	) AND feishu_file_token IS NOT NULL AND TRIM(feishu_file_token) <> '' AND (sync_status IS NULL OR sync_status <> 'deleted')`
+	if len(activeTokens) > 0 {
+		placeholders := make([]string, 0, len(activeTokens))
+		for _, token := range activeTokens {
+			token = strings.TrimSpace(token)
+			if token == "" {
+				continue
+			}
+			placeholders = append(placeholders, "?")
+			args = append(args, token)
+		}
+		if len(placeholders) > 0 {
+			filter += ` AND feishu_file_token NOT IN (` + strings.Join(placeholders, ",") + `)`
+		}
+	}
+	res, err := r.db.ExecContext(ctx, `
+UPDATE contract_invoices
+SET sync_status = ?,
+    feishu_deleted_at = CURRENT_TIMESTAMP,
+    last_seen_at = CURRENT_TIMESTAMP,
+    updated_at = CURRENT_TIMESTAMP
 WHERE `+filter, args...)
 	if err != nil {
 		return 0, err
@@ -297,14 +742,21 @@ SELECT
 	COALESCE(file_hash, ''),
 	COALESCE(storage_key, ''),
 	COALESCE(feishu_file_token, ''),
+	COALESCE(feishu_root_token, ''),
 	COALESCE(feishu_parent_token, ''),
+	COALESCE(feishu_relative_path, ''),
+	COALESCE(feishu_folder_path, ''),
 	COALESCE(feishu_slot_key, ''),
+	COALESCE(feishu_relation_key, ''),
 	COALESCE(file_size, 0),
 	COALESCE(sync_status, ''),
 	COALESCE(ocr_status, '')
 FROM contract_main
 WHERE ` + filter + `
-ORDER BY id DESC
+ORDER BY
+	CASE WHEN ocr_status = 'done' THEN 0 ELSE 1 END,
+	CASE WHEN feishu_file_token IS NULL OR TRIM(feishu_file_token) = '' THEN 0 ELSE 1 END,
+	id DESC
 LIMIT 1`
 	var state ContractPDFState
 	err := r.db.QueryRowContext(ctx, query, args...).Scan(
@@ -313,8 +765,12 @@ LIMIT 1`
 		&state.FileHash,
 		&state.StorageKey,
 		&state.FeishuFileToken,
+		&state.FeishuRootToken,
 		&state.FeishuParentToken,
+		&state.FeishuRelativePath,
+		&state.FeishuFolderPath,
 		&state.FeishuSlotKey,
+		&state.RelationKey,
 		&state.FileSize,
 		&state.SyncStatus,
 		&state.OCRStatus,
@@ -324,6 +780,82 @@ LIMIT 1`
 	}
 	if err != nil {
 		return ContractPDFState{}, false, err
+	}
+	return state, true, nil
+}
+
+func (r *Repository) findInvoicePDFState(ctx context.Context, filter string, args ...any) (InvoicePDFState, bool, error) {
+	if ok, err := r.tableExists(ctx, "contract_invoices"); err != nil || !ok {
+		return InvoicePDFState{}, false, err
+	}
+	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{
+		"contract_id",
+		"invoice_number",
+		"file_name",
+		"storage_key",
+		"file_hash",
+		"feishu_file_token",
+		"feishu_root_token",
+		"feishu_parent_token",
+		"feishu_relative_path",
+		"feishu_folder_path",
+		"feishu_slot_key",
+		"feishu_relation_key",
+		"file_size",
+		"sync_status",
+		"ocr_status",
+	}); err != nil || !ok {
+		return InvoicePDFState{}, false, err
+	}
+	query := `
+SELECT
+	id,
+	COALESCE(contract_id, 0),
+	COALESCE(invoice_number, ''),
+	COALESCE(file_name, ''),
+	COALESCE(file_hash, ''),
+	COALESCE(storage_key, ''),
+	COALESCE(feishu_file_token, ''),
+	COALESCE(feishu_root_token, ''),
+	COALESCE(feishu_parent_token, ''),
+	COALESCE(feishu_relative_path, ''),
+	COALESCE(feishu_folder_path, ''),
+	COALESCE(feishu_slot_key, ''),
+	COALESCE(feishu_relation_key, ''),
+	COALESCE(file_size, 0),
+	COALESCE(sync_status, ''),
+	COALESCE(ocr_status, '')
+FROM contract_invoices
+WHERE ` + filter + `
+ORDER BY
+	CASE WHEN ocr_status = 'done' THEN 0 ELSE 1 END,
+	CASE WHEN feishu_file_token IS NULL OR TRIM(feishu_file_token) = '' THEN 0 ELSE 1 END,
+	id DESC
+LIMIT 1`
+	var state InvoicePDFState
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&state.ID,
+		&state.ContractID,
+		&state.InvoiceNumber,
+		&state.FileName,
+		&state.FileHash,
+		&state.StorageKey,
+		&state.FeishuFileToken,
+		&state.FeishuRootToken,
+		&state.FeishuParentToken,
+		&state.FeishuRelativePath,
+		&state.FeishuFolderPath,
+		&state.FeishuSlotKey,
+		&state.RelationKey,
+		&state.FileSize,
+		&state.SyncStatus,
+		&state.OCRStatus,
+	)
+	if err == sql.ErrNoRows {
+		return InvoicePDFState{}, false, nil
+	}
+	if err != nil {
+		return InvoicePDFState{}, false, err
 	}
 	return state, true, nil
 }
