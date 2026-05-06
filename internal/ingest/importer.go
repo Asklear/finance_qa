@@ -28,8 +28,11 @@ type Importer struct {
 }
 
 type ImportOptions struct {
-	Incremental     bool
-	CompanyOverride string
+	Incremental      bool
+	CompanyOverride  string
+	SourceFileName   string
+	SourceStorageKey string
+	SourceFileSize   int64
 }
 
 type idempotencyPolicy struct {

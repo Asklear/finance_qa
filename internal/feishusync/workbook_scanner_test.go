@@ -104,6 +104,37 @@ func TestWorkbookScannerBackfillsStorageKeyWhenUnchanged(t *testing.T) {
 	}
 }
 
+func TestWorkbookScannerPreservesImportMetadataWhenUnchanged(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	hash := writeSnapshotAndHash(t, "workbook-v1")
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance","storage_key":"tenant/uhub/finance/优集收入、成本计算表 - 上传.xlsx","report_type":"contract_mixed_finance","record_count":139,"period_start":"2025-10","period_end":"2026-05"}`)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集收入、成本计算表 - 上传.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
+		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
+	}
+	importer := &recordingWorkbookImporter{}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司")
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Skipped != 1 || len(importer.calls) != 0 {
+		t.Fatalf("result=%#v imports=%#v", result, importer.calls)
+	}
+	updated := mustSingleSource(t, repo)
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["report_type"] != "contract_mixed_finance" || metadata["period_start"] != "2025-10" || metadata["period_end"] != "2026-05" || metadata["record_count"].(float64) != 139 {
+		t.Fatalf("metadata should preserve import summary on skip: %#v", metadata)
+	}
+}
+
 func TestWorkbookScannerUploadsSnapshotWhenUnchangedStorageKeyMissing(t *testing.T) {
 	t.Parallel()
 
@@ -422,6 +453,13 @@ func TestWorkbookScannerUploadsSnapshotToObjectStore(t *testing.T) {
 	}
 	if result.Created != 1 || len(store.puts) != 1 {
 		t.Fatalf("result=%#v puts=%#v", result, store.puts)
+	}
+	if len(importer.calls) != 1 {
+		t.Fatalf("imports=%#v, want one import", importer.calls)
+	}
+	importOpts := importer.calls[0].opts
+	if importOpts.SourceFileName != "优集成本计算表-4.23-池" || importOpts.SourceStorageKey != store.uri || importOpts.SourceFileSize != int64(len("workbook-v2")) {
+		t.Fatalf("import source metadata = %#v", importOpts)
 	}
 	if store.puts[0].key != "tenant/uhub/finance/2026/优集成本计算表-4.23-池.xlsx" {
 		t.Fatalf("object key should follow historical finance path: %#v", store.puts[0])

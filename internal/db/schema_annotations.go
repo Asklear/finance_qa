@@ -74,6 +74,7 @@ var postgresSchemaTables = []string{
 	"contract_pages",
 	"contract_invoices",
 	"feishu_sync_sources",
+	"fin_file_mappings",
 	"fin_table_idempotency_policies",
 	"fin_dimensions",
 	"fin_dimension_members",
@@ -184,6 +185,7 @@ var commonColumnComments = map[string]string{
 	"valid_to":              "规则生效截止期间/日期",
 	"item_name":             "利润表项目名称",
 	"file_name":             "文件名",
+	"table_type":            "来源映射表类型",
 	"relative_path":         "相对路径",
 	"storage_key":           "对象存储相对路径，正式环境为 OSS object key，例如 tenant/uhub/contract/xxx.pdf",
 	"file_hash":             "文件内容 SHA256",
@@ -318,6 +320,17 @@ var schemaAnnotations = map[string]SchemaTableAnnotation{
 			"last_success_at":   "最近一次成功扫描时间",
 			"error_message":     "最近一次同步失败错误信息",
 			"metadata_json":     "同步扩展元数据 JSON，例如 OSS storage_key 与导入统计",
+		},
+	),
+	"fin_file_mappings": buildSchemaTableAnnotation(
+		"财务来源文件映射表，记录查询来源展示所需的财务文件名、OSS 路径、期间和更新时间。",
+		map[string]string{
+			"table_type":  "财务来源类型，例如 fund-income、cost-settlements、journal、bank-statement",
+			"period":      "来源文件覆盖期间，例如 2026-Q1、2026-03 或 2025",
+			"storage_key": "财务来源文件 OSS 相对路径",
+			"file_name":   "老板可见的来源文件名",
+			"file_size":   "来源文件大小（字节）",
+			"updated_at":  "来源文件映射最近更新时间，查询来源更新时间以该字段为准",
 		},
 	),
 	"contract_main": buildSchemaTableAnnotation(

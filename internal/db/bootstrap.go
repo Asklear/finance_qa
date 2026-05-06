@@ -357,6 +357,18 @@ func Bootstrap(ctx context.Context, dbPath string) error {
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(source_type, source_token)
 		)`, schema),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.fin_file_mappings (
+			id BIGSERIAL PRIMARY KEY,
+			table_type VARCHAR(64) NOT NULL,
+			period VARCHAR(32) NOT NULL,
+			company VARCHAR(255),
+			storage_key VARCHAR(1024) NOT NULL,
+			file_name VARCHAR(255) NOT NULL,
+			description TEXT,
+			file_size BIGINT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)`, schema),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_contracts_name ON %s.fin_contracts(customer_name, contract_content)`, schema),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_revenue_settlements_contract_period ON %s.fin_revenue_settlements(contract_id, year_month)`, schema),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_cost_settlements_contract_period ON %s.fin_cost_settlements(contract_id, year_month)`, schema),
@@ -368,6 +380,8 @@ func Bootstrap(ctx context.Context, dbPath string) error {
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_fund_income_group_members_group ON %s.fin_fund_income_group_members(group_id)`, schema),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_fund_income_group_members_contract ON %s.fin_fund_income_group_members(contract_id)`, schema),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_feishu_sync_sources_status ON %s.feishu_sync_sources(sync_status, next_scan_at)`, schema),
+		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_files_table_type ON %s.fin_file_mappings(table_type)`, schema),
+		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_files_period ON %s.fin_file_mappings(period)`, schema),
 		fmt.Sprintf(`COMMENT ON TABLE %s.fin_revenue_settlements IS 'DEPRECATED: 暂停使用，合同收入统一以 fin_fund_income 为准；代码已停止读取该表'`, schema),
 		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.fin_balance_detail ADD COLUMN IF NOT EXISTS opening_period TEXT`, schema),
 		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.contract_main DROP COLUMN IF EXISTS linked_contract_main_id`, schema),

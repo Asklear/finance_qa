@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -133,8 +134,11 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 	}
 
 	summary, err := s.importer.ImportFileWithOptions(ctx, s.dbPath, snapshotPath, ingest.ImportOptions{
-		Incremental:     false,
-		CompanyOverride: s.companyOverride,
+		Incremental:      false,
+		CompanyOverride:  s.companyOverride,
+		SourceFileName:   strings.TrimSpace(meta.Name),
+		SourceStorageKey: storageKey,
+		SourceFileSize:   workbookSnapshotSize(snapshotPath, meta),
 	})
 	if err != nil {
 		_ = s.repo.MarkSourceError(ctx, src.ID, err.Error(), time.Time{})
@@ -238,6 +242,16 @@ func workbookSnapshotPath(snapshotDir, fileToken string, file feishu.DriveFile) 
 	return filepath.Join(snapshotDir, name)
 }
 
+func workbookSnapshotSize(snapshotPath string, file feishu.DriveFile) int64 {
+	if info, err := os.Stat(strings.TrimSpace(snapshotPath)); err == nil && info.Size() > 0 {
+		return info.Size()
+	}
+	if file.Size > 0 {
+		return file.Size
+	}
+	return 0
+}
+
 func looksLikeFeishuTokenWorkbookName(name string) bool {
 	name = strings.TrimSpace(name)
 	name = strings.TrimSuffix(name, filepath.Ext(name))
@@ -337,21 +351,32 @@ func (s *WorkbookScanner) resolveWorkbookSnapshot(ctx context.Context, src SyncS
 }
 
 func workbookMetadata(src SyncSource, file feishu.DriveFile, summary ingest.ImportSummary, skipped bool, storageKey string) string {
-	data, err := json.Marshal(map[string]any{
-		"source":       "feishu_active_scan",
-		"source_token": strings.TrimSpace(src.SourceToken),
-		"source_type":  strings.TrimSpace(src.SourceType),
-		"file_token":   file.Token,
-		"file_name":    file.Name,
-		"revision":     file.Revision,
-		"oss_prefix":   financeOSSPrefix(src, file),
-		"storage_key":  strings.TrimSpace(storageKey),
-		"skipped":      skipped,
-		"report_type":  summary.ReportType,
-		"record_count": summary.RecordCount,
-		"period_start": summary.PeriodStart,
-		"period_end":   summary.PeriodEnd,
-	})
+	payload := map[string]any{}
+	_ = json.Unmarshal([]byte(strings.TrimSpace(src.MetadataJSON)), &payload)
+	payload["source"] = "feishu_active_scan"
+	payload["source_token"] = strings.TrimSpace(src.SourceToken)
+	payload["source_type"] = strings.TrimSpace(src.SourceType)
+	payload["file_token"] = file.Token
+	payload["file_name"] = file.Name
+	payload["revision"] = file.Revision
+	payload["oss_prefix"] = financeOSSPrefix(src, file)
+	if strings.TrimSpace(storageKey) != "" || payload["storage_key"] == nil {
+		payload["storage_key"] = strings.TrimSpace(storageKey)
+	}
+	payload["skipped"] = skipped
+	if !skipped || strings.TrimSpace(summary.ReportType) != "" || payload["report_type"] == nil {
+		payload["report_type"] = summary.ReportType
+	}
+	if !skipped || summary.RecordCount > 0 || payload["record_count"] == nil {
+		payload["record_count"] = summary.RecordCount
+	}
+	if !skipped || strings.TrimSpace(summary.PeriodStart) != "" || payload["period_start"] == nil {
+		payload["period_start"] = summary.PeriodStart
+	}
+	if !skipped || strings.TrimSpace(summary.PeriodEnd) != "" || payload["period_end"] == nil {
+		payload["period_end"] = summary.PeriodEnd
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return ""
 	}

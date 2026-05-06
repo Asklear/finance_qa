@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	dbschema "financeqa/internal/db"
 	"financeqa/internal/ingest"
 
 	"github.com/xuri/excelize/v2"
@@ -158,6 +159,84 @@ func TestImportFileWithOptions_ContractWorkbookImportsMixedFundAndCostSheets(t *
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 1)
 	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_fund_income WHERE year_month='2026-01'`, 1200)
 	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlements WHERE year_month='2026-01'`, 888)
+}
+
+func TestImportFileWithOptions_ContractWorkbookUpsertsFinanceFileMappings(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-mixed-file-mappings.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集收入成本计算表-混合.xlsx")
+	if err := createMixedFundAndCostWorkbook(workbook); err != nil {
+		t.Fatalf("create mixed workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:      false,
+		CompanyOverride:  "南京优集数据科技有限公司",
+		SourceFileName:   "优集收入、成本计算表 - 上传.xlsx",
+		SourceStorageKey: "tenant/uhub/finance/优集收入、成本计算表 - 上传.sha256-abc123.xlsx",
+		SourceFileSize:   44086,
+	}); err != nil {
+		t.Fatalf("import mixed workbook failed: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	assertFinanceFileMapping(t, db, "fund-income", "2026-Q1", "优集收入、成本计算表 - 上传.xlsx", "tenant/uhub/finance/优集收入、成本计算表 - 上传.sha256-abc123.xlsx", 44086)
+	assertFinanceFileMapping(t, db, "cost-settlements", "2026-Q1", "优集收入、成本计算表 - 上传.xlsx", "tenant/uhub/finance/优集收入、成本计算表 - 上传.sha256-abc123.xlsx", 44086)
+}
+
+func TestImportFileWithOptions_ContractWorkbookFullReplaceRemovesStaleFinanceFileMappings(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-mixed-file-mappings-replace.sqlite")
+	workbook := filepath.Join(t.TempDir(), "优集收入成本计算表-混合.xlsx")
+	if err := createMixedFundAndCostWorkbook(workbook); err != nil {
+		t.Fatalf("create mixed workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	if err := ingestBootstrapForTest(ctx, dbPath); err != nil {
+		t.Fatalf("bootstrap db: %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := ensureFinanceFileMappingsForTest(ctx, db); err != nil {
+		t.Fatalf("ensure fin_file_mappings: %v", err)
+	}
+	_, err = db.ExecContext(ctx, `
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, description, file_size, updated_at)
+VALUES
+('fund-income', '2026-Q1', '南京优集', 'tenant/uhub/finance/旧收入表.xlsx', '旧收入表.xlsx', '旧映射', 1, '2026-05-05 20:46:23'),
+('cost-settlements', '2026-Q1', '南京优集', 'tenant/uhub/finance/旧成本表.xlsx', '旧成本表.xlsx', '旧映射', 1, '2026-05-05 20:46:23')
+`)
+	if err != nil {
+		t.Fatalf("seed stale mappings: %v", err)
+	}
+
+	if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+		Incremental:      false,
+		CompanyOverride:  "南京优集数据科技有限公司",
+		SourceFileName:   "优集收入、成本计算表 - 上传.xlsx",
+		SourceStorageKey: "tenant/uhub/finance/优集收入、成本计算表 - 上传.sha256-newhash.xlsx",
+		SourceFileSize:   88000,
+	}); err != nil {
+		t.Fatalf("import mixed workbook failed: %v", err)
+	}
+
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_file_mappings WHERE file_name LIKE '旧%'`, 0)
+	assertFinanceFileMapping(t, db, "fund-income", "2026-Q1", "优集收入、成本计算表 - 上传.xlsx", "tenant/uhub/finance/优集收入、成本计算表 - 上传.sha256-newhash.xlsx", 88000)
+	assertFinanceFileMapping(t, db, "cost-settlements", "2026-Q1", "优集收入、成本计算表 - 上传.xlsx", "tenant/uhub/finance/优集收入、成本计算表 - 上传.sha256-newhash.xlsx", 88000)
 }
 
 func TestImportFileWithOptions_MixedWorkbookFullReplaceClearsPriorSingleKindRows(t *testing.T) {
@@ -1615,6 +1694,44 @@ func assertYearMonthAmount(t *testing.T, db *sql.DB, query string, want float64)
 	if got != want {
 		t.Fatalf("amount for %q = %.2f, want %.2f", query, got, want)
 	}
+}
+
+func assertFinanceFileMapping(t *testing.T, db *sql.DB, tableType, period, fileName, storageKey string, fileSize int64) {
+	t.Helper()
+	var gotFileName, gotStorageKey, gotUpdatedAt string
+	var gotFileSize int64
+	if err := db.QueryRow(`
+SELECT file_name, storage_key, COALESCE(file_size, 0), COALESCE(CAST(updated_at AS TEXT), '')
+FROM fin_file_mappings
+WHERE table_type = ? AND period = ?
+`, tableType, period).Scan(&gotFileName, &gotStorageKey, &gotFileSize, &gotUpdatedAt); err != nil {
+		t.Fatalf("query fin_file_mappings %s/%s failed: %v", tableType, period, err)
+	}
+	if gotFileName != fileName || gotStorageKey != storageKey || gotFileSize != fileSize || strings.TrimSpace(gotUpdatedAt) == "" {
+		t.Fatalf("mapping %s/%s = file_name=%q storage_key=%q file_size=%d updated_at=%q, want file_name=%q storage_key=%q file_size=%d updated_at non-empty",
+			tableType, period, gotFileName, gotStorageKey, gotFileSize, gotUpdatedAt, fileName, storageKey, fileSize)
+	}
+}
+
+func ingestBootstrapForTest(ctx context.Context, dbPath string) error {
+	return dbschema.Bootstrap(ctx, dbPath)
+}
+
+func ensureFinanceFileMappingsForTest(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
+CREATE TABLE IF NOT EXISTS fin_file_mappings (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	table_type TEXT NOT NULL,
+	period TEXT NOT NULL,
+	company TEXT,
+	storage_key TEXT NOT NULL,
+	file_name TEXT NOT NULL,
+	description TEXT,
+	file_size INTEGER,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`)
+	return err
 }
 
 func assertRowString(t *testing.T, db *sql.DB, query string, want ...string) {

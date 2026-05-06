@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	dbschema "financeqa/internal/db"
@@ -37,8 +39,9 @@ func annotateImportedReportSource(ctx context.Context, dbPath, reportType, fileP
 	return nil
 }
 
-func annotateContractWorkbookSource(ctx context.Context, tx *sql.Tx, dbPath, filePath string, bundle contractImportBundle, incremental bool) error {
+func annotateContractWorkbookSource(ctx context.Context, tx *sql.Tx, dbPath, filePath string, bundle contractImportBundle, opts ImportOptions) error {
 	fileName := workbookDisplayName(filePath)
+	incremental := opts.Incremental
 
 	if len(bundle.ContractSourceSheets) > 0 {
 		meta := dbschema.BuildImportedTableSourceMetadata(
@@ -79,7 +82,254 @@ func annotateContractWorkbookSource(ctx context.Context, tx *sql.Tx, dbPath, fil
 			return err
 		}
 	}
+	if err := upsertContractWorkbookFileMappings(ctx, tx, dbPath, filePath, bundle, opts); err != nil {
+		return err
+	}
 	return nil
+}
+
+type contractWorkbookFileMapping struct {
+	TableType   string
+	Period      string
+	Description string
+}
+
+func contractWorkbookFileMappings(bundle contractImportBundle) []contractWorkbookFileMapping {
+	periodsByType := map[string]map[string]struct{}{}
+	add := func(tableType, yearMonth string) {
+		period := contractFinanceMappingPeriod(yearMonth)
+		if tableType == "" || period == "" {
+			return
+		}
+		if periodsByType[tableType] == nil {
+			periodsByType[tableType] = map[string]struct{}{}
+		}
+		periodsByType[tableType][period] = struct{}{}
+	}
+	for _, row := range bundle.RevenueRows {
+		add("fund-income", row.YearMonth)
+	}
+	for _, row := range bundle.FundRows {
+		add("fund-income", row.YearMonth)
+	}
+	for _, row := range bundle.FundGroupRows {
+		add("fund-income", row.YearMonth)
+	}
+	for _, row := range bundle.CostRows {
+		add("cost-settlements", row.YearMonth)
+	}
+	for _, row := range bundle.CostGroupRows {
+		add("cost-settlements", row.YearMonth)
+	}
+
+	tableTypes := make([]string, 0, len(periodsByType))
+	for tableType := range periodsByType {
+		tableTypes = append(tableTypes, tableType)
+	}
+	sort.Strings(tableTypes)
+	out := make([]contractWorkbookFileMapping, 0)
+	for _, tableType := range tableTypes {
+		periods := make([]string, 0, len(periodsByType[tableType]))
+		for period := range periodsByType[tableType] {
+			periods = append(periods, period)
+		}
+		sort.Strings(periods)
+		for _, period := range periods {
+			out = append(out, contractWorkbookFileMapping{
+				TableType:   tableType,
+				Period:      period,
+				Description: contractWorkbookFileMappingDescription(tableType, period),
+			})
+		}
+	}
+	return out
+}
+
+func contractFinanceMappingPeriod(yearMonth string) string {
+	value := strings.TrimSpace(yearMonth)
+	if value == "" {
+		return ""
+	}
+	if len(value) == len("2006-01") && value[4] == '-' {
+		year := value[:4]
+		month := value[5:]
+		switch month {
+		case "01", "02", "03":
+			return year + "-Q1"
+		case "04", "05", "06":
+			return year + "-Q2"
+		case "07", "08", "09":
+			return year + "-Q3"
+		case "10", "11", "12":
+			return year + "-Q4"
+		}
+	}
+	return value
+}
+
+func contractWorkbookFileMappingDescription(tableType, period string) string {
+	switch strings.TrimSpace(tableType) {
+	case "fund-income":
+		return strings.TrimSpace(period) + "资金收入表（飞书财务表自动同步）"
+	case "cost-settlements":
+		return strings.TrimSpace(period) + "合同成本表（飞书财务表自动同步）"
+	default:
+		return strings.TrimSpace(period) + "财务表（飞书财务表自动同步）"
+	}
+}
+
+func contractWorkbookFileMappingTableTypes(mappings []contractWorkbookFileMapping) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, mapping := range mappings {
+		tableType := strings.TrimSpace(mapping.TableType)
+		if tableType == "" {
+			continue
+		}
+		if _, ok := seen[tableType]; ok {
+			continue
+		}
+		seen[tableType] = struct{}{}
+		out = append(out, tableType)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func nullableFileSize(fileSize int64) any {
+	if fileSize <= 0 {
+		return nil
+	}
+	return fileSize
+}
+
+func upsertContractWorkbookFileMappings(ctx context.Context, tx *sql.Tx, dbPath, filePath string, bundle contractImportBundle, opts ImportOptions) error {
+	mappings := contractWorkbookFileMappings(bundle)
+	if len(mappings) == 0 {
+		return nil
+	}
+	if err := ensureFinanceFileMappingsTable(ctx, tx, dbPath); err != nil {
+		return err
+	}
+	fileName := strings.TrimSpace(opts.SourceFileName)
+	if fileName == "" {
+		fileName = workbookDisplayName(filePath)
+	}
+	storageKey := strings.TrimSpace(opts.SourceStorageKey)
+	if storageKey == "" {
+		storageKey = strings.TrimSpace(filePath)
+	}
+	if fileName == "" || storageKey == "" {
+		return nil
+	}
+	company := strings.TrimSpace(opts.CompanyOverride)
+	if company == "" {
+		company = "DefaultCompany"
+	}
+	fileSize := opts.SourceFileSize
+	if fileSize <= 0 {
+		if info, err := os.Stat(filePath); err == nil {
+			fileSize = info.Size()
+		}
+	}
+
+	if !opts.Incremental {
+		for _, tableType := range contractWorkbookFileMappingTableTypes(mappings) {
+			if _, err := tx.ExecContext(ctx, `
+DELETE FROM fin_file_mappings
+WHERE LOWER(COALESCE(table_type, '')) = ?
+  AND (
+    COALESCE(company, '') = ''
+    OR ? = ''
+    OR ? LIKE '%' || COALESCE(company, '') || '%'
+    OR COALESCE(company, '') LIKE '%' || ? || '%'
+    OR COALESCE(file_name, '') = ?
+    OR COALESCE(storage_key, '') = ?
+  )
+`, strings.ToLower(tableType), company, company, company, fileName, storageKey); err != nil {
+				return fmt.Errorf("delete stale finance file mappings for %s: %w", tableType, err)
+			}
+		}
+	}
+
+	for _, mapping := range mappings {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM fin_file_mappings
+WHERE LOWER(COALESCE(table_type, '')) = ?
+  AND COALESCE(period, '') = ?
+  AND (
+    COALESCE(company, '') = ?
+    OR ? LIKE '%' || COALESCE(company, '') || '%'
+    OR COALESCE(company, '') LIKE '%' || ? || '%'
+    OR COALESCE(file_name, '') = ?
+    OR COALESCE(storage_key, '') = ?
+  )
+`, strings.ToLower(mapping.TableType), mapping.Period, company, company, company, fileName, storageKey); err != nil {
+			return fmt.Errorf("dedupe finance file mapping %s/%s: %w", mapping.TableType, mapping.Period, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, description, file_size, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+`, mapping.TableType, mapping.Period, company, storageKey, fileName, mapping.Description, nullableFileSize(fileSize)); err != nil {
+			return fmt.Errorf("insert finance file mapping %s/%s: %w", mapping.TableType, mapping.Period, err)
+		}
+	}
+	return nil
+}
+
+func ensureFinanceFileMappingsTable(ctx context.Context, tx *sql.Tx, dbPath string) error {
+	ddl := `
+CREATE TABLE IF NOT EXISTS fin_file_mappings (
+	id BIGSERIAL PRIMARY KEY,
+	table_type VARCHAR(64) NOT NULL,
+	period VARCHAR(32) NOT NULL,
+	company VARCHAR(255),
+	storage_key VARCHAR(1024) NOT NULL,
+	file_name VARCHAR(255) NOT NULL,
+	description TEXT,
+	file_size BIGINT,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`
+	if looksLikeSQLiteImportPath(dbPath) {
+		ddl = `
+CREATE TABLE IF NOT EXISTS fin_file_mappings (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	table_type TEXT NOT NULL,
+	period TEXT NOT NULL,
+	company TEXT,
+	storage_key TEXT NOT NULL,
+	file_name TEXT NOT NULL,
+	description TEXT,
+	file_size INTEGER,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`
+	}
+	if _, err := tx.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("ensure fin_file_mappings table: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_fin_files_table_type ON fin_file_mappings(table_type)`); err != nil {
+		return fmt.Errorf("ensure fin_file_mappings table_type index: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_fin_files_period ON fin_file_mappings(period)`); err != nil {
+		return fmt.Errorf("ensure fin_file_mappings period index: %w", err)
+	}
+	return nil
+}
+
+func looksLikeSQLiteImportPath(dbPath string) bool {
+	value := strings.ToLower(strings.TrimSpace(dbPath))
+	if value == "" || value == ":memory:" {
+		return true
+	}
+	if strings.HasSuffix(value, ".db") || strings.HasSuffix(value, ".sqlite") || strings.HasSuffix(value, ".sqlite3") {
+		return true
+	}
+	if strings.Contains(value, "://") || strings.Contains(value, "host=") || strings.Contains(value, "postgres") {
+		return false
+	}
+	return strings.Contains(value, string(os.PathSeparator))
 }
 
 func upsertImportedSourceMetadata(ctx context.Context, tx *sql.Tx, dbPath, tableName string, incoming dbschema.TableSourceMetadata, displayMode string, mergeExisting bool) error {

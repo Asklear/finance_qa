@@ -253,7 +253,7 @@ func (i *Importer) importContractWorkbook(ctx context.Context, dbPath, filePath 
 	default:
 		return ImportSummary{}, fmt.Errorf("unsupported contract workbook kind: %s", kind)
 	}
-	if err := annotateContractWorkbookSource(ctx, tx, dbPath, filePath, bundle, opts.Incremental); err != nil {
+	if err := annotateContractWorkbookSource(ctx, tx, dbPath, filePath, bundle, opts); err != nil {
 		return ImportSummary{}, err
 	}
 
