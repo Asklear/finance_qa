@@ -2,7 +2,10 @@ package storage_test
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"net/http"
@@ -16,7 +19,7 @@ import (
 )
 
 func TestOSSClientPutAndDownloadFile(t *testing.T) {
-	var putPath, putAuth, putContentType string
+	var putPath, putAuth, putContentType, putDate string
 	var putSHA256 string
 	var putBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,6 +28,7 @@ func TestOSSClientPutAndDownloadFile(t *testing.T) {
 			putPath = r.URL.Path
 			putAuth = r.Header.Get("Authorization")
 			putContentType = r.Header.Get("Content-Type")
+			putDate = r.Header.Get("Date")
 			putSHA256 = r.Header.Get("x-oss-meta-sha256")
 			putBody = mustReadRequestBody(t, r)
 			w.WriteHeader(http.StatusOK)
@@ -69,6 +73,14 @@ func TestOSSClientPutAndDownloadFile(t *testing.T) {
 	wantHashBytes := sha256.Sum256([]byte("upload-bytes"))
 	if putSHA256 != hex.EncodeToString(wantHashBytes[:]) {
 		t.Fatalf("x-oss-meta-sha256 = %q", putSHA256)
+	}
+	if putDate == "" {
+		t.Fatal("missing Date header")
+	}
+	stringToSign := http.MethodPut + "\n\n" + putContentType + "\n" + putDate + "\n" +
+		"x-oss-meta-sha256:" + putSHA256 + "\n" + putPath
+	if wantAuth := "OSS test-ak:" + hmacSHA1Base64("test-secret", stringToSign); putAuth != wantAuth {
+		t.Fatalf("authorization = %q, want %q", putAuth, wantAuth)
 	}
 	if string(putBody) != "upload-bytes" {
 		t.Fatalf("put body = %q", putBody)
@@ -229,6 +241,12 @@ func TestOSSClientFindObjectBySHA256ScansPrefix(t *testing.T) {
 	if !exists || key != "tenant/uhub/contract/b.pdf" || !listed {
 		t.Fatalf("key=%q exists=%v listed=%v", key, exists, listed)
 	}
+}
+
+func hmacSHA1Base64(secret, text string) string {
+	mac := hmac.New(sha1.New, []byte(secret))
+	_, _ = mac.Write([]byte(text))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func mustReadRequestBody(t *testing.T, r *http.Request) []byte {

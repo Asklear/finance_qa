@@ -18,6 +18,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -77,13 +78,15 @@ func (c *OSSClient) PutFile(ctx context.Context, localPath, key, contentType str
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	sum := sha256.Sum256(data)
+	metaSHA256 := hex.EncodeToString(sum[:])
 	req, err := c.newRequest(ctx, http.MethodPut, key, bytes.NewReader(data), contentType)
 	if err != nil {
 		return "", err
 	}
 	req.ContentLength = int64(len(data))
-	sum := sha256.Sum256(data)
-	req.Header.Set("x-oss-meta-sha256", hex.EncodeToString(sum[:]))
+	req.Header.Set("x-oss-meta-sha256", metaSHA256)
+	c.signRequest(req, http.MethodPut, key, contentType)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("upload oss object: %w", err)
@@ -307,12 +310,7 @@ func (c *OSSClient) newRequest(ctx context.Context, method, key string, body io.
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	canonicalResource := "/" + c.config.Bucket + "/" + key
-	stringToSign := method + "\n\n" + contentType + "\n" + date + "\n" + canonicalResource
-	mac := hmac.New(sha1.New, []byte(c.config.AccessKeySecret))
-	_, _ = mac.Write([]byte(stringToSign))
-	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-	req.Header.Set("Authorization", "OSS "+c.config.AccessKeyID+":"+signature)
+	c.signRequest(req, method, key, contentType)
 	return req, nil
 }
 
@@ -340,6 +338,46 @@ func (c *OSSClient) newBucketRequest(ctx context.Context, method string, query u
 	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	req.Header.Set("Authorization", "OSS "+c.config.AccessKeyID+":"+signature)
 	return req, nil
+}
+
+func (c *OSSClient) signRequest(req *http.Request, method, key, contentType string) {
+	date := req.Header.Get("Date")
+	canonicalResource := "/" + c.config.Bucket + "/" + cleanObjectKey(key)
+	stringToSign := method + "\n\n" + contentType + "\n" + date + "\n" + canonicalOSSHeaders(req.Header) + canonicalResource
+	mac := hmac.New(sha1.New, []byte(c.config.AccessKeySecret))
+	_, _ = mac.Write([]byte(stringToSign))
+	signature := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	req.Header.Set("Authorization", "OSS "+c.config.AccessKeyID+":"+signature)
+}
+
+func canonicalOSSHeaders(headers http.Header) string {
+	type pair struct {
+		key   string
+		value string
+	}
+	pairs := make([]pair, 0)
+	for key, values := range headers {
+		lowerKey := strings.ToLower(strings.TrimSpace(key))
+		if !strings.HasPrefix(lowerKey, "x-oss-") {
+			continue
+		}
+		trimmedValues := make([]string, 0, len(values))
+		for _, value := range values {
+			trimmedValues = append(trimmedValues, strings.Join(strings.Fields(value), " "))
+		}
+		pairs = append(pairs, pair{key: lowerKey, value: strings.Join(trimmedValues, ",")})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].key < pairs[j].key
+	})
+	var builder strings.Builder
+	for _, p := range pairs {
+		builder.WriteString(p.key)
+		builder.WriteByte(':')
+		builder.WriteString(p.value)
+		builder.WriteByte('\n')
+	}
+	return builder.String()
 }
 
 func (c *OSSClient) bucketURL() (string, error) {
