@@ -36,6 +36,7 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 		`api.on("before_message_write"`,
 		`FINANCE_QUERY_FINAL_ANSWER_START`,
 		`FINANCE_QUERY_PAYLOAD_START`,
+		`/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py`,
 		`forcedAnswersBySessionKey`,
 		`isBridgeFallbackPayload`,
 		`finance-query has already been executed`,
@@ -47,6 +48,9 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 	}
 	if !strings.Contains(pluginText, "Do not answer from prior conversation history") {
 		t.Fatalf("prompt hook should forbid stale repeated answers from conversation history")
+	}
+	if !strings.Contains(pluginText, "process.env.FINANCE_BRIDGE_PATH") {
+		t.Fatalf("OpenClaw finance plugin should resolve the bridge path from FINANCE_BRIDGE_PATH")
 	}
 }
 
@@ -77,5 +81,22 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 		if !strings.Contains(scriptText, want) {
 			t.Fatalf("sync script should publish OpenClaw plugin runtime and prompt hook config; missing %q", want)
 		}
+	}
+}
+
+func TestFinanceFinalAnswerWrapperDoesNotHardcodeServerBridgePath(t *testing.T) {
+	t.Parallel()
+
+	wrapperPath := filepath.Join("..", "..", "tests", "scripts", "claude_finance_final_answer.sh")
+	wrapper, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		t.Fatalf("read final answer wrapper: %v", err)
+	}
+	wrapperText := string(wrapper)
+	if strings.Contains(wrapperText, "/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py") {
+		t.Fatalf("final answer wrapper should not hardcode the server bridge path")
+	}
+	if !strings.Contains(wrapperText, `BRIDGE_PATH="$ROOT_DIR/plugin/openclaw-finance/server/finance_bridge.py"`) {
+		t.Fatalf("final answer wrapper should default to the repo-local bridge path")
 	}
 }

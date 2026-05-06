@@ -9,7 +9,8 @@ set -e
 # --- 配置区 ---
 SERVER="root@X.X.X.X"
 KEY="${HOME}/.ssh/your-key.pem"
-REMOTE_DIR="/root/finance_qa"
+REMOTE_HOME="$(ssh -i "$KEY" "$SERVER" 'printf %s "$HOME"')"
+REMOTE_DIR="${REMOTE_DIR:-$REMOTE_HOME/finance_qa}"
 PACKAGE_NAME="finance_qa_plugin"
 # -------------
 

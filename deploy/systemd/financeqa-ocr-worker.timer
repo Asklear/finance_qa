@@ -1,6 +1,6 @@
 [Unit]
 Description=Run FinanceQA Gemini OCR worker every 5 minutes
-Documentation=/root/finance_qa/README.md
+Documentation=file:%h/finance_qa/README.md
 
 [Timer]
 OnUnitInactiveSec=5min

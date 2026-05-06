@@ -3,6 +3,7 @@ package support
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -43,4 +44,17 @@ func LoadDotEnv(path string) error {
 		_ = os.Setenv(key, val)
 	}
 	return scanner.Err()
+}
+
+// LoadAppDotEnv loads a repository-local .env plus an optional FINANCEQA_ENV_FILE.
+// The explicit FINANCEQA_ENV_FILE is loaded first so it can override the local file.
+func LoadAppDotEnv(root string) error {
+	explicit := strings.TrimSpace(os.Getenv("FINANCEQA_ENV_FILE"))
+	if explicit != "" {
+		_ = LoadDotEnv(explicit)
+	}
+	if strings.TrimSpace(root) != "" {
+		_ = LoadDotEnv(filepath.Join(root, ".env"))
+	}
+	return nil
 }

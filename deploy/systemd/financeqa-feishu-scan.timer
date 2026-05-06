@@ -1,6 +1,6 @@
 [Unit]
 Description=Run FinanceQA Feishu active scan every 10 minutes
-Documentation=/root/finance_qa/README.md
+Documentation=file:%h/finance_qa/README.md
 
 [Timer]
 OnUnitInactiveSec=10min

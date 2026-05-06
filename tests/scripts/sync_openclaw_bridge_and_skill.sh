@@ -7,6 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SERVER="${SERVER:-root@8.129.14.124}"
 KEY_PATH="${KEY_PATH:-$HOME/Downloads/未命名文件夹 2/lzh-key.pem}"
+REMOTE_HOME="${REMOTE_HOME:-$(ssh -i "$KEY_PATH" "$SERVER" 'printf %s "$HOME"')}"
 
 LOCAL_SKILL="$ROOT_DIR/SKILL.md"
 LOCAL_APPENDIX="$ROOT_DIR/docs/SKILL_APPENDIX_FULL.md"
@@ -18,13 +19,14 @@ LOCAL_PLUGIN_PACKAGE="$ROOT_DIR/plugin/openclaw-finance/package.json"
 LOCAL_CLAUDE_WRAPPER="$ROOT_DIR/tests/scripts/claude_finance_final_answer.sh"
 LOCAL_ONLINE_CHECKER="$ROOT_DIR/tests/scripts/run_online_agent_final_answer_check.py"
 
-REMOTE_REPO_DIR="${REMOTE_REPO_DIR:-/root/finance_qa}"
-REMOTE_OPENCLAW_PLUGIN_DIR="${REMOTE_OPENCLAW_PLUGIN_DIR:-/root/.openclaw/extensions/openclaw-finance}"
+REMOTE_REPO_DIR="${REMOTE_REPO_DIR:-$REMOTE_HOME/finance_qa}"
+REMOTE_OPENCLAW_PLUGIN_DIR="${REMOTE_OPENCLAW_PLUGIN_DIR:-$REMOTE_HOME/.openclaw/extensions/openclaw-finance}"
 REMOTE_OPENCLAW_EXT_DIR="${REMOTE_OPENCLAW_EXT_DIR:-$REMOTE_OPENCLAW_PLUGIN_DIR/server}"
-REMOTE_OPENCLAW_SKILL_DIR="${REMOTE_OPENCLAW_SKILL_DIR:-/root/.openclaw/skills/finance}"
-REMOTE_OPENCLAW_EXT_SKILL_DIR="${REMOTE_OPENCLAW_EXT_SKILL_DIR:-/root/.openclaw/extensions/openclaw-finance/skills/finance}"
+REMOTE_OPENCLAW_SKILL_DIR="${REMOTE_OPENCLAW_SKILL_DIR:-$REMOTE_HOME/.openclaw/skills/finance}"
+REMOTE_OPENCLAW_EXT_SKILL_DIR="${REMOTE_OPENCLAW_EXT_SKILL_DIR:-$REMOTE_HOME/.openclaw/extensions/openclaw-finance/skills/finance}"
 REMOTE_REPO_BRIDGE_DIR="${REMOTE_REPO_BRIDGE_DIR:-$REMOTE_REPO_DIR/plugin/openclaw-finance/server}"
-REMOTE_OPENCLAW_SESSION_STORE="${REMOTE_OPENCLAW_SESSION_STORE:-/root/.openclaw/agents/main/sessions/sessions.json}"
+REMOTE_OPENCLAW_SESSION_STORE="${REMOTE_OPENCLAW_SESSION_STORE:-$REMOTE_HOME/.openclaw/agents/main/sessions/sessions.json}"
+REMOTE_OPENCLAW_CONFIG_PATH="${REMOTE_OPENCLAW_CONFIG_PATH:-$REMOTE_HOME/.openclaw/openclaw.json}"
 
 if [[ ! -f "$LOCAL_SKILL" ]]; then
   echo "missing local SKILL.md: $LOCAL_SKILL" >&2
@@ -101,7 +103,7 @@ ssh -i "$KEY_PATH" "$SERVER" "set -e; \
   cp '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md'; \
   cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/SKILL.md'; \
   cp '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md'; \
-  node -e \"const fs=require('fs'); const configPath='/root/.openclaw/openclaw.json'; const financeSkillDir = process.argv[2]; const cfg=JSON.parse(fs.readFileSync(configPath,'utf8')); cfg.skills = cfg.skills && typeof cfg.skills === 'object' ? cfg.skills : {}; cfg.skills.load = cfg.skills.load && typeof cfg.skills.load === 'object' ? cfg.skills.load : {}; const existing = Array.isArray(cfg.skills.load.extraDirs) ? cfg.skills.load.extraDirs.filter((dir) => typeof dir === 'string' && dir.trim()) : []; cfg.skills.load.extraDirs = [financeSkillDir, ...existing.filter((dir) => dir !== financeSkillDir)]; cfg.plugins = cfg.plugins && typeof cfg.plugins === 'object' ? cfg.plugins : {}; cfg.plugins.entries = cfg.plugins.entries && typeof cfg.plugins.entries === 'object' ? cfg.plugins.entries : {}; cfg.plugins.entries['openclaw-finance'] = cfg.plugins.entries['openclaw-finance'] && typeof cfg.plugins.entries['openclaw-finance'] === 'object' ? cfg.plugins.entries['openclaw-finance'] : {}; cfg.plugins.entries['openclaw-finance'].enabled = true; cfg.plugins.entries['openclaw-finance'].hooks = cfg.plugins.entries['openclaw-finance'].hooks && typeof cfg.plugins.entries['openclaw-finance'].hooks === 'object' ? cfg.plugins.entries['openclaw-finance'].hooks : {}; cfg.plugins.entries['openclaw-finance'].hooks.allowPromptInjection = true; const tmp = configPath + '.tmp-' + process.pid; fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + String.fromCharCode(10)); fs.renameSync(tmp, configPath);\" _ '$REMOTE_OPENCLAW_SKILL_DIR'; \
+  node -e \"const fs=require('fs'); const financeSkillDir = process.argv[2]; const configPath = process.argv[3]; const cfg=JSON.parse(fs.readFileSync(configPath,'utf8')); cfg.skills = cfg.skills && typeof cfg.skills === 'object' ? cfg.skills : {}; cfg.skills.load = cfg.skills.load && typeof cfg.skills.load === 'object' ? cfg.skills.load : {}; const existing = Array.isArray(cfg.skills.load.extraDirs) ? cfg.skills.load.extraDirs.filter((dir) => typeof dir === 'string' && dir.trim()) : []; cfg.skills.load.extraDirs = [financeSkillDir, ...existing.filter((dir) => dir !== financeSkillDir)]; cfg.plugins = cfg.plugins && typeof cfg.plugins === 'object' ? cfg.plugins : {}; cfg.plugins.entries = cfg.plugins.entries && typeof cfg.plugins.entries === 'object' ? cfg.plugins.entries : {}; cfg.plugins.entries['openclaw-finance'] = cfg.plugins.entries['openclaw-finance'] && typeof cfg.plugins.entries['openclaw-finance'] === 'object' ? cfg.plugins.entries['openclaw-finance'] : {}; cfg.plugins.entries['openclaw-finance'].enabled = true; cfg.plugins.entries['openclaw-finance'].hooks = cfg.plugins.entries['openclaw-finance'].hooks && typeof cfg.plugins.entries['openclaw-finance'].hooks === 'object' ? cfg.plugins.entries['openclaw-finance'].hooks : {}; cfg.plugins.entries['openclaw-finance'].hooks.allowPromptInjection = true; const tmp = configPath + '.tmp-' + process.pid; fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + String.fromCharCode(10)); fs.renameSync(tmp, configPath);\" _ '$REMOTE_OPENCLAW_SKILL_DIR' '$REMOTE_OPENCLAW_CONFIG_PATH'; \
   echo 'patched skills.load.extraDirs for finance'; \
   node -e \"const fs=require('fs'); const sessionStorePath=process.argv[2]; if (fs.existsSync(sessionStorePath)) { const sessions=JSON.parse(fs.readFileSync(sessionStorePath,'utf8')); let cleared=0; for (const entry of Object.values(sessions)) { if (entry && typeof entry === 'object' && entry.skillsSnapshot) { delete entry.skillsSnapshot; cleared += 1; } } if (cleared > 0) { const tmp = sessionStorePath + '.tmp-' + process.pid; fs.writeFileSync(tmp, JSON.stringify(sessions, null, 2) + String.fromCharCode(10)); fs.renameSync(tmp, sessionStorePath); } console.log('cleared skillsSnapshot caches: ' + cleared); }\" _ '$REMOTE_OPENCLAW_SESSION_STORE'; \
   chmod 444 '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/SKILL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js' '$REMOTE_OPENCLAW_PLUGIN_DIR/index.ts' '$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/package.json'"

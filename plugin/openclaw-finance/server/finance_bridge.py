@@ -17,7 +17,11 @@ FINANCEQA_SKILL_PATH = Path(os.environ.get("FINANCEQA_SKILL_PATH", str(REPO_ROOT
 
 
 def load_dotenv_if_exists(path):
+    if not path:
+        return
     p = Path(path)
+    if not p.is_file():
+        return
     if not p.exists():
         return
     for raw in p.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -35,8 +39,8 @@ def load_dotenv_if_exists(path):
         os.environ[key] = v.strip().strip("'").strip('"')
 
 
+load_dotenv_if_exists(os.environ.get("FINANCEQA_ENV_FILE", ""))
 load_dotenv_if_exists(".env")
-load_dotenv_if_exists("/root/finance_qa/.env")
 
 
 def load_skill_contract(skill_path):
@@ -451,35 +455,6 @@ def summarize_db_target(db_target):
     return "configured"
 
 
-SOURCE_TABLE_DOCUMENT_LABELS = [
-    ("tenant_uhub.fin_fund_income", "《优集资金收入计算表-副本.xlsx》"),
-    ("tenant_uhub.fin_cost_settlements", "《优集成本计算表-4.23-池.xlsx》"),
-    ("tenant_uhub.fin_contracts", "《合同信息表》"),
-    ("tenant_uhub.fin_revenue_settlements", "《收入结算表（已废弃）》"),
-    ("tenant_uhub.bank_statement", "《银行流水》"),
-    ("tenant_uhub.journal", "《序时账》"),
-    ("tenant_uhub.balance_detail", "《科目余额表》"),
-    ("tenant_uhub.balance_sheet", "《资产负债表》"),
-    ("tenant_uhub.income_statement", "《利润表》"),
-    ("tenant_uhub.contract_main", "合同主表"),
-    ("tenant_uhub.contract_invoices", "合同发票明细"),
-    ("tenant_uhub.contract_invoice_summaries", "合同发票汇总"),
-    ("tenant_uhub.contract_pages", "合同分页正文"),
-    ("fin_fund_income", "《优集资金收入计算表-副本.xlsx》"),
-    ("fin_cost_settlements", "《优集成本计算表-4.23-池.xlsx》"),
-    ("fin_contracts", "《合同信息表》"),
-    ("fin_revenue_settlements", "《收入结算表（已废弃）》"),
-    ("bank_statement", "《银行流水》"),
-    ("journal", "《序时账》"),
-    ("balance_detail", "《科目余额表》"),
-    ("balance_sheet", "《资产负债表》"),
-    ("income_statement", "《利润表》"),
-    ("contract_main", "合同主表"),
-    ("contract_invoices", "合同发票明细"),
-    ("contract_invoice_summaries", "合同发票汇总"),
-    ("contract_pages", "合同分页正文"),
-]
-
 HIDDEN_RESPONSE_KEYS = {
     "id",
     "contract_id",
@@ -533,36 +508,6 @@ RAW_SOURCE_TABLE_PATTERN = re.compile(
     r"bank_statement|journal|balance_detail|balance_sheet|income_statement"
     r")\b"
 )
-
-
-def source_label_for_table(value):
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    for raw, label in SOURCE_TABLE_DOCUMENT_LABELS:
-        if raw == text or text.endswith("." + raw) or raw in text:
-            return label
-    return humanize_source_text(text)
-
-
-def humanize_source_tables(values):
-    labels = []
-    for item in values or []:
-        label = source_label_for_table(item)
-        if label and label not in labels:
-            labels.append(label)
-    return labels
-
-
-def humanize_source_text(value):
-    text = str(value or "")
-    for raw, label in SOURCE_TABLE_DOCUMENT_LABELS:
-        if "." in raw:
-            text = text.replace(raw, label)
-            continue
-        pattern = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(raw) + r"(?![A-Za-z0-9_])")
-        text = pattern.sub(label, text)
-    return text
 
 
 def contains_raw_table_source(value):

@@ -111,6 +111,48 @@ func TestRunFeishuOAuthURLPrintsAuthorizationURL(t *testing.T) {
 	}
 }
 
+func TestRunUsesConfiguredEnvFileBeforeLocalDotEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+	localEnvPath := filepath.Join(tmpDir, ".env")
+	configuredEnvPath := filepath.Join(tmpDir, "financeqa.env")
+
+	if err := os.WriteFile(localEnvPath, []byte("FEISHU_APP_ID=local-app\nFEISHU_APP_SECRET=local-secret\n"), 0o600); err != nil {
+		t.Fatalf("write local env: %v", err)
+	}
+	if err := os.WriteFile(configuredEnvPath, []byte("FEISHU_APP_ID=configured-app\nFEISHU_APP_SECRET=configured-secret\n"), 0o600); err != nil {
+		t.Fatalf("write configured env: %v", err)
+	}
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir tmp dir: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	unsetEnvForTest(t, "FEISHU_APP_ID")
+	unsetEnvForTest(t, "FEISHU_APP_SECRET")
+	t.Setenv("FINANCEQA_ENV_FILE", configuredEnvPath)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	code := run([]string{"feishu", "oauth-url", "--redirect-uri", "http://127.0.0.1:8787/feishu/oauth/callback", "--state", "state-1"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, errOut.String())
+	}
+	stdout := out.String()
+	if !strings.Contains(stdout, "app_id=configured-app") {
+		t.Fatalf("stdout should use FINANCEQA_ENV_FILE before local .env, got %q", stdout)
+	}
+	if strings.Contains(stdout, "app_id=local-app") {
+		t.Fatalf("stdout should not use the local .env when FINANCEQA_ENV_FILE is configured, got %q", stdout)
+	}
+}
+
 func TestRunOCRRequiresSubcommand(t *testing.T) {
 	code, _, stderr := runCLIForTest(t, "ocr")
 	if code != 2 {
@@ -118,6 +160,16 @@ func TestRunOCRRequiresSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "ocr requires a subcommand") {
 		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestAuditAccuracyCommandDoesNotHardcodeSnapshotWorkbookToken(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(".", "audit_accuracy_cmd.go"))
+	if err != nil {
+		t.Fatalf("read audit command: %v", err)
+	}
+	if strings.Contains(string(raw), "Iel5bFZWSoGF7hxjyPpcn5Elnqd") {
+		t.Fatalf("audit accuracy command should not hardcode the Feishu workbook snapshot token")
 	}
 }
 
@@ -303,6 +355,21 @@ func sourceTokensFromJSONForTest(t *testing.T, raw string) []string {
 		out = append(out, row.SourceToken)
 	}
 	return out
+}
+
+func unsetEnvForTest(t *testing.T, key string) {
+	t.Helper()
+	old, ok := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if ok {
+			_ = os.Setenv(key, old)
+			return
+		}
+		_ = os.Unsetenv(key)
+	})
 }
 
 func TestRunFeishuSeedSourcesRequiresConfiguredSources(t *testing.T) {

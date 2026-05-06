@@ -31,7 +31,7 @@
 
 0. 对任何财务、经营、合同、回款、开票、收入、成本、利润、现金、银行、税额、应收/应付、客户、供应商或来源表问题，必须先调用 bridge，再回答。推荐命令：
    ```bash
-   printf '%s' '{"action":"call","name":"finance-query","arguments":{"query":"用户原问题"}}' | python3 /root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py
+   printf '%s' '{"action":"call","name":"finance-query","arguments":{"query":"用户原问题"}}' | python3 ~/.openclaw/extensions/openclaw-finance/server/finance_bridge.py
    ```
    若当前环境没有线上 OpenClaw bridge，则使用仓库内 `plugin/openclaw-finance/server/finance_bridge.py`。解析返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源和来源更新时间，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 bridge 的最终答案。
 1. 优先调用 `finance-query` 获取结构化回答。
@@ -44,9 +44,9 @@
 8. 只有当 bridge 未封装相应维护能力，或用户明确要求本地维护命令时，才直接使用 CLI（如 `financeqa config show`、`financeqa keywords intents`）。
 9. 不依赖桥接层注入 skill 内容；skill 由宿主 skills 机制统一加载。
 10. 注入策略使用“核心版 SKILL + 按需附录”：优先遵循仓库根目录 `SKILL.md`，仅在需要细粒度规则时再参考 `docs/SKILL_APPENDIX_FULL.md`。
-11. 线上 OpenClaw 当前路径：`/root/.openclaw/skills/finance/SKILL.md` 与 `/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`。
-12. 线上 Claude Code 当前路径：`/root/.claude/skills/finance/SKILL.md` 与 `/root/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`。
-13. 旧路径 `/root/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标。
+11. 线上 OpenClaw 当前路径：`~/.openclaw/skills/finance/SKILL.md` 与 `~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`。
+12. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`。
+13. 旧路径 `~/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标。
 14. 若桥接结果里存在 `boss_reply`，优先直接引用，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里重算金额。
 15. 若存在 `host_summary_contract`，摘要必须受它约束，尤其不能把子期间到账改写成累计回款，也不能把累计回款压成单月到账。
 16. 若存在 `host_summary_supplier_payments`，供应商付款类问题必须按它的结构化字段总结，不要把员工、内部往来、税费、手续费等剔除对象加回去。

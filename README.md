@@ -48,7 +48,7 @@
 
 注意：
 1. `.env` 已加入 `.gitignore`，不会提交到仓库。
-2. 线上建议把 `.env` 放在 `/root/finance_qa/.env`，并设置权限 `600`。
+2. 线上建议把 `.env` 放在 `~/finance_qa/.env` 或 `/etc/financeqa/financeqa.env`，并通过 `FINANCEQA_ENV_FILE` 指向它，权限建议 `600`。
 3. 飞书、OSS、Gemini 等密钥只放 `.env` 或线上 secret，不写入 README、日志或数据库。
 
 线上 `.env` 至少需要包含：
@@ -67,7 +67,7 @@ FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=replace_with_secret
 FEISHU_AUTH_MODE=tenant
 # FEISHU_AUTH_MODE=user
-# FEISHU_USER_TOKEN_FILE=/root/finance_qa/secrets/feishu_user_token.json
+# FEISHU_USER_TOKEN_FILE=~/finance_qa/secrets/feishu_user_token.json
 # FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
 FINANCEQA_FEISHU_SNAPSHOT_DIR=tmp/feishu_snapshots
 
@@ -138,14 +138,14 @@ http://127.0.0.1:8787/feishu/oauth/callback
 然后通过 SSH 端口转发在服务器上执行一次用户授权：
 
 ```bash
-ssh -L 8787:127.0.0.1:8787 lzh 'cd /root/finance_qa && ./financeqa feishu oauth-login --token-file /root/finance_qa/secrets/feishu_user_token.json'
+ssh -L 8787:127.0.0.1:8787 lzh 'cd ~/finance_qa && ./financeqa feishu oauth-login --token-file ~/finance_qa/secrets/feishu_user_token.json'
 ```
 
 命令会打印授权链接，在本机浏览器打开并同意授权；回调会通过 SSH 隧道写入服务器 token file。授权后服务器 `.env` 配置：
 
 ```env
 FEISHU_AUTH_MODE=user
-FEISHU_USER_TOKEN_FILE=/root/finance_qa/secrets/feishu_user_token.json
+FEISHU_USER_TOKEN_FILE=~/finance_qa/secrets/feishu_user_token.json
 FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
 ```
 
@@ -177,7 +177,7 @@ FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
 如果用户删除原财务表后重新上传一份新表，扫描器会把它当作文件夹中的新工作簿处理，但 OSS 不会盲目覆盖旧对象：先计算新表 SHA256，同 hash 会直接复用已有 `storage_key`；不同 hash 且目标历史路径已存在时，会写入带 hash 后缀的新对象，保留旧快照用于追溯。数据库中的来源状态只更新为最新文件 token、文件名、hash 和 `storage_key`。
 
 ```env
-FEISHU_SYNC_SOURCES_FILE=/root/finance_qa/secrets/feishu_sources.json
+FEISHU_SYNC_SOURCES_FILE=~/finance_qa/secrets/feishu_sources.json
 # 或 FEISHU_SYNC_SOURCES_JSON='[...]'
 ```
 
@@ -560,10 +560,10 @@ go test ./tests/integration/... -count=1
 1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）
 2. 详细规则：`docs/SKILL_APPENDIX_FULL.md`（按需查阅）
 3. 发布到 Claude Code / OpenClaw 时，需保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 这条相对路径
-4. 线上 OpenClaw 全局 skill 兼容路径：`/root/.openclaw/skills/finance/SKILL.md` 与 `/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`
-5. 线上 OpenClaw 扩展 skill 注册路径：`/root/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md` 与 `/root/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md`
-6. 线上 Claude Code 当前路径：`/root/.claude/skills/finance/SKILL.md` 与 `/root/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`
-7. 旧路径 `/root/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标
+4. 线上 OpenClaw 全局 skill 兼容路径：`~/.openclaw/skills/finance/SKILL.md` 与 `~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+5. 线上 OpenClaw 扩展 skill 注册路径：`~/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md` 与 `~/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+6. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+7. 旧路径 `~/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标
 
 ## 七、Agent 对接能力矩阵
 

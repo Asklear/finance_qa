@@ -24,8 +24,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	_ = support.LoadDotEnv(".env")
-	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	_ = support.LoadAppDotEnv(support.FindProjectRoot())
 
 	if len(args) == 0 {
 		printUsage(stderr)

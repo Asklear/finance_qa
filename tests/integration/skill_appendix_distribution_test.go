@@ -105,7 +105,7 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 	if !strings.Contains(scriptText, "LOCAL_APPENDIX=\"$ROOT_DIR/docs/SKILL_APPENDIX_FULL.md\"") {
 		t.Fatalf("sync script should define local appendix path")
 	}
-	if !strings.Contains(scriptText, "REMOTE_OPENCLAW_EXT_SKILL_DIR=\"${REMOTE_OPENCLAW_EXT_SKILL_DIR:-/root/.openclaw/extensions/openclaw-finance/skills/finance}\"") {
+	if !strings.Contains(scriptText, "REMOTE_OPENCLAW_EXT_SKILL_DIR=\"${REMOTE_OPENCLAW_EXT_SKILL_DIR:-$REMOTE_HOME/.openclaw/extensions/openclaw-finance/skills/finance}\"") {
 		t.Fatalf("sync script should target OpenClaw extension skill directory")
 	}
 	if !strings.Contains(scriptText, "$SERVER:$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md") {

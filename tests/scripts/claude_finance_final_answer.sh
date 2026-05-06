@@ -4,11 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 BRIDGE_PATH="${FINANCE_BRIDGE_PATH:-}"
 if [[ -z "$BRIDGE_PATH" ]]; then
-  if [[ -f /root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py ]]; then
-    BRIDGE_PATH="/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py"
-  else
-    BRIDGE_PATH="$ROOT_DIR/plugin/openclaw-finance/server/finance_bridge.py"
-  fi
+  BRIDGE_PATH="$ROOT_DIR/plugin/openclaw-finance/server/finance_bridge.py"
 fi
 
 if [[ $# -lt 1 ]]; then

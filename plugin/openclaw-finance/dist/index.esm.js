@@ -1,5 +1,8 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const PLUGIN_ID = "openclaw-finance";
-const BRIDGE_PATH = "/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py";
+const BRIDGE_PATH = process.env.FINANCE_BRIDGE_PATH || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../server/finance_bridge.py");
 
 const FINANCE_KEYWORDS = [
   "财务",

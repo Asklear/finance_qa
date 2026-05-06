@@ -78,15 +78,9 @@ func runAuditAccuracy(args []string, stdout, stderr interface {
 		fmt.Fprintf(stderr, "build sql audit failed: %v\n", err)
 		return 1
 	}
-	wbPath := strings.TrimSpace(*workbookPath)
-	if wbPath == "" {
-		wbPath = filepath.Join("tmp", "feishu-snapshots", "Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx")
-	}
-	if _, err := os.Stat(wbPath); err != nil {
-		wbPath, err = downloadFinanceWorkbook(ctx, mappings)
-		if err != nil {
-			report.Warnings = append(report.Warnings, "source workbook unavailable: "+err.Error())
-		}
+	wbPath, warning := resolveAuditWorkbookPath(ctx, *workbookPath, mappings)
+	if warning != "" {
+		report.Warnings = append(report.Warnings, warning)
 	}
 	if wbPath != "" {
 		report.WorkbookPath = wbPath
@@ -114,6 +108,18 @@ func runAuditAccuracy(args []string, stdout, stderr interface {
 	}
 	fmt.Fprintln(stdout, string(raw))
 	return 0
+}
+
+func resolveAuditWorkbookPath(ctx context.Context, workbookPath string, mappings []auditMapping) (string, string) {
+	wbPath := strings.TrimSpace(workbookPath)
+	if wbPath != "" {
+		return wbPath, ""
+	}
+	wbPath, err := downloadFinanceWorkbook(ctx, mappings)
+	if err != nil {
+		return "", "source workbook unavailable: " + err.Error()
+	}
+	return wbPath, ""
 }
 
 func loadAuditMappings(ctx context.Context, db *sql.DB) ([]auditMapping, error) {

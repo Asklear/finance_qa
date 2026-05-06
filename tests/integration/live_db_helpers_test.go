@@ -17,8 +17,7 @@ func requireLiveDBConfig(t *testing.T) (string, string) {
 
 	cwd, _ := os.Getwd()
 	root := filepath.Join(cwd, "..", "..")
-	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
-	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	_ = support.LoadAppDotEnv(root)
 	dbPath := support.DefaultDBPath(root)
 	if dbPath == "" {
 		t.Skip("database is not configured; skipping live database suite")

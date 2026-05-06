@@ -166,8 +166,7 @@ func resolveGoBin() string {
 
 func mustResolveConfiguredDBTarget() string {
 	root := support.FindProjectRoot()
-	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
-	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	_ = support.LoadAppDotEnv(root)
 	dbTarget := strings.TrimSpace(support.DefaultDBPath(root))
 	if dbTarget == "" {
 		panic(errors.New("database is not configured; set FINANCEQA_DB / PostgreSQL env vars"))

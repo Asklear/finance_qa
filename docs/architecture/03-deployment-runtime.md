@@ -28,7 +28,7 @@ flowchart LR
         PK4 --> PK5
     end
 
-    subgraph HostRepo["服务器仓库 /root/finance_qa"]
+    subgraph HostRepo["服务器仓库 ~/finance_qa"]
         HR1["SKILL.md"]
         HR2["docs/SKILL_APPENDIX_FULL.md"]
         HR3["plugin/openclaw-finance/server/finance_bridge.py"]
@@ -38,11 +38,11 @@ flowchart LR
     end
 
     subgraph OpenClaw["OpenClaw 当前 skill/extension 路径"]
-        OC1["/root/.openclaw/skills/finance/SKILL.md"]
-        OC2["/root/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
-        OC3["/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py"]
-        OC4["/root/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md"]
-        OC5["/root/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
+        OC1["~/.openclaw/skills/finance/SKILL.md"]
+        OC2["~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
+        OC3["~/.openclaw/extensions/openclaw-finance/server/finance_bridge.py"]
+        OC4["~/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md"]
+        OC5["~/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         OC1 -. symlink or same file .-> HR1
         OC2 -. symlink or same file .-> HR2
         OC3 -. symlink .-> HR3
@@ -53,8 +53,8 @@ flowchart LR
     end
 
     subgraph Claude["Claude Code 当前 skill 路径"]
-        CC1["/root/.claude/skills/finance/SKILL.md"]
-        CC2["/root/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
+        CC1["~/.claude/skills/finance/SKILL.md"]
+        CC2["~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         CC1 -. symlink or same file .-> HR1
         CC2 -. symlink or same file .-> HR2
         CC1 --> CC2
@@ -63,7 +63,7 @@ flowchart LR
     subgraph Runtime["运行时"]
         RT1["宿主 LLM"]
         RT2["finance_bridge.py"]
-        RT3["/root/finance_qa/financeqa"]
+        RT3["~/finance_qa/financeqa"]
         RT4["systemd timer: feishu scan"]
         RT5["systemd timer: ocr process-pending"]
         DB[("PostgreSQL default<br/>explicit SQLite only")]
@@ -106,17 +106,17 @@ flowchart LR
 ## 默认路径
 
 1. 本地仓库根：`/Users/gaorongvc/work/other/finance_qa`
-2. 服务器仓库根：`/root/finance_qa`
-3. OpenClaw 全局 skill 兼容目录：`/root/.openclaw/skills/finance`
-4. OpenClaw 扩展 skill 注册目录：`/root/.openclaw/extensions/openclaw-finance/skills/finance`
-5. OpenClaw extension server 目录：`/root/.openclaw/extensions/openclaw-finance/server`
-6. Claude Code skill 目录：`/root/.claude/skills/finance`
-7. 废弃路径：`/root/.openclaw/workspace/skills/finance-orchestrator` 不再作为发布或验证目标。
+2. 服务器仓库根：`~/finance_qa`
+3. OpenClaw 全局 skill 兼容目录：`~/.openclaw/skills/finance`
+4. OpenClaw 扩展 skill 注册目录：`~/.openclaw/extensions/openclaw-finance/skills/finance`
+5. OpenClaw extension server 目录：`~/.openclaw/extensions/openclaw-finance/server`
+6. Claude Code skill 目录：`~/.claude/skills/finance`
+7. 废弃路径：`~/.openclaw/workspace/skills/finance-orchestrator` 不再作为发布或验证目标。
 
 ## 发布约束
 
 1. 发布到宿主时必须保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 相对路径。
-2. 线上 bridge 默认二进制是 `/root/finance_qa/financeqa`，代码变更后需要重新编译。
+2. 线上 bridge 默认二进制是 `~/finance_qa/financeqa`，代码变更后需要重新编译。
 3. bridge 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
 4. OpenClaw/Claude 当前可调用 bridge 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 5. `finance-query` 推荐 MCP 调用格式：`{"action":"call","name":"finance-query","arguments":{"query":"..."}}`。
@@ -193,7 +193,7 @@ psql "$FINANCEQA_PG_DSN" -v ON_ERROR_STOP=1 -f db/migrations/20260505_relative_s
 
 ## 线上环境变量
 
-`.env` 放在 `/root/finance_qa/.env`，权限建议为 `600`。必填项分组如下：
+`.env` 放在 `~/finance_qa/.env` 或 `/etc/financeqa/financeqa.env`，并通过 `FINANCEQA_ENV_FILE` 指向它，权限建议为 `600`。必填项分组如下：
 
 ```env
 # PostgreSQL
@@ -209,7 +209,7 @@ FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=replace_with_secret
 FEISHU_AUTH_MODE=tenant
 # FEISHU_AUTH_MODE=user
-# FEISHU_USER_TOKEN_FILE=/root/finance_qa/secrets/feishu_user_token.json
+# FEISHU_USER_TOKEN_FILE=~/finance_qa/secrets/feishu_user_token.json
 # FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
 FINANCEQA_FEISHU_SNAPSHOT_DIR=tmp/feishu_snapshots
 
@@ -248,7 +248,7 @@ go test ./internal/feishusync -run 'TestPDFScanner|TestWorkbookScanner' -count=1
 飞书应用审核通过且文档授权完成后，再跑真实闭环：
 
 ```bash
-# 需先配置 FEISHU_SYNC_SOURCES_FILE=/root/finance_qa/secrets/feishu_sources.json
+# 需先配置 FEISHU_SYNC_SOURCES_FILE=~/finance_qa/secrets/feishu_sources.json
 # 或配置等价的 FEISHU_SYNC_SOURCES_JSON
 ./financeqa feishu seed-sources
 ./financeqa feishu scan --company "南京优集数据科技有限公司"

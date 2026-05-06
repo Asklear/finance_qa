@@ -20,8 +20,7 @@ func TestFinanceDBSchemaContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
-	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	_ = support.LoadAppDotEnv(root)
 	dbPath := support.DefaultDBPath(root)
 	if dbPath == "" {
 		t.Skip("database is not configured; skipping schema contract test")

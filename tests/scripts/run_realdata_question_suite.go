@@ -171,8 +171,7 @@ func main() {
 
 func resolveConfiguredDBTarget() (string, error) {
 	root := support.FindProjectRoot()
-	_ = support.LoadDotEnv(filepath.Join(root, ".env"))
-	_ = support.LoadDotEnv("/root/finance_qa/.env")
+	_ = support.LoadAppDotEnv(root)
 	dbTarget := strings.TrimSpace(support.DefaultDBPath(root))
 	if dbTarget == "" {
 		return "", errors.New("database is not configured; pass -db or set FINANCEQA_DB / PostgreSQL env vars")
