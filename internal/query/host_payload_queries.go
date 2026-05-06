@@ -279,9 +279,15 @@ ORDER BY year_month, contract_id
 			metadata[tableName] = dbpkg.DefaultTableSourceMetadata(tableName)
 		}
 	}
-	sourceDocuments := sourceDisplaysForTables(sourceTables, metadata)
+	sourceSpec := QuerySpec{
+		PeriodFrom:  from,
+		PeriodTo:    to,
+		BossRewrite: spec.BossRewrite,
+	}
+	sourcePartitions := e.querySourcePartitionsForTables(sourceTables, from, to, nil)
+	sourceDocuments := e.sourceDisplaysForTables(sourceSpec, sourceTables, metadata, sourcePartitions)
 	sourceNote := buildSourceNote(sourceDocuments, nil)
-	payload["source_catalog"] = metadata
+	payload["source_catalog"] = e.sourceCatalogForTables(sourceSpec, sourceTables, metadata, sourcePartitions)
 	if len(sourceDocuments) > 0 {
 		payload["source_documents"] = append([]string{}, sourceDocuments...)
 	}

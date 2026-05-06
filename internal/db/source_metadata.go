@@ -18,6 +18,7 @@ const tableSourceCommentPrefix = "financeqa_source: "
 var (
 	legacyWorkbookPattern = regexp.MustCompile(`[^《》【】；，。:：\s]+(?:[^《》【】；，。:：]*?)\.(?:xlsx|xls|csv|tsv)`)
 	legacySheetPattern    = regexp.MustCompile(`【([^】]+)】`)
+	feishuTokenPattern    = regexp.MustCompile(`^[A-Za-z0-9]{20,}$`)
 )
 
 type TableSourceMetadata struct {
@@ -427,6 +428,7 @@ func normalizeSingleTableSourceMetadata(tableName, raw string, meta TableSourceM
 		inferenceSource = out.Display
 	}
 	out.FileNames = appendDedup(out.FileNames, inferWorkbookNamesFromComment(inferenceSource)...)
+	out.FileNames = filterSourceWorkbookNames(out.FileNames)
 	out.SheetNames = appendDedup(out.SheetNames, inferSheetNamesFromComment(inferenceSource)...)
 	out.ReportTypes = appendDedup(out.ReportTypes, DefaultTableSourceMetadata(base).ReportTypes...)
 	if strings.TrimSpace(out.LogicalLabel) == "" {
@@ -437,6 +439,30 @@ func normalizeSingleTableSourceMetadata(tableName, raw string, meta TableSourceM
 	}
 	out.Display = normalizedDisplayForTable(base, out)
 	return out
+}
+
+func filterSourceWorkbookNames(fileNames []string) []string {
+	out := make([]string, 0, len(fileNames))
+	for _, fileName := range appendDedup(nil, fileNames...) {
+		if isFeishuTokenOnlyWorkbookName(fileName) {
+			continue
+		}
+		out = append(out, fileName)
+	}
+	return out
+}
+
+func isFeishuTokenOnlyWorkbookName(fileName string) bool {
+	fileName = strings.TrimSpace(fileName)
+	if fileName == "" {
+		return false
+	}
+	ext := strings.ToLower(filepathExt(fileName))
+	if ext != ".xlsx" && ext != ".xls" && ext != ".csv" && ext != ".tsv" {
+		return false
+	}
+	base := strings.TrimSuffix(fileName, filepathExt(fileName))
+	return feishuTokenPattern.MatchString(base)
 }
 
 func normalizedDisplayForTable(tableName string, meta TableSourceMetadata) string {
@@ -486,6 +512,14 @@ func inferWorkbookNamesFromComment(comment string) []string {
 		}
 	}
 	return appendDedup(nil, files...)
+}
+
+func filepathExt(name string) string {
+	idx := strings.LastIndex(name, ".")
+	if idx < 0 {
+		return ""
+	}
+	return name[idx:]
 }
 
 func inferSheetNamesFromComment(comment string) []string {

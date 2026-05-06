@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-FINANCEQA_BIN = Path(os.environ.get("FINANCEQA_BIN", "/root/finance_qa/financeqa"))
 REPO_ROOT = Path(__file__).resolve().parents[3]
+FINANCEQA_BIN = Path(os.environ.get("FINANCEQA_BIN", str(REPO_ROOT / "financeqa")))
 FINANCEQA_SKILL_PATH = Path(os.environ.get("FINANCEQA_SKILL_PATH", str(REPO_ROOT / "SKILL.md")))
 
 
@@ -525,6 +525,15 @@ TECHNICAL_TRACE_MARKERS = (
     "source_sheet_name",
 )
 
+RAW_SOURCE_TABLE_PATTERN = re.compile(
+    r"\b(?:tenant_uhub\.)?(?:"
+    r"fin_[A-Za-z0-9_]+|"
+    r"contract_main|contract_invoices|contract_invoice_summaries|contract_pages|"
+    r"contract_categories|contract_duplicate_logs|"
+    r"bank_statement|journal|balance_detail|balance_sheet|income_statement"
+    r")\b"
+)
+
 
 def source_label_for_table(value):
     text = str(value or "").strip()
@@ -556,8 +565,47 @@ def humanize_source_text(value):
     return text
 
 
+def contains_raw_table_source(value):
+    text = str(value or "")
+    return RAW_SOURCE_TABLE_PATTERN.search(text) is not None
+
+
+def clean_source_note_value(value):
+    text = str(value or "").strip()
+    if contains_raw_table_source(text):
+        return ""
+    return text
+
+
+def clean_source_documents_value(value):
+    if not isinstance(value, list):
+        value = [value]
+    cleaned = []
+    for item in value:
+        text = clean_source_note_value(item)
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def clean_source_tables_value(value):
+    if not isinstance(value, list):
+        value = [value]
+    cleaned = []
+    for item in value:
+        text = str(item or "").strip()
+        if not text or contains_raw_table_source(text):
+            continue
+        safe = sanitize_bridge_string(text)
+        if safe and safe not in cleaned:
+            cleaned.append(safe)
+    return cleaned
+
+
 def sanitize_bridge_string(value):
-    text = humanize_source_text(value)
+    text = str(value or "")
+    if contains_raw_table_source(text):
+        return "[内部来源表名已隐藏]"
     lowered = text.lower()
     if any(marker in lowered for marker in TECHNICAL_TRACE_MARKERS):
         return "[内部计算过程已隐藏]"
@@ -574,10 +622,19 @@ def sanitize_bridge_payload(value, key_hint=""):
             if key_lower in HIDDEN_RESPONSE_KEYS or key_lower.endswith("_id"):
                 continue
             if key_lower in ("source_tables", "primary_tables"):
-                labels = humanize_source_tables(item if isinstance(item, list) else [item])
-                if labels:
-                    cleaned[key_text] = labels
-                    cleaned.setdefault("source_documents", labels)
+                cleaned_item = clean_source_tables_value(item)
+                if cleaned_item:
+                    cleaned[key_text] = cleaned_item
+                continue
+            if key_lower in ("source_note", "source_summary"):
+                cleaned_item = clean_source_note_value(item)
+                if cleaned_item:
+                    cleaned[key_text] = cleaned_item
+                continue
+            if key_lower == "source_documents":
+                cleaned_item = clean_source_documents_value(item)
+                if cleaned_item:
+                    cleaned[key_text] = cleaned_item
                 continue
             cleaned_item = sanitize_bridge_payload(item, key_lower)
             if key_lower == "source_documents" and not cleaned_item and cleaned.get("source_documents"):
@@ -601,9 +658,9 @@ def normalize_exposed_fields(data):
         "tax_inclusion": data.get("tax_inclusion"),
         "tax_inclusion_note": data.get("tax_inclusion_note"),
         "route_decision": data.get("route_decision"),
-        "source_documents": data.get("source_documents") or [],
-        "source_note": data.get("source_note") or "",
-        "source_summary": data.get("source_summary") or "",
+        "source_documents": clean_source_documents_value(data.get("source_documents") or []),
+        "source_note": clean_source_note_value(data.get("source_note") or ""),
+        "source_summary": clean_source_note_value(data.get("source_summary") or ""),
         "contract_fallback_reason": data.get("contract_fallback_reason") or "",
         "contract_answer_status": data.get("contract_answer_status") or "",
         "contract_continuity_candidates": data.get("contract_continuity_candidates") or [],
@@ -665,11 +722,11 @@ def build_contract_strict_missing_summary(data):
     source_tables = data.get("source_tables") or data.get("source_primary_tables") or []
     if not isinstance(source_tables, list):
         source_tables = [source_tables]
-    source_documents = data.get("source_documents") or humanize_source_tables(source_tables)
+    source_documents = clean_source_documents_value(data.get("source_documents") or [])
     reason = str(data.get("contract_fallback_reason") or data.get("message") or "").strip()
     if not reason:
         reason = "合同/项目台账在请求期间没有足够记录"
-    source_note = str(data.get("source_note") or data.get("source_summary") or "").strip()
+    source_note = clean_source_note_value(data.get("source_note") or data.get("source_summary") or "")
     if not source_note and source_documents:
         source_note = "本次尝试的合同口径来源：" + "、".join(str(item) for item in source_documents if item)
     return {
@@ -696,7 +753,8 @@ def build_host_summary_contract(payload, query):
     query_spec = data.get("query_spec") or {}
     query_family = str(query_spec.get("query_family") or "").strip()
     asked_topic = str(data.get("asked_topic") or "").strip()
-    if query_family == "contract_dimension":
+    source_priority = str(data.get("source_priority") or "").strip()
+    if query_family == "contract_dimension" and (asked_topic or source_priority in ("contract_first", "contract_strict")):
         entity = str(
             data.get("entity")
             or data.get("counterparty")
@@ -713,9 +771,9 @@ def build_host_summary_contract(payload, query):
             "cash_view": data.get("cash_view") or data.get("money_view") or {},
             "book_view": data.get("book_view") or data.get("account_view") or {},
             "source_tables": data.get("source_tables") or [],
-            "source_summary": data.get("source_summary") or "",
-            "source_note": data.get("source_note") or "",
-            "source_documents": data.get("source_documents") or [],
+            "source_summary": clean_source_note_value(data.get("source_summary") or ""),
+            "source_note": clean_source_note_value(data.get("source_note") or ""),
+            "source_documents": clean_source_documents_value(data.get("source_documents") or []),
             "route_decision": data.get("route_decision") or (query_spec.get("route_decision") if isinstance(query_spec, dict) else {}),
             "contract_fallback_reason": data.get("contract_fallback_reason") or "",
             "safe_to_quote_message": True,
@@ -726,7 +784,7 @@ def build_host_summary_contract(payload, query):
             contract["sub_period_receipts"] = data.get("sub_period_receipts")
         return contract
 
-    if query_family == "core_metric" and str(data.get("source_priority") or "").strip() == "contract_first":
+    if query_family == "core_metric" and source_priority == "contract_first" and data.get("contract_summary"):
         requested_metrics = data.get("requested_metrics") or []
         if isinstance(requested_metrics, tuple):
             requested_metrics = list(requested_metrics)
@@ -743,9 +801,9 @@ def build_host_summary_contract(payload, query):
             "book_view": data.get("account_view") or {},
             "contract_summary": contract_summary,
             "source_tables": data.get("source_tables") or [],
-            "source_summary": data.get("source_summary") or "",
-            "source_note": data.get("source_note") or "",
-            "source_documents": data.get("source_documents") or [],
+            "source_summary": clean_source_note_value(data.get("source_summary") or ""),
+            "source_note": clean_source_note_value(data.get("source_note") or ""),
+            "source_documents": clean_source_documents_value(data.get("source_documents") or []),
             "route_decision": data.get("route_decision") or (query_spec.get("route_decision") if isinstance(query_spec, dict) else {}),
             "contract_fallback_reason": data.get("contract_fallback_reason") or "",
             "safe_to_quote_message": True,
@@ -837,9 +895,9 @@ def build_host_summary_supplier_payments(payload, query):
         "exclusion_reasons": exclusion_reasons,
         "supporting_evidence_used": evidence_used,
         "source_tables": source_tables,
-        "source_summary": data.get("source_summary") or "",
-        "source_note": data.get("source_note") or "",
-        "source_documents": data.get("source_documents") or [],
+            "source_summary": clean_source_note_value(data.get("source_summary") or ""),
+            "source_note": clean_source_note_value(data.get("source_note") or ""),
+            "source_documents": clean_source_documents_value(data.get("source_documents") or []),
         "safe_to_quote_message": True,
     }
 
@@ -851,7 +909,7 @@ def build_boss_reply(payload, query):
     summary_supplier = build_host_summary_supplier_payments(payload, query)
     tax_inclusion = str(data.get("tax_inclusion") or "").strip()
     tax_inclusion_note = str(data.get("tax_inclusion_note") or "").strip()
-    source_note = str(data.get("source_summary") or data.get("source_note") or "").strip()
+    source_note = clean_source_note_value(data.get("source_summary") or data.get("source_note") or "")
 
     def append_tax_note(reason):
         reason = str(reason or "").strip()
@@ -965,14 +1023,8 @@ def build_boss_reply(payload, query):
         source_tables = summary_contract.get("source_tables") or []
 
         def source_reason(default_reason):
-            if summary_contract.get("source_summary") or summary_contract.get("source_note"):
-                return append_source_note(default_reason, summary_contract.get("source_summary") or summary_contract.get("source_note"))
-            if not source_tables:
-                return append_source_note(default_reason)
-            joined = " + ".join(str(item) for item in source_tables if item)
-            if not joined:
-                return append_source_note(default_reason)
-            return append_source_note(f"{default_reason} 本次口径来自 {joined}。")
+            note = clean_source_note_value(summary_contract.get("source_summary") or summary_contract.get("source_note") or "")
+            return append_source_note(default_reason, note)
 
         if asked_topic == "content":
             contents = []
@@ -998,7 +1050,7 @@ def build_boss_reply(payload, query):
                 cost = float(first_float(book_view.get("cost_settlement"), 0) or 0)
                 return {
                     "结论": f"{entity}{period}先看现金口径：净回款 {received - paid:.2f} 元；再看经营口径：合同利润 {revenue - cost:.2f} 元。",
-                    "原因": source_reason("合同利润和净回款都直接来自合同维度结果，优先使用 fin_fund_income 与 fin_cost_settlements，不退回普通往来口径。"),
+                    "原因": source_reason("合同利润和净回款都直接来自合同维度结果，优先使用收入和成本合同台账，不退回普通往来口径。"),
                     "建议": "如果要继续拆利润差异，可以再追问具体是哪些合同或哪几个月形成的成本。",
                 }
             received = float(first_float(cash_view.get("received_amount"), 0) or 0)
@@ -1007,7 +1059,7 @@ def build_boss_reply(payload, query):
             if role == "customer_contract":
                 return {
                     "结论": f"{entity}{period}当前合同台账只匹配到收入/回款，暂不能直接给完整合同利润；现金口径到账 {received:.2f} 元，经营口径结算 {settlement:.2f} 元、开票 {invoice:.2f} 元。",
-                    "原因": source_reason("老板口径下，合同利润必须优先基于 fin_fund_income + fin_cost_settlements；当前未匹配到合同成本时，宿主不能擅自用普通利润口径替代。"),
+                    "原因": source_reason("老板口径下，合同利润必须优先基于收入和成本合同台账；当前未匹配到合同成本时，宿主不能擅自用普通利润口径替代。"),
                     "建议": "如果要形成完整合同利润，请继续补该主体对应的合同成本或供应商合同匹配。",
                 }
             paid = float(first_float(cash_view.get("cash_paid_amount"), 0) or 0)
@@ -1016,6 +1068,26 @@ def build_boss_reply(payload, query):
                 "结论": f"{entity}{period}这是供应商合同，只有成本没有营收；现金口径付款 {paid:.2f} 元，经营口径合同成本 {contract_cost:.2f} 元。",
                 "原因": source_reason("供应商合同不应被宿主误总结成营收或利润。"),
                 "建议": "如需完整利润，请改查对应客户合同或混合合同主体。",
+            }
+
+        if asked_topic in ("revenue", "receipts", "generic") and role == "supplier_contract":
+            paid = float(first_float(cash_view.get("cash_paid_amount"), 0) or 0)
+            contract_cost = float(first_float(book_view.get("contract_cost"), book_view.get("cost_settlement"), 0) or 0)
+            return {
+                "结论": f"{entity}{period}这是供应商合同，先看现金口径：合同付款 {paid:.2f} 元；再看经营口径：合同成本 {contract_cost:.2f} 元。",
+                "原因": source_reason("底层合同维度已经判定为供应商合同，即使问题里出现收入/回款字样，也应按成本/付款视角回答，不能渲染成收入侧 0 元。"),
+                "建议": "如果还要判断是否已经开票或是否形成应付，请继续追问合同应付或发票状态。",
+            }
+
+        if asked_topic == "generic" and role == "mixed_contract":
+            received = float(first_float(cash_view.get("received_amount"), 0) or 0)
+            paid = float(first_float(cash_view.get("cash_paid_amount"), 0) or 0)
+            revenue = float(first_float(book_view.get("revenue_settlement"), book_view.get("settlement_amount"), 0) or 0)
+            cost = float(first_float(book_view.get("cost_settlement"), book_view.get("contract_cost"), 0) or 0)
+            return {
+                "结论": f"{entity}{period}先看现金口径：合同到账 {received:.2f} 元、合同付款 {paid:.2f} 元；再看经营口径：收入结算 {revenue:.2f} 元、合同成本 {cost:.2f} 元。",
+                "原因": source_reason("这是同一主体同时存在收入和成本合同的混合往来，通用问法必须同时保留两侧金额。"),
+                "建议": "如果要看净额或应收应付，请明确追问合同利润、合同应收或合同应付。",
             }
 
         if asked_topic in ("revenue", "receipts", "generic"):
@@ -1030,7 +1102,7 @@ def build_boss_reply(payload, query):
                 }
             return {
                 "结论": f"{entity}{period}先看现金口径：合同到账 {received:.2f} 元；再看经营口径：合同结算 {settlement:.2f} 元，开票 {invoice:.2f} 元。",
-                "原因": source_reason("合同营收优先引用 fin_fund_income，不再退回普通往来收款或总账收入口径。"),
+                "原因": source_reason("合同营收优先引用收入合同台账，不再退回普通往来收款或总账收入口径。"),
                 "建议": "如果你还要看合同利润或合同成本，可以直接继续追问。",
             }
 
@@ -1039,7 +1111,7 @@ def build_boss_reply(payload, query):
             contract_cost = float(first_float(book_view.get("contract_cost"), book_view.get("cost_settlement"), 0) or 0)
             return {
                 "结论": f"{entity}{period}先看现金口径：合同付款 {paid:.2f} 元；再看经营口径：合同成本 {contract_cost:.2f} 元。",
-                "原因": source_reason("合同成本优先引用 fin_cost_settlements，不再退回普通供应商付款统计。"),
+                "原因": source_reason("合同成本优先引用成本合同台账，不再退回普通供应商付款统计。"),
                 "建议": "如果还要判断是否已经开票或是否形成应付，请继续追问合同应付或发票状态。",
             }
 
@@ -1056,14 +1128,8 @@ def build_boss_reply(payload, query):
         source_tables = summary_contract.get("source_tables") or []
 
         def source_reason(default_reason):
-            if summary_contract.get("source_summary") or summary_contract.get("source_note"):
-                return append_source_note(default_reason, summary_contract.get("source_summary") or summary_contract.get("source_note"))
-            if not source_tables:
-                return append_source_note(default_reason)
-            joined = " + ".join(str(item) for item in source_tables if item)
-            if not joined:
-                return append_source_note(default_reason)
-            return append_source_note(f"{default_reason} 本次口径来自 {joined}。")
+            note = clean_source_note_value(summary_contract.get("source_summary") or summary_contract.get("source_note") or "")
+            return append_source_note(default_reason, note)
 
         requested_set = {str(item).strip() for item in requested if str(item).strip()}
         if not requested_set and metric:
@@ -1199,7 +1265,7 @@ def build_boss_reply(payload, query):
             "结论": f"{period}外部供应商付款共 {count} 家，合计 {total:.2f} 元。",
             "原因": append_source_note(
                 f"已按期间内银行实际付款统计{evidence_phrase}，并剔除员工、内部往来、税费和手续费等非供应商项；付款额最高的是 {top_name} {top_amount:.2f} 元。",
-                summary_supplier.get("source_summary") or summary_supplier.get("source_note"),
+                clean_source_note_value(summary_supplier.get("source_summary") or summary_supplier.get("source_note") or ""),
             ),
             "建议": "优先核对前五大供应商付款、发票和应付冲销是否一致。",
         }
@@ -1274,12 +1340,18 @@ def build_final_answer(payload):
 
     final_answer = "\n\n".join(parts).strip()
     data = payload.get("data") or {}
-    source_note = str(data.get("source_note") or data.get("source_summary") or "").strip()
+    source_note = clean_source_note_value(data.get("source_note") or data.get("source_summary") or "")
     if source_note and source_note not in final_answer:
         if final_answer:
             final_answer = final_answer + "\n\n" + source_note
         else:
             final_answer = source_note
+    source_update_note = str(data.get("source_update_note") or "").strip()
+    if source_update_note and source_update_note not in final_answer:
+        if final_answer:
+            final_answer = final_answer + "\n\n" + source_update_note
+        else:
+            final_answer = source_update_note
     return final_answer
 
 

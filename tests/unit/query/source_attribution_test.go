@@ -156,6 +156,255 @@ func TestCompanyAggregateMultiMetricSourceNoteIncludesRevenueAndCostWorkbooks(t 
 	}
 }
 
+func TestSourceNoteDoesNotExposeFeishuTokenOnlyWorkbookNames(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT OR REPLACE INTO meta_table_comments(table_name, comment) VALUES
+('fin_fund_income', 'financeqa_source: {"version":"v1","display":"《优集资金收入计算表-2026.xlsx》；《Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx》","logical_label":"fin_fund_income","file_names":["优集资金收入计算表-2026.xlsx","Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx"],"sheet_names":["26年Q1收入明细"],"report_types":["contract_fund_income"],"updated_at":"2026-05-05T11:38:30Z"}'),
+('fin_cost_settlements', 'financeqa_source: {"version":"v1","display":"《优集成本计算表-4.23-池.xlsx》；《Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx》","logical_label":"fin_cost_settlements","file_names":["优集成本计算表-4.23-池.xlsx","Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx"],"sheet_names":["成本-月度结算"],"report_types":["contract_revenue_cost"],"updated_at":"2026-05-05T11:38:30Z"}')
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed dirty source comments: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2025年10月收入、成本、利润分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	sourceNote, _ := res.Data["source_note"].(string)
+	if strings.Contains(sourceNote, "Iel5bFZWSoGF7hxjyPpcn5Elnqd") || strings.Contains(res.Message, "Iel5bFZWSoGF7hxjyPpcn5Elnqd") {
+		t.Fatalf("boss-facing source should hide Feishu token-only workbook, source_note=%q message=%q", sourceNote, res.Message)
+	}
+	if !containsAll(sourceNote, "优集资金收入计算表-2026.xlsx", "优集成本计算表-4.23-池.xlsx") {
+		t.Fatalf("source_note should keep real workbook names, got %q", sourceNote)
+	}
+}
+
+func TestSourceNotePrefersCurrentFinanceFileMappingName(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS fin_file_mappings (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	table_type TEXT,
+	period TEXT,
+	company TEXT,
+	storage_key TEXT,
+	file_name TEXT,
+	description TEXT,
+	file_size INTEGER,
+	created_at TEXT,
+	updated_at TEXT
+);
+INSERT OR REPLACE INTO meta_table_comments(table_name, comment) VALUES
+('fin_fund_income', 'financeqa_source: {"version":"v1","display":"《历史收入表.xlsx》","logical_label":"fin_fund_income","file_names":["历史收入表.xlsx"],"sheet_names":["26年Q1收入明细"],"report_types":["contract_mixed_finance"],"updated_at":"2026-05-05T11:38:30Z"}'),
+('fin_cost_settlements', 'financeqa_source: {"version":"v1","display":"《历史成本表.xlsx》","logical_label":"fin_cost_settlements","file_names":["历史成本表.xlsx"],"sheet_names":["成本-月度结算"],"report_types":["contract_mixed_finance"],"updated_at":"2026-05-05T11:38:30Z"}');
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, updated_at)
+VALUES
+('fund-income', '2025-Q4', '南京优集数据科技有限公司', 'tenant/uhub/finance/2025/优集收入、成本计算表 - 上传.xlsx', '优集收入、成本计算表 - 上传.xlsx', '2026-05-06 09:30:00'),
+('cost-settlements', '2025-Q4', '南京优集数据科技有限公司', 'tenant/uhub/finance/2025/优集收入、成本计算表 - 上传.xlsx', '优集收入、成本计算表 - 上传.xlsx', '2026-05-06 09:30:00');
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed source comments: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2025年10月收入、成本、利润分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	sourceNote, _ := res.Data["source_note"].(string)
+	if !strings.Contains(sourceNote, "优集收入、成本计算表 - 上传.xlsx") {
+		t.Fatalf("source_note should use current finance file mapping from DB, got %q", sourceNote)
+	}
+	if strings.Contains(sourceNote, "历史收入表.xlsx") || strings.Contains(sourceNote, "历史成本表.xlsx") {
+		t.Fatalf("source_note should not expose stale table-comment workbook names when current finance file mapping exists, got %q", sourceNote)
+	}
+	if strings.Contains(sourceNote, "合同信息表") {
+		t.Fatalf("source_note should not fall back to hardcoded fin_contracts label when finance mappings exist, got %q", sourceNote)
+	}
+	probeSourceDocuments := collectRouteProbeSourceDocumentsForTest(t, res.Data["route_decision"])
+	if !containsString(probeSourceDocuments, "《优集收入、成本计算表 - 上传.xlsx》的【25年Q4收入明细】") {
+		t.Fatalf("route probe source_documents should use current finance file mapping from DB, got %#v", probeSourceDocuments)
+	}
+	for _, stale := range []string{"历史收入表.xlsx", "历史成本表.xlsx", "合同信息表"} {
+		if strings.Contains(strings.Join(probeSourceDocuments, "\n"), stale) {
+			t.Fatalf("route probe source_documents should not fall back to stale table comments or hardcoded labels, got %#v", probeSourceDocuments)
+		}
+	}
+	sourceUpdateNote, _ := res.Data["source_update_note"].(string)
+	if !strings.Contains(sourceUpdateNote, "2026-05-06 09:30:00") {
+		t.Fatalf("source_update_note should use fin_file_mappings.updated_at, got %q", sourceUpdateNote)
+	}
+}
+
+func TestSourceNoteDoesNotFallBackToTableCommentWhenFinanceFileMappingIsPartial(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS fin_file_mappings (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	table_type TEXT,
+	period TEXT,
+	company TEXT,
+	storage_key TEXT,
+	file_name TEXT,
+	description TEXT,
+	file_size INTEGER,
+	created_at TEXT,
+	updated_at TEXT
+);
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, updated_at)
+VALUES ('fund-income', '2025-Q4', '南京优集数据科技有限公司', 'tenant/uhub/finance/2025/优集收入、成本计算表 - 上传.xlsx', '优集收入、成本计算表 - 上传.xlsx', '2026-05-06 09:30:00');
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed partial finance file mapping: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2025年10月收入、成本、利润分别是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	sourceNote, _ := res.Data["source_note"].(string)
+	if !strings.Contains(sourceNote, "优集收入、成本计算表 - 上传.xlsx") {
+		t.Fatalf("source_note should use mapped revenue file, got %q", sourceNote)
+	}
+	if strings.Contains(sourceNote, "优集成本计算表-4.23-池.xlsx") || strings.Contains(sourceNote, "合同成本结算表") {
+		t.Fatalf("source_note should not fall back to cost source metadata when cost mapping is missing, got %q", sourceNote)
+	}
+}
+
+func TestSourceNoteDoesNotFallBackToDifferentPeriodFinanceFileMapping(t *testing.T) {
+	dbPath := buildContractQueryTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS fin_file_mappings (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	table_type TEXT,
+	period TEXT,
+	company TEXT,
+	storage_key TEXT,
+	file_name TEXT,
+	description TEXT,
+	file_size INTEGER,
+	created_at TEXT,
+	updated_at TEXT
+);
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, updated_at)
+VALUES ('fund-income', '2026-Q1', '南京优集数据科技有限公司', 'tenant/uhub/finance/2026/优集收入、成本计算表 - 上传.xlsx', '优集收入、成本计算表 - 上传.xlsx', '2026-05-06 09:30:00');
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed different-period finance file mapping: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2025年10月收入是多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	sourceNote, _ := res.Data["source_note"].(string)
+	if strings.Contains(sourceNote, "优集收入、成本计算表 - 上传.xlsx") {
+		t.Fatalf("source_note should not use a finance file mapping from a different period, got %q", sourceNote)
+	}
+	if strings.Contains(sourceNote, "优集资金收入计算表-副本.xlsx") || strings.Contains(sourceNote, "合同信息表") {
+		t.Fatalf("source_note should not fall back to table comments when current-period mapping is missing, got %q", sourceNote)
+	}
+}
+
+func TestSourceNoteUsesFinanceFileMappingForBankStatement(t *testing.T) {
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS fin_file_mappings (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	table_type TEXT,
+	period TEXT,
+	company TEXT,
+	storage_key TEXT,
+	file_name TEXT,
+	description TEXT,
+	file_size INTEGER,
+	created_at TEXT,
+	updated_at TEXT
+);
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, updated_at)
+VALUES ('bank-statement', '2026-Q1', '南京优集数据科技有限公司', 'tenant/uhub/finance/2026/交易查询-2026Q1.xlsx', '交易查询-2026Q1.xlsx', '2026-05-06 10:15:00');
+`); err != nil {
+		_ = db.Close()
+		t.Fatalf("seed finance file mapping: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年2月最大的单笔流入对手方是谁，金额多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+
+	sourceSummary, _ := res.Data["source_summary"].(string)
+	if !strings.Contains(sourceSummary, "交易查询-2026Q1.xlsx") {
+		t.Fatalf("source_summary should use fin_file_mappings file_name, got %q", sourceSummary)
+	}
+	if strings.Contains(sourceSummary, "《银行流水》") {
+		t.Fatalf("source_summary should not fall back to generic bank statement label when mapping exists, got %q", sourceSummary)
+	}
+	sourceUpdateNote, _ := res.Data["source_update_note"].(string)
+	if !strings.Contains(sourceUpdateNote, "2026-05-06 10:15:00") {
+		t.Fatalf("source_update_note should use fin_file_mappings.updated_at, got %q", sourceUpdateNote)
+	}
+}
+
 func TestSourceNoteDoesNotExposeMergedGroupHelperTablesToBossReply(t *testing.T) {
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
@@ -217,6 +466,45 @@ func extractSourcePartitionsForTest(t *testing.T, v any) []map[string]any {
 			t.Fatalf("source partition row has wrong type: %#v", raw)
 		}
 		out = append(out, row)
+	}
+	return out
+}
+
+func collectRouteProbeSourceDocumentsForTest(t *testing.T, v any) []string {
+	t.Helper()
+
+	route, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("route_decision missing or wrong type: %#v", v)
+	}
+	rawProbes, ok := route["probe_results"].([]map[string]any)
+	if !ok {
+		t.Fatalf("route_decision.probe_results missing or wrong type: %#v", route["probe_results"])
+	}
+	out := []string{}
+	for _, probe := range rawProbes {
+		docs, ok := probe["source_documents"].([]string)
+		if !ok {
+			t.Fatalf("probe source_documents missing or wrong type: %#v", probe["source_documents"])
+		}
+		out = append(out, docs...)
+	}
+	return dedupeStringsForTest(out)
+}
+
+func dedupeStringsForTest(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
 }

@@ -69,7 +69,7 @@ func (e *Engine) probeContractAmount(ctx context.Context, rewrite BossQueryRewri
 		PrimaryTables:  primaryTables,
 		CoverageStatus: CoverageMissing,
 	}
-	result.SourceDocuments = e.sourceDocumentsForTables(ctx, primaryTables)
+	result.SourceDocuments = e.sourceDocumentsForBossProbe(ctx, rewrite, primaryTables)
 
 	cols := e.tableColumns(tableName)
 	required := []string{"year_month", amountColumn}

@@ -51,7 +51,7 @@ func (e *Engine) querySourcePartitionsForTables(tables []string, periodFrom, per
 
 	for _, tableName := range dedupeSourceTables(tables...) {
 		baseTable := strings.TrimSpace(baseSourceTableName(tableName))
-		if baseTable != "fin_fund_income" && baseTable != "fin_cost_settlements" {
+		if !e.tableColumns(baseTable)["source_report_type"] || !e.tableColumns(baseTable)["source_sheet_name"] {
 			continue
 		}
 

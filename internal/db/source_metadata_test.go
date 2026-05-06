@@ -123,6 +123,56 @@ func TestBootstrapUpgradesStructuredSourceMetadataWithMissingDescription(t *test
 	}
 }
 
+func TestBootstrapRemovesFeishuTokenOnlyWorkbookNamesFromSourceMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "source-metadata-token-cleanup.sqlite")
+	if err := Bootstrap(ctx, dbPath); err != nil {
+		t.Fatalf("bootstrap db: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	dirtyFund := `financeqa_source: {"version":"v1","display":"《优集资金收入计算表-2026.xlsx》；《Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx》","logical_label":"fin_fund_income","file_names":["优集资金收入计算表-2026.xlsx","Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx"],"sheet_names":["26年Q1收入明细"],"report_types":["contract_fund_income"],"updated_at":"2026-05-05T11:38:30Z"}`
+	dirtyCost := `financeqa_source: {"version":"v1","display":"《优集成本计算表-4.23-池.xlsx》；《Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx》","logical_label":"fin_cost_settlements","file_names":["优集成本计算表-4.23-池.xlsx","Iel5bFZWSoGF7hxjyPpcn5Elnqd.xlsx"],"sheet_names":["成本-月度结算"],"report_types":["contract_revenue_cost"],"updated_at":"2026-05-05T11:38:30Z"}`
+	for tableName, comment := range map[string]string{
+		"fin_fund_income":      dirtyFund,
+		"fin_cost_settlements": dirtyCost,
+	} {
+		if _, err := db.ExecContext(ctx, `INSERT OR REPLACE INTO meta_table_comments(table_name, comment) VALUES (?, ?)`, tableName, comment); err != nil {
+			t.Fatalf("seed dirty comment for %s: %v", tableName, err)
+		}
+	}
+
+	if err := Bootstrap(ctx, dbPath); err != nil {
+		t.Fatalf("re-bootstrap db: %v", err)
+	}
+
+	meta, err := LoadTableSourceMetadata(ctx, db, dbPath, []string{"fin_fund_income", "fin_cost_settlements", "fin_contracts"})
+	if err != nil {
+		t.Fatalf("load metadata: %v", err)
+	}
+	for tableName, got := range meta {
+		if strings.Contains(got.Display, "Iel5bFZWSoGF7hxjyPpcn5Elnqd") {
+			t.Fatalf("%s display should hide Feishu token-only workbook, got %q", tableName, got.Display)
+		}
+		if strings.Contains(strings.Join(got.FileNames, ","), "Iel5bFZWSoGF7hxjyPpcn5Elnqd") {
+			t.Fatalf("%s file_names should remove Feishu token-only workbook, got %#v", tableName, got.FileNames)
+		}
+	}
+	if meta["fin_fund_income"].Display != "《优集资金收入计算表-2026.xlsx》的【26年Q1收入明细】" {
+		t.Fatalf("fund display = %q", meta["fin_fund_income"].Display)
+	}
+	if meta["fin_cost_settlements"].Display != "《优集成本计算表-4.23-池.xlsx》的【成本-月度结算】" {
+		t.Fatalf("cost display = %q", meta["fin_cost_settlements"].Display)
+	}
+}
+
 func TestFormatPostgresTableCommentSQLQuotesPayloadSafely(t *testing.T) {
 	t.Parallel()
 

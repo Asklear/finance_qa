@@ -46,7 +46,7 @@ func (e *Engine) probeBankStatement(ctx context.Context, rewrite BossQueryRewrit
 		PrimaryTables:  []string{"bank_statement"},
 		CoverageStatus: CoverageMissing,
 	}
-	result.SourceDocuments = e.sourceDocumentsForTables(ctx, result.PrimaryTables)
+	result.SourceDocuments = e.sourceDocumentsForBossProbe(ctx, rewrite, result.PrimaryTables)
 
 	cols := e.tableColumns("bank_statement")
 	required := []string{"transaction_date"}
@@ -105,6 +105,19 @@ func (e *Engine) sourceDocumentsForTables(ctx context.Context, tables []string) 
 		docs = append(docs, profile.SourceDocuments...)
 	}
 	return dedupeStrings(docs)
+}
+
+func (e *Engine) sourceDocumentsForBossProbe(ctx context.Context, rewrite BossQueryRewrite, tables []string) []string {
+	if e.hasFinanceFileMappingsTable() && sourceTablesRequireFinanceFileMappings(tables) {
+		spec := QuerySpec{
+			PeriodFrom:  strings.TrimSpace(rewrite.PeriodFrom),
+			PeriodTo:    strings.TrimSpace(rewrite.PeriodTo),
+			BossRewrite: rewrite,
+		}
+		partitions := e.querySourcePartitionsForTables(tables, spec.PeriodFrom, spec.PeriodTo, nil)
+		return e.financeFileMappingSourceDisplays(spec, tables, partitions)
+	}
+	return e.sourceDocumentsForTables(ctx, tables)
 }
 
 func missingColumns(cols map[string]bool, required []string) []string {

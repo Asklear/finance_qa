@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -229,6 +230,18 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 			comment TEXT,
 			updated_at TEXT
 		)`,
+		`CREATE TABLE fin_file_mappings (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			table_type TEXT,
+			period TEXT,
+			company TEXT,
+			storage_key TEXT,
+			file_name TEXT,
+			description TEXT,
+			file_size INTEGER,
+			created_at TEXT,
+			updated_at TEXT
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -252,6 +265,9 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 		`INSERT INTO meta_table_comments(table_name, comment) VALUES ('fin_fund_income', 'financeqa_source: {"display":"《优集资金收入计算表-副本.xlsx》","file_names":["优集资金收入计算表-副本.xlsx"],"sheet_names":["26年Q1收入明细"]}')`,
 		`INSERT INTO meta_table_comments(table_name, comment) VALUES ('fin_cost_settlements', 'financeqa_source: {"display":"《优集成本计算表-4.23-池.xlsx》","file_names":["优集成本计算表-4.23-池.xlsx"],"sheet_names":["成本-月度结算"]}')`,
 		`INSERT INTO meta_table_comments(table_name, comment) VALUES ('fin_contracts', 'financeqa_source: {"display":"《合同信息表》","file_names":["优集资金收入计算表-副本.xlsx","优集成本计算表-4.23-池.xlsx"]}')`,
+		`INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, updated_at) VALUES
+		 ('fund-income', '2026-Q1', '南京优集数据科技有限公司', 'tenant/uhub/finance/2026/优集收入、成本计算表 - 上传.xlsx', '优集收入、成本计算表 - 上传.xlsx', '2026-05-06 09:30:00'),
+		 ('cost-settlements', '2026-Q1', '南京优集数据科技有限公司', 'tenant/uhub/finance/2026/优集收入、成本计算表 - 上传.xlsx', '优集收入、成本计算表 - 上传.xlsx', '2026-05-06 09:30:00')`,
 	}
 	for _, stmt := range seed {
 		if _, err := db.Exec(stmt); err != nil {
@@ -273,10 +289,27 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 	if strings.TrimSpace(sourceNote) == "" {
 		t.Fatalf("source_note should not be empty: %+v", res.Data)
 	}
+	if !strings.Contains(sourceNote, "优集收入、成本计算表 - 上传.xlsx") {
+		t.Fatalf("source_note should use fin_file_mappings file name, got %q", sourceNote)
+	}
+	for _, stale := range []string{"优集资金收入计算表-副本.xlsx", "优集成本计算表-4.23-池.xlsx", "合同信息表"} {
+		if strings.Contains(sourceNote, stale) {
+			t.Fatalf("source_note should not fall back to stale table comments or hardcoded labels, got %q", sourceNote)
+		}
+	}
 
 	payload, ok := res.Data["llm_payload"].(map[string]any)
 	if !ok {
 		t.Fatalf("missing llm_payload: %+v", res.Data)
+	}
+	sourceCatalogText := strings.TrimSpace(anyForHostPayloadTest(payload["source_catalog"]))
+	if !strings.Contains(sourceCatalogText, "优集收入、成本计算表 - 上传.xlsx") {
+		t.Fatalf("source_catalog should use fin_file_mappings file name, got %s", sourceCatalogText)
+	}
+	for _, stale := range []string{"优集资金收入计算表-副本.xlsx", "优集成本计算表-4.23-池.xlsx", "合同信息表"} {
+		if strings.Contains(sourceCatalogText, stale) {
+			t.Fatalf("source_catalog should not expose stale table comments or hardcoded labels, got %s", sourceCatalogText)
+		}
 	}
 	financialTables, ok := payload["financial_tables"].(map[string]any)
 	if !ok {
@@ -336,4 +369,8 @@ func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
 	if !ok || len(sourceDocs) == 0 {
 		t.Fatalf("probe source_documents should be included: %#v", probeResults[0])
 	}
+}
+
+func anyForHostPayloadTest(v any) string {
+	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(fmt.Sprintf("%#v", v)), "\n", " "), "\t", " "))
 }
