@@ -8,19 +8,50 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
 
+var (
+	cliBuildOnce   sync.Once
+	cliBuildDir    string
+	cliBinaryPath  string
+	cliBuildErr    error
+	cliBuildOutput string
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if cliBuildDir != "" {
+		_ = os.RemoveAll(cliBuildDir)
+	}
+	os.Exit(code)
+}
+
 func runCLI(args ...string) (int, string, string) {
+	return runCLIWithEnv(nil, args...)
+}
+
+func runCLIWithEnv(env map[string]string, args ...string) (int, string, string) {
 	var stdout, stderr bytes.Buffer
-	// Run the package directory so multi-file command entrypoints resolve correctly.
-	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa"}, args...)...)
+	binary, err := financeQATestBinary()
+	if err != nil {
+		return 1, "", err.Error()
+	}
+	cmd := exec.Command(binary, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	if env != nil {
+		cmd.Env = os.Environ()
+		for k, v := range env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
+	}
+	err = cmd.Run()
 	exitCode := 0
 	if err != nil {
 		if exitError, ok := err.(*exec.ExitError); ok {
@@ -32,25 +63,38 @@ func runCLI(args ...string) (int, string, string) {
 	return exitCode, stdout.String(), stderr.String()
 }
 
-func runCLIWithEnv(env map[string]string, args ...string) (int, string, string) {
-	var stdout, stderr bytes.Buffer
-	cmd := exec.Command(resolveGoBinary(), append([]string{"run", "../../cmd/financeqa"}, args...)...)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
-			exitCode = exitError.ExitCode()
-		} else {
-			exitCode = 1
+func financeQATestBinary() (string, error) {
+	cliBuildOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "financeqa-cli-test-*")
+		if err != nil {
+			cliBuildErr = fmt.Errorf("create cli build dir: %w", err)
+			return
 		}
+		cliBuildDir = dir
+
+		binary := filepath.Join(dir, "financeqa")
+		if runtime.GOOS == "windows" {
+			binary += ".exe"
+		}
+
+		var output bytes.Buffer
+		// Build the package directory once so multi-file command entrypoints resolve correctly.
+		cmd := exec.Command(resolveGoBinary(), "build", "-o", binary, "../../cmd/financeqa")
+		cmd.Stdout = &output
+		cmd.Stderr = &output
+		if err := cmd.Run(); err != nil {
+			cliBuildOutput = output.String()
+			cliBuildErr = fmt.Errorf("build financeqa test binary: %w\n%s", err, cliBuildOutput)
+			return
+		}
+
+		cliBinaryPath = binary
+		cliBuildOutput = output.String()
+	})
+	if cliBuildErr != nil {
+		return "", cliBuildErr
 	}
-	return exitCode, stdout.String(), stderr.String()
+	return cliBinaryPath, nil
 }
 
 func resolveGoBinary() string {
