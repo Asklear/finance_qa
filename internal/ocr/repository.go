@@ -13,6 +13,8 @@ type Repository struct {
 	db *sql.DB
 }
 
+var repositoryBusinessLocation = loadRepositoryBusinessLocation()
+
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -653,7 +655,15 @@ func nullableTime(value time.Time) any {
 	if value.IsZero() {
 		return nil
 	}
-	return value.UTC()
+	return value.In(repositoryBusinessLocation).Format("2006-01-02 15:04:05.999999")
+}
+
+func loadRepositoryBusinessLocation() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err == nil {
+		return loc
+	}
+	return time.FixedZone("Asia/Shanghai", 8*60*60)
 }
 
 func defaultCurrency(value string) string {

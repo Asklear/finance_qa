@@ -79,13 +79,20 @@ func TestRepositorySavesContractResult(t *testing.T) {
 		t.Fatalf("SaveResult: %v", err)
 	}
 
-	var title, subCategory, partyA, status string
+	var title, subCategory, partyA, status, processedAt string
 	var storedAmount float64
-	if err := db.QueryRow(`SELECT contract_title, sub_category, party_a, contract_amount, ocr_status FROM contract_main WHERE id=10`).Scan(&title, &subCategory, &partyA, &storedAmount, &status); err != nil {
+	if err := db.QueryRow(`
+SELECT contract_title, sub_category, party_a, contract_amount, ocr_status, COALESCE(CAST(processed_at AS TEXT), '')
+FROM contract_main
+WHERE id=10
+`).Scan(&title, &subCategory, &partyA, &storedAmount, &status, &processedAt); err != nil {
 		t.Fatal(err)
 	}
 	if title != "数据服务合同" || subCategory != "数据服务" || partyA != "南京优集数据科技有限公司" || storedAmount != 300000 || status != "done" {
 		t.Fatalf("contract row mismatch title=%q subCategory=%q partyA=%q amount=%v status=%q", title, subCategory, partyA, storedAmount, status)
+	}
+	if !strings.HasPrefix(processedAt, "2026-05-01 20:00:00") {
+		t.Fatalf("processed_at = %q, want Asia/Shanghai wall time 2026-05-01 20:00:00", processedAt)
 	}
 	var pageText string
 	if err := db.QueryRow(`SELECT plain_text FROM contract_pages WHERE contract_id=10 AND page_num=0`).Scan(&pageText); err != nil {
