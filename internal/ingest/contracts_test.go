@@ -43,6 +43,46 @@ func TestParseFundIncomeQuarterRowsCapturesRemarksColumn(t *testing.T) {
 	}
 }
 
+func TestParseFundIncomeQuarterRowsKeepsRemarksOnlyRows(t *testing.T) {
+	rows := [][]string{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "1月", "", "", "", "", "2月", "", "", "", "", "3月", "", "", "", "", "26年Q1合计", "备注"},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "", ""},
+		{"京东", "对应-众信成本", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "谈判中"},
+		{"Yipit,LLC", "数据采购合同-抖音", "45940", "46304", "季度", "固定金额", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "25875"},
+		{"Yipit,LLC", "数据采购合同-shopee", "45921", "46285", "季度", "固定金额", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "37500"},
+		{"Yipit,LLC", "数据采购合同-Tmal", "45943", "46307", "季度", "固定金额", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "61625"},
+	}
+
+	out, groups, cleanup := parseFundIncomeQuarterRows("26年Q1收入明细", rows, nil, nil)
+	if len(cleanup) != 0 || len(groups) != 0 {
+		t.Fatalf("groups=%#v cleanup=%#v", groups, cleanup)
+	}
+	if len(out) != 4 {
+		t.Fatalf("out length = %d, want 4: %#v", len(out), out)
+	}
+	got := map[string]contractFundIncomeRow{}
+	for _, row := range out {
+		got[row.Content] = row
+	}
+	for content, wantRemark := range map[string]string{
+		"对应-众信成本":       "谈判中",
+		"数据采购合同-抖音":     "25875",
+		"数据采购合同-shopee": "37500",
+		"数据采购合同-Tmal":   "61625",
+	} {
+		row, ok := got[content]
+		if !ok {
+			t.Fatalf("missing content %q in %#v", content, out)
+		}
+		if row.YearMonth != "2026-03" || row.Remarks != wantRemark {
+			t.Fatalf("%s year_month=%q remarks=%q", content, row.YearMonth, row.Remarks)
+		}
+		if row.SettlementAmount != 0 || row.ReceivedAmount != 0 || row.InvoiceAmount != 0 {
+			t.Fatalf("%s amounts settlement=%v received=%v invoice=%v", content, row.SettlementAmount, row.ReceivedAmount, row.InvoiceAmount)
+		}
+	}
+}
+
 func TestImportContractWorkbookPersistsFundIncomeRemarksAndCellNotes(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "fund-income-remarks.sqlite")

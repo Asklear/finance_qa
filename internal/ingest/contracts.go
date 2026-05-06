@@ -992,6 +992,7 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 		settlementCycle := strings.TrimSpace(cellValue(row, 4))
 		settlementUnitPrice := strings.TrimSpace(cellValue(row, 5))
 		remarks := strings.TrimSpace(cellValue(row, remarkColumnIndex(header)))
+		rowFacts := 0
 		for _, monthCol := range monthCols {
 			yearMonth := normalizeContractYearMonth(monthCol.Label, year)
 			if yearMonth == "" {
@@ -1008,6 +1009,7 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 					mergedRow, ok := buildMergedFundIncomeGroupRow(sheetName, rows, idx, metricGroup.Range, monthCol, yearMonth, remarks, simpleAmountLayout, metricGroup.Metrics, mergedRanges, cellNotes)
 					if ok {
 						groups = append(groups, mergedRow)
+						rowFacts++
 					}
 				}
 				continue
@@ -1020,10 +1022,40 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 			sourceNotes := sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 5), intRange(monthCol.Index, metricEnd)...)...))
 			if directRow, ok := buildDirectFundIncomeRow(sheetName, row, monthCol, yearMonth, contractKey{Name: name, Content: content}, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks, simpleAmountLayout, directMetricRanges, sourceNotes); ok {
 				out = append(out, directRow)
+				rowFacts++
+			}
+		}
+		if rowFacts == 0 && remarks != "" {
+			if remarksRow, ok := buildRemarksOnlyFundIncomeRow(sheetName, row, header, idx, year, contractKey{Name: name, Content: content}, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks, mergedRanges, cellNotes); ok {
+				out = append(out, remarksRow)
 			}
 		}
 	}
 	return out, groups, cleanup
+}
+
+func buildRemarksOnlyFundIncomeRow(sheetName string, row, header []string, rowIdx int, year string, key contractKey, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks string, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) (contractFundIncomeRow, bool) {
+	yearMonth := fundQuarterEndYearMonth(sheetName, year)
+	if yearMonth == "" {
+		return contractFundIncomeRow{}, false
+	}
+	remarkCol := remarkColumnIndex(header)
+	sourceCols := intRange(0, 5)
+	if remarkCol >= 0 {
+		sourceCols = append(sourceCols, remarkCol)
+	}
+	return contractFundIncomeRow{
+		contractKey:         key,
+		SourceSheetName:     strings.TrimSpace(sheetName),
+		YearMonth:           yearMonth,
+		IsInvoiced:          "否",
+		Remarks:             remarks,
+		ContractStartDate:   contractStartDate,
+		ContractEndDate:     contractEndDate,
+		SettlementCycle:     settlementCycle,
+		SettlementUnitPrice: settlementUnitPrice,
+		SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, rowIdx, sourceCols...)),
+	}, true
 }
 
 func buildDirectFundIncomeRow(sheetName string, row []string, monthCol monthColumn, yearMonth string, key contractKey, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks string, simpleAmountLayout bool, metricRanges map[string]contractMergedCellRange, sourceCellNotes string) (contractFundIncomeRow, bool) {
@@ -2253,6 +2285,25 @@ func extractSheetYear(sheetName string) string {
 		return "20" + year
 	}
 	return year
+}
+
+func fundQuarterEndYearMonth(sheetName, fallbackYear string) string {
+	match := fundQuarterSheetPattern.FindStringSubmatch(strings.TrimSpace(sheetName))
+	if len(match) != 3 {
+		return ""
+	}
+	year := strings.TrimSpace(match[1])
+	if len(year) == 2 {
+		year = "20" + year
+	}
+	if year == "" {
+		year = strings.TrimSpace(fallbackYear)
+	}
+	quarter, err := strconv.Atoi(match[2])
+	if year == "" || err != nil || quarter < 1 || quarter > 4 {
+		return ""
+	}
+	return fmt.Sprintf("%s-%02d", year, quarter*3)
 }
 
 func parseContractSequence(contractID string) int {
