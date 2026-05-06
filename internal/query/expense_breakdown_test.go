@@ -61,7 +61,7 @@ func TestOverallExpenseBreakdownQuestionReturnsAllPerspectives(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月整体支出，按大类拆分一下")
+	res := engine.Query("2026年3月整体支出，按三种口径拆分一下")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
@@ -91,6 +91,136 @@ func TestOverallExpenseBreakdownQuestionReturnsAllPerspectives(t *testing.T) {
 	if !strings.Contains(res.Message, "来源：") || !strings.Contains(res.Message, "《合同成本结算表》") || !strings.Contains(res.Message, "《银行流水》") || !strings.Contains(res.Message, "《序时帐》") {
 		t.Fatalf("message should include all source tables, got: %s", res.Message)
 	}
+}
+
+func TestOverallExpenseBreakdownQuestionDefaultsToContractProjectPerspective(t *testing.T) {
+	engine := newExpenseBreakdownPerspectiveTestEngine(t, true)
+	defer engine.Close()
+
+	res := engine.Query("2026年3月整体支出按大类拆分")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	views, ok := res.Data["breakdown_views"].(map[string]any)
+	if !ok {
+		t.Fatalf("breakdown_views missing or wrong type: %T %+v", res.Data["breakdown_views"], res.Data)
+	}
+	if _, ok := views["contract_project"]; !ok {
+		t.Fatalf("contract_project view missing: %+v", views)
+	}
+	if _, ok := views["cash_category"]; ok {
+		t.Fatalf("cash_category should not be returned by default: %+v", views)
+	}
+	if _, ok := views["account_category"]; ok {
+		t.Fatalf("account_category should not be returned by default: %+v", views)
+	}
+	if !strings.Contains(res.Message, "合同/项目口径") {
+		t.Fatalf("message should prefer contract/project, got: %s", res.Message)
+	}
+	if strings.Contains(res.Message, "现金流水口径") || strings.Contains(res.Message, "账务科目口径") {
+		t.Fatalf("message should not include fallback perspectives by default, got: %s", res.Message)
+	}
+}
+
+func TestExpenseBreakdownExplicitCashPerspective(t *testing.T) {
+	engine := newExpenseBreakdownPerspectiveTestEngine(t, true)
+	defer engine.Close()
+
+	res := engine.Query("2026年3月整体支出按现金流水大类拆分")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	views, ok := res.Data["breakdown_views"].(map[string]any)
+	if !ok {
+		t.Fatalf("breakdown_views missing or wrong type: %T %+v", res.Data["breakdown_views"], res.Data)
+	}
+	assertBreakdownViewTotal(t, views, "cash_category", 700)
+	if _, ok := views["contract_project"]; ok {
+		t.Fatalf("contract_project should not be returned for explicit cash query: %+v", views)
+	}
+	if !strings.Contains(res.Message, "现金流水口径") {
+		t.Fatalf("message should use cash perspective, got: %s", res.Message)
+	}
+}
+
+func TestExpenseBreakdownExplicitAccountPerspective(t *testing.T) {
+	engine := newExpenseBreakdownPerspectiveTestEngine(t, true)
+	defer engine.Close()
+
+	res := engine.Query("2026年3月整体支出按序时账科目拆分")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	views, ok := res.Data["breakdown_views"].(map[string]any)
+	if !ok {
+		t.Fatalf("breakdown_views missing or wrong type: %T %+v", res.Data["breakdown_views"], res.Data)
+	}
+	assertBreakdownViewTotal(t, views, "account_category", 1000)
+	if _, ok := views["contract_project"]; ok {
+		t.Fatalf("contract_project should not be returned for explicit account query: %+v", views)
+	}
+	if !strings.Contains(res.Message, "账务科目口径") {
+		t.Fatalf("message should use account perspective, got: %s", res.Message)
+	}
+}
+
+func TestExpenseBreakdownDefaultsFallbackToAccountWhenContractRowsMissing(t *testing.T) {
+	engine := newExpenseBreakdownPerspectiveTestEngine(t, false)
+	defer engine.Close()
+
+	res := engine.Query("2026年3月整体支出按大类拆分")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	views, ok := res.Data["breakdown_views"].(map[string]any)
+	if !ok {
+		t.Fatalf("breakdown_views missing or wrong type: %T %+v", res.Data["breakdown_views"], res.Data)
+	}
+	assertBreakdownViewTotal(t, views, "account_category", 1000)
+	if _, ok := views["contract_project"]; ok {
+		t.Fatalf("empty contract_project should not be returned after fallback: %+v", views)
+	}
+	if !strings.Contains(res.Message, "已回退到账务科目口径") {
+		t.Fatalf("message should explain fallback, got: %s", res.Message)
+	}
+}
+
+func newExpenseBreakdownPerspectiveTestEngine(t *testing.T, includeContractRows bool) *Engine {
+	t.Helper()
+
+	dbPath := filepath.Join(t.TempDir(), "expense-breakdown-perspective.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE income_statement (company TEXT, period TEXT, item_name TEXT, current_amount REAL, cumulative_amount REAL)`,
+		`CREATE TABLE bank_statement (company TEXT, transaction_date TEXT, credit_amount REAL, debit_amount REAL, counterparty_name TEXT, summary TEXT)`,
+		`CREATE TABLE journal (company TEXT, period TEXT, voucher_date TEXT, voucher_no TEXT, account_code TEXT, account_name TEXT, summary TEXT, direction TEXT, amount REAL, debit_amount REAL, credit_amount REAL, counterparty TEXT)`,
+		`CREATE TABLE balance_sheet (company TEXT, period TEXT, account_code TEXT, account_name TEXT, opening_balance REAL, closing_balance REAL)`,
+		`CREATE TABLE balance_detail (company TEXT, year INTEGER, period TEXT, account_code TEXT, account_name TEXT, opening_debit REAL, opening_credit REAL, current_debit REAL, current_credit REAL, closing_debit REAL, closing_credit REAL)`,
+		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
+		`CREATE TABLE fin_cost_settlements (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL, source_report_type TEXT, source_sheet_name TEXT)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-001','南京供应商科技有限公司','技术服务项目A')`,
+		`INSERT INTO bank_statement(company, transaction_date, credit_amount, debit_amount, counterparty_name, summary) VALUES ('测试公司','2026-03-01',0,700,'南京供应商科技有限公司','技术服务付款')`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, summary, direction, amount, debit_amount, credit_amount, counterparty) VALUES ('测试公司','2026-03','2026-03-01','记-001','640101','主营业务成本','技术服务成本','借',1000,1000,0,'南京供应商科技有限公司')`,
+	}
+	if includeContractRows {
+		stmts = append(stmts, `INSERT INTO fin_cost_settlements(contract_id, year_month, settlement_amount, paid_amount, invoice_amount, source_report_type, source_sheet_name) VALUES ('C-001','2026-03',700,400,700,'contract_revenue_cost','成本-月度结算')`)
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v", err)
+		}
+	}
+
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	return engine
 }
 
 func TestExpenseBreakdownUsesConfiguredCategories(t *testing.T) {
@@ -145,7 +275,7 @@ func TestExpenseBreakdownUsesConfiguredCategories(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("2026年3月整体支出，按大类拆分一下")
+	res := engine.Query("2026年3月整体支出，按三种口径拆分一下")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}

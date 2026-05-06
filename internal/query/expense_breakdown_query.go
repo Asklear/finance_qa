@@ -18,6 +18,15 @@ type expenseBreakdownRow struct {
 	TxnCount         int
 }
 
+type expenseBreakdownPerspective string
+
+const (
+	expenseBreakdownPerspectiveContract expenseBreakdownPerspective = "contract_project"
+	expenseBreakdownPerspectiveCash     expenseBreakdownPerspective = "cash_category"
+	expenseBreakdownPerspectiveAccount  expenseBreakdownPerspective = "account_category"
+	expenseBreakdownPerspectiveAll      expenseBreakdownPerspective = "all"
+)
+
 func shouldUseExpenseBreakdown(q string) bool {
 	q = strings.TrimSpace(q)
 	if q == "" {
@@ -38,6 +47,67 @@ func shouldUseExpenseBreakdown(q string) bool {
 		return true
 	}
 	return containsAny(q, cfg.ExpenseBreakdownCostKeywords())
+}
+
+func resolveExpenseBreakdownPerspective(q string) expenseBreakdownPerspective {
+	q = strings.TrimSpace(q)
+	if containsAny(q, []string{"全部口径", "所有口径", "三种口径", "多口径", "各口径", "口径对比", "对比"}) {
+		return expenseBreakdownPerspectiveAll
+	}
+	if containsAny(q, []string{"流水", "银行", "现金", "现金口径", "实际付款", "实际支出", "实际支付", "银行付款", "银行支出"}) {
+		return expenseBreakdownPerspectiveCash
+	}
+	if containsAny(q, []string{"序时账", "科目", "入账", "账务", "账上", "账面", "会计口径", "科目口径"}) {
+		return expenseBreakdownPerspectiveAccount
+	}
+	return expenseBreakdownPerspectiveContract
+}
+
+func (e *Engine) queryExpenseBreakdown(q, from, to string) Result {
+	switch resolveExpenseBreakdownPerspective(q) {
+	case expenseBreakdownPerspectiveAll:
+		return e.queryExpenseBreakdownAllPerspectives(from, to)
+	case expenseBreakdownPerspectiveCash:
+		return e.queryCashExpenseBreakdown(from, to, "")
+	case expenseBreakdownPerspectiveAccount:
+		return e.queryAccountExpenseBreakdown(from, to, "")
+	default:
+		return e.queryContractFirstExpenseBreakdown(from, to)
+	}
+}
+
+func (e *Engine) queryContractFirstExpenseBreakdown(from, to string) Result {
+	contractRows, contractTotal, contractPaid, contractSQL, contractLogs := e.collectContractProjectExpenseBreakdown(from, to)
+	if len(contractRows) > 0 || contractTotal != 0 || contractPaid != 0 {
+		return buildContractProjectExpenseBreakdownResult(displayPeriod(from, to), from, to, contractRows, contractTotal, contractPaid, contractSQL, contractLogs, "")
+	}
+
+	accountRows, accountTotal, accountSQL, accountLogs := e.collectAccountCategoryExpenseBreakdown(from, to)
+	sqls := append([]string{}, contractSQL...)
+	sqls = append(sqls, accountSQL...)
+	logs := append([]string{}, contractLogs...)
+	logs = append(logs, accountLogs...)
+	if len(accountRows) > 0 || accountTotal != 0 {
+		return buildAccountExpenseBreakdownResult(displayPeriod(from, to), from, to, accountRows, accountTotal, sqls, logs, "说明：合同/项目口径没有可用记录，已回退到账务科目口径。")
+	}
+
+	cashRows, cashTotal, cashSQL, cashLogs := e.collectCashCategoryExpenseBreakdown(from, to)
+	sqls = append(sqls, cashSQL...)
+	logs = append(logs, cashLogs...)
+	if len(cashRows) > 0 || cashTotal != 0 {
+		return buildCashExpenseBreakdownResult(displayPeriod(from, to), from, to, cashRows, cashTotal, sqls, logs, "说明：合同/项目和账务科目口径没有可用记录，已回退到现金流水口径。")
+	}
+	return buildContractProjectExpenseBreakdownResult(displayPeriod(from, to), from, to, contractRows, contractTotal, contractPaid, sqls, logs, "说明：合同/项目、账务科目和现金流水口径均未找到可用支出记录。")
+}
+
+func (e *Engine) queryCashExpenseBreakdown(from, to, fallbackNote string) Result {
+	rows, total, sqls, logs := e.collectCashCategoryExpenseBreakdown(from, to)
+	return buildCashExpenseBreakdownResult(displayPeriod(from, to), from, to, rows, total, sqls, logs, fallbackNote)
+}
+
+func (e *Engine) queryAccountExpenseBreakdown(from, to, fallbackNote string) Result {
+	rows, total, sqls, logs := e.collectAccountCategoryExpenseBreakdown(from, to)
+	return buildAccountExpenseBreakdownResult(displayPeriod(from, to), from, to, rows, total, sqls, logs, fallbackNote)
 }
 
 func (e *Engine) queryExpenseBreakdownAllPerspectives(from, to string) Result {
@@ -92,6 +162,89 @@ func (e *Engine) queryExpenseBreakdownAllPerspectives(from, to string) Result {
 			"breakdown_views":          views,
 			"source_primary_tables":    []string{"fin_cost_settlements", "fin_bank_statement", "fin_journal"},
 			"source_supporting_tables": []string{"fin_contracts"},
+		},
+		ExecutedSQL:     sqls,
+		CalculationLogs: logs,
+	}
+}
+
+func buildContractProjectExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total, paidTotal float64, sqls, logs []string, note string) Result {
+	cfg := getRuleConfig()
+	contractView := cfg.ExpenseBreakdownView("contract_project")
+	return Result{
+		Success:      true,
+		Message:      composeContractProjectExpenseBreakdownMessage(periodLabel, rows, total, paidTotal, note, cfg),
+		AnswerMethod: "sql",
+		Data: map[string]any{
+			"period":      periodLabel,
+			"period_from": from,
+			"period_to":   to,
+			"metric":      cfg.ExpenseBreakdownMetricName(),
+			"breakdown_views": map[string]any{
+				"contract_project": map[string]any{
+					"label":       contractView.Label,
+					"description": contractView.Description,
+					"total":       round2(total),
+					"paid_total":  round2(paidTotal),
+					"rows":        contractProjectRowsToMaps(rows, total),
+				},
+			},
+			"source_primary_tables":    []string{"fin_cost_settlements", "fin_cost_settlement_groups"},
+			"source_supporting_tables": []string{"fin_contracts"},
+		},
+		ExecutedSQL:     sqls,
+		CalculationLogs: logs,
+	}
+}
+
+func buildCashExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total float64, sqls, logs []string, note string) Result {
+	cfg := getRuleConfig()
+	cashView := cfg.ExpenseBreakdownView("cash_category")
+	return Result{
+		Success:      true,
+		Message:      composeCashExpenseBreakdownMessage(periodLabel, rows, total, note, cfg),
+		AnswerMethod: "sql",
+		Data: map[string]any{
+			"period":      periodLabel,
+			"period_from": from,
+			"period_to":   to,
+			"metric":      cfg.ExpenseBreakdownMetricName(),
+			"breakdown_views": map[string]any{
+				"cash_category": map[string]any{
+					"label":       cashView.Label,
+					"description": cashView.Description,
+					"total":       round2(total),
+					"rows":        categoryRowsToMaps(rows, total),
+				},
+			},
+			"source_primary_tables": []string{"fin_bank_statement"},
+		},
+		ExecutedSQL:     sqls,
+		CalculationLogs: logs,
+	}
+}
+
+func buildAccountExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total float64, sqls, logs []string, note string) Result {
+	cfg := getRuleConfig()
+	accountView := cfg.ExpenseBreakdownView("account_category")
+	return Result{
+		Success:      true,
+		Message:      composeAccountExpenseBreakdownMessage(periodLabel, rows, total, note, cfg),
+		AnswerMethod: "sql",
+		Data: map[string]any{
+			"period":      periodLabel,
+			"period_from": from,
+			"period_to":   to,
+			"metric":      cfg.ExpenseBreakdownMetricName(),
+			"breakdown_views": map[string]any{
+				"account_category": map[string]any{
+					"label":       accountView.Label,
+					"description": accountView.Description,
+					"total":       round2(total),
+					"rows":        accountRowsToMaps(rows, total),
+				},
+			},
+			"source_primary_tables": []string{"fin_journal"},
 		},
 		ExecutedSQL:     sqls,
 		CalculationLogs: logs,
@@ -401,6 +554,42 @@ func composeExpenseBreakdownMessage(period string, contractRows []expenseBreakdo
 		fmt.Sprintf("3. %s：账上成本及费用 %.2f 元。科目：%s。", accountView.Label, round2(accountTotal), summarizeCategoryRows(accountRows, accountView.SummaryLimit)),
 		"说明：三种口径分别看合同成本确认、银行实际付款、账务入账成本费用，金额不要求相加一致。",
 	}, "\n")
+}
+
+func composeContractProjectExpenseBreakdownMessage(period string, rows []expenseBreakdownRow, total, paidTotal float64, note string, cfg RuleConfig) string {
+	contractView := cfg.ExpenseBreakdownView("contract_project")
+	parts := []string{
+		fmt.Sprintf("%s %s按%s为 %.2f 元，合同付款 %.2f 元。", period, cfg.ExpenseBreakdownMetricName(), contractView.Label, round2(total), round2(paidTotal)),
+		fmt.Sprintf("主要项目：%s。", summarizeContractProjectRows(rows, contractView.SummaryLimit)),
+	}
+	if strings.TrimSpace(note) != "" {
+		parts = append(parts, strings.TrimSpace(note))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func composeCashExpenseBreakdownMessage(period string, rows []expenseBreakdownRow, total float64, note string, cfg RuleConfig) string {
+	cashView := cfg.ExpenseBreakdownView("cash_category")
+	parts := []string{
+		fmt.Sprintf("%s %s按%s为 %.2f 元。", period, cfg.ExpenseBreakdownMetricName(), cashView.Label, round2(total)),
+		fmt.Sprintf("大类：%s。", summarizeCategoryRows(rows, cashView.SummaryLimit)),
+	}
+	if strings.TrimSpace(note) != "" {
+		parts = append(parts, strings.TrimSpace(note))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func composeAccountExpenseBreakdownMessage(period string, rows []expenseBreakdownRow, total float64, note string, cfg RuleConfig) string {
+	accountView := cfg.ExpenseBreakdownView("account_category")
+	parts := []string{
+		fmt.Sprintf("%s %s按%s为 %.2f 元。", period, cfg.ExpenseBreakdownMetricName(), accountView.Label, round2(total)),
+		fmt.Sprintf("科目：%s。", summarizeCategoryRows(rows, accountView.SummaryLimit)),
+	}
+	if strings.TrimSpace(note) != "" {
+		parts = append(parts, strings.TrimSpace(note))
+	}
+	return strings.Join(parts, "\n")
 }
 
 func summarizeContractProjectRows(rows []expenseBreakdownRow, limit int) string {
