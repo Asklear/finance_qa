@@ -19,7 +19,7 @@ func TestWorkbookScannerSkipsUnchangedHash(t *testing.T) {
 	sqlDB := openFeishuSyncTestDB(t)
 	repo := feishusync.NewRepository(sqlDB)
 	hash := writeSnapshotAndHash(t, "workbook-v1")
-	src := mustSeedWorkbookSource(t, repo, hash)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"file_mappings_content_hash":"`+hash+`"}`)
 	client := &fakeFeishuClient{
 		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "财务表.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
 		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
@@ -43,13 +43,46 @@ func TestWorkbookScannerSkipsUnchangedHash(t *testing.T) {
 	}
 }
 
+func TestWorkbookScannerImportsUnchangedHashWhenFileMappingsNotSynced(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	hash := writeSnapshotAndHash(t, "workbook-v1")
+	src := mustSeedWorkbookSource(t, repo, hash)
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "财务表.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
+		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
+	}
+	importer := &recordingWorkbookImporter{
+		summary: ingest.ImportSummary{ReportType: "contract_mixed_finance", RecordCount: 12, PeriodStart: "2025-10", PeriodEnd: "2026-03"},
+	}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司")
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Created != 1 || result.Skipped != 0 || len(importer.calls) != 1 {
+		t.Fatalf("result=%#v imports=%#v", result, importer.calls)
+	}
+	updated := mustSingleSource(t, repo)
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["file_mappings_content_hash"] != hash {
+		t.Fatalf("metadata should mark file mappings synced: %#v", metadata)
+	}
+}
+
 func TestWorkbookScannerSkipsUnchangedHashWithoutUploadingDuplicate(t *testing.T) {
 	t.Parallel()
 
 	sqlDB := openFeishuSyncTestDB(t)
 	repo := feishusync.NewRepository(sqlDB)
 	hash := writeSnapshotAndHash(t, "workbook-v1")
-	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026","file_mappings_content_hash":"`+hash+`"}`)
 	client := &fakeFeishuClient{
 		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集资金收入计算表-2026.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
 		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
@@ -76,7 +109,7 @@ func TestWorkbookScannerBackfillsStorageKeyWhenUnchanged(t *testing.T) {
 	sqlDB := openFeishuSyncTestDB(t)
 	repo := feishusync.NewRepository(sqlDB)
 	hash := writeSnapshotAndHash(t, "workbook-v1")
-	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026","file_mappings_content_hash":"`+hash+`"}`)
 	client := &fakeFeishuClient{
 		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集资金收入计算表-2026.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
 		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
@@ -110,7 +143,7 @@ func TestWorkbookScannerPreservesImportMetadataWhenUnchanged(t *testing.T) {
 	sqlDB := openFeishuSyncTestDB(t)
 	repo := feishusync.NewRepository(sqlDB)
 	hash := writeSnapshotAndHash(t, "workbook-v1")
-	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance","storage_key":"tenant/uhub/finance/优集收入、成本计算表 - 上传.xlsx","report_type":"contract_mixed_finance","record_count":139,"period_start":"2025-10","period_end":"2026-05"}`)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance","storage_key":"tenant/uhub/finance/优集收入、成本计算表 - 上传.xlsx","report_type":"contract_mixed_finance","record_count":139,"period_start":"2025-10","period_end":"2026-05","file_mappings_content_hash":"`+hash+`"}`)
 	client := &fakeFeishuClient{
 		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集收入、成本计算表 - 上传.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
 		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},
@@ -141,7 +174,7 @@ func TestWorkbookScannerUploadsSnapshotWhenUnchangedStorageKeyMissing(t *testing
 	sqlDB := openFeishuSyncTestDB(t)
 	repo := feishusync.NewRepository(sqlDB)
 	hash := writeSnapshotAndHash(t, "workbook-v1")
-	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026"}`)
+	src := mustSeedWorkbookSourceWithMetadata(t, repo, hash, `{"oss_prefix":"tenant/uhub/finance/2026","file_mappings_content_hash":"`+hash+`"}`)
 	client := &fakeFeishuClient{
 		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集资金收入计算表-2026.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-1"}},
 		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v1")},

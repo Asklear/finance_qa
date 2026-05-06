@@ -104,7 +104,6 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 	result.Scanned = 1
 
 	if hash == strings.TrimSpace(src.LastContentHash) {
-		result.Skipped = 1
 		storageKey := sourceStorageKey(src.MetadataJSON)
 		if s.store != nil {
 			if resolvedKey, resolved, err := s.resolveWorkbookSnapshot(ctx, src, meta, hash, storageKey); err != nil {
@@ -121,7 +120,27 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 				storageKey = uploadedKey
 			}
 		}
-		if err := s.repo.MarkSourceSuccess(ctx, src.ID, hash, strings.TrimSpace(meta.Revision), workbookMetadata(src, meta, ingest.ImportSummary{}, true, storageKey)); err != nil {
+		if workbookFileMappingsSynced(src.MetadataJSON, hash) {
+			result.Skipped = 1
+			if err := s.repo.MarkSourceSuccess(ctx, src.ID, hash, strings.TrimSpace(meta.Revision), workbookMetadata(src, meta, ingest.ImportSummary{}, true, storageKey, hash)); err != nil {
+				return result, err
+			}
+			return result, nil
+		}
+
+		summary, err := s.importer.ImportFileWithOptions(ctx, s.dbPath, snapshotPath, ingest.ImportOptions{
+			Incremental:      false,
+			CompanyOverride:  s.companyOverride,
+			SourceFileName:   strings.TrimSpace(meta.Name),
+			SourceStorageKey: storageKey,
+			SourceFileSize:   workbookSnapshotSize(snapshotPath, meta),
+		})
+		if err != nil {
+			_ = s.repo.MarkSourceError(ctx, src.ID, err.Error(), time.Time{})
+			return result, err
+		}
+		result.Created = 1
+		if err := s.repo.MarkSourceSuccess(ctx, src.ID, hash, strings.TrimSpace(meta.Revision), workbookMetadata(src, meta, summary, false, storageKey, hash)); err != nil {
 			return result, err
 		}
 		return result, nil
@@ -146,7 +165,7 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 	}
 	result.Created = 1
 
-	if err := s.repo.MarkSourceSuccess(ctx, src.ID, hash, strings.TrimSpace(meta.Revision), workbookMetadata(src, meta, summary, false, storageKey)); err != nil {
+	if err := s.repo.MarkSourceSuccess(ctx, src.ID, hash, strings.TrimSpace(meta.Revision), workbookMetadata(src, meta, summary, false, storageKey, hash)); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -350,7 +369,7 @@ func (s *WorkbookScanner) resolveWorkbookSnapshot(ctx context.Context, src SyncS
 	return "", false, nil
 }
 
-func workbookMetadata(src SyncSource, file feishu.DriveFile, summary ingest.ImportSummary, skipped bool, storageKey string) string {
+func workbookMetadata(src SyncSource, file feishu.DriveFile, summary ingest.ImportSummary, skipped bool, storageKey, contentHash string) string {
 	payload := map[string]any{}
 	_ = json.Unmarshal([]byte(strings.TrimSpace(src.MetadataJSON)), &payload)
 	payload["source"] = "feishu_active_scan"
@@ -376,9 +395,24 @@ func workbookMetadata(src SyncSource, file feishu.DriveFile, summary ingest.Impo
 	if !skipped || strings.TrimSpace(summary.PeriodEnd) != "" || payload["period_end"] == nil {
 		payload["period_end"] = summary.PeriodEnd
 	}
+	if !skipped && strings.TrimSpace(contentHash) != "" {
+		payload["file_mappings_content_hash"] = strings.TrimSpace(contentHash)
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return ""
 	}
 	return string(data)
+}
+
+func workbookFileMappingsSynced(metadataJSON, contentHash string) bool {
+	contentHash = strings.TrimSpace(contentHash)
+	if contentHash == "" {
+		return false
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(metadataJSON)), &payload); err != nil {
+		return false
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", payload["file_mappings_content_hash"])) == contentHash
 }
