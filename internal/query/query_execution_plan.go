@@ -46,11 +46,14 @@ func (e *Engine) finalizeExecutionResult(ctx queryExecutionContext, result Resul
 	if result.Success {
 		return ctx.finalize(result)
 	}
+	if fallback, ok := e.tryExplicitContractFallback(ctx, result); ok {
+		return ctx.finalize(fallback)
+	}
 	if shouldStopAtStrictContractSource(ctx) {
 		return ctx.finalize(buildStrictContractMissingResult(ctx, result))
 	}
-	if fallback, ok := e.tryExplicitContractFallback(ctx, result); ok {
-		return ctx.finalize(fallback)
+	if shouldUseStrictContractSourceForSpec(ctx.spec) {
+		return ctx.finalize(buildStrictContractMissingResult(ctx, result))
 	}
 	if shouldFallbackExecutionResult(result) {
 		return ctx.finalize(e.queryFallback(ctx.q, ctx.from, ctx.to, result.Message))

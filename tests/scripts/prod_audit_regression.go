@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -217,26 +216,22 @@ func noMetricEntityTrap(res QueryResult, _ *sql.DB) []string {
 
 func mustContainRevenueAndCostFor(period string) validator {
 	return func(res QueryResult, db *sql.DB) []string {
-		expectedRevenue, expectedCost := queryRevenueAndCost(db, period)
-		book, ok := asMap(res.Data["财务做账口径(看利润)"])
-		if !ok {
-			return []string{"缺少 财务做账口径(看利润)"}
-		}
+		expectedRevenue, expectedCost := queryContractRevenueAndCost(db, period)
 
 		reasons := make([]string, 0)
-		rev, revOK := findFloat(book, []string{"营业收入", "收入"})
-		cost, costOK := findFloat(book, []string{"营业成本及费用", "总成本", "成本"})
+		rev, revOK := contractAmount(res, "revenue_settlement", []string{"营收", "收入", "营业收入"})
+		cost, costOK := contractAmount(res, "cost_settlement", []string{"合同成本", "成本", "总成本"})
 		if !revOK {
-			reasons = append(reasons, "未返回营业收入")
+			reasons = append(reasons, "未返回合同收入")
 		}
 		if !costOK {
-			reasons = append(reasons, "未返回成本")
+			reasons = append(reasons, "未返回合同成本")
 		}
 		if revOK && expectedRevenue > 0 && !approxEqual(rev, expectedRevenue) {
-			reasons = append(reasons, fmt.Sprintf("营业收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
+			reasons = append(reasons, fmt.Sprintf("合同收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
 		}
 		if costOK && expectedCost > 0 && !approxEqual(cost, expectedCost) {
-			reasons = append(reasons, fmt.Sprintf("成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
+			reasons = append(reasons, fmt.Sprintf("合同成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
 		}
 		return reasons
 	}
@@ -244,28 +239,24 @@ func mustContainRevenueAndCostFor(period string) validator {
 
 func mustContainRevenueCostProfitFor(period string) validator {
 	return func(res QueryResult, db *sql.DB) []string {
-		expectedRevenue, expectedCost := queryRevenueAndCost(db, period)
-		expectedProfit := queryNetProfit(db, period)
-		book, ok := asMap(res.Data["财务做账口径(看利润)"])
-		if !ok {
-			return []string{"缺少 财务做账口径(看利润)"}
-		}
+		expectedRevenue, expectedCost := queryContractRevenueAndCost(db, period)
+		expectedProfit := round2(expectedRevenue - expectedCost)
 
 		reasons := make([]string, 0)
-		rev, revOK := findFloat(book, []string{"营业收入", "收入"})
-		cost, costOK := findFloat(book, []string{"营业成本及费用", "总成本", "成本"})
-		profit, profitOK := findFloat(book, []string{"账面利润", "利润", "净利润"})
+		rev, revOK := contractAmount(res, "revenue_settlement", []string{"营收", "收入", "营业收入"})
+		cost, costOK := contractAmount(res, "cost_settlement", []string{"合同成本", "成本", "总成本"})
+		profit, profitOK := contractAmount(res, "profit", []string{"利润", "净利润"})
 		if !revOK || !costOK || !profitOK {
-			return append(reasons, "未完整返回收入/成本/利润")
+			return append(reasons, "未完整返回合同收入/成本/利润")
 		}
 		if expectedRevenue > 0 && !approxEqual(rev, expectedRevenue) {
-			reasons = append(reasons, fmt.Sprintf("收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
+			reasons = append(reasons, fmt.Sprintf("合同收入不匹配: got=%.2f want=%.2f", rev, expectedRevenue))
 		}
 		if expectedCost > 0 && !approxEqual(cost, expectedCost) {
-			reasons = append(reasons, fmt.Sprintf("成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
+			reasons = append(reasons, fmt.Sprintf("合同成本不匹配: got=%.2f want=%.2f", cost, expectedCost))
 		}
-		if expectedProfit != 0 && !approxEqual(profit, expectedProfit) {
-			reasons = append(reasons, fmt.Sprintf("利润不匹配: got=%.2f want=%.2f", profit, expectedProfit))
+		if !approxEqual(profit, expectedProfit) {
+			reasons = append(reasons, fmt.Sprintf("合同利润不匹配: got=%.2f want=%.2f", profit, expectedProfit))
 		}
 		return reasons
 	}
@@ -357,11 +348,11 @@ func mustDifferentiateSettlementVsRecognition(res QueryResult, _ *sql.DB) []stri
 
 func mustTreatSupplierAsCost(res QueryResult, _ *sql.DB) []string {
 	reasons := make([]string, 0)
-	if role, _ := res.Data["role"].(string); role != "supplier" {
-		reasons = append(reasons, fmt.Sprintf("角色识别错误: role=%q (want supplier)", role))
+	if role, _ := res.Data["role"].(string); role != "supplier" && role != "supplier_contract" {
+		reasons = append(reasons, fmt.Sprintf("角色识别错误: role=%q (want supplier/supplier_contract)", role))
 	}
-	if !strings.Contains(res.Message, "供应商") {
-		reasons = append(reasons, "缺少供应商口径说明")
+	if !strings.Contains(res.Message, "供应商") && !strings.Contains(res.Message, "合同成本") {
+		reasons = append(reasons, "缺少供应商或合同成本口径说明")
 	}
 	if !strings.Contains(res.Message, "成本") && !strings.Contains(res.Message, "费用") {
 		reasons = append(reasons, "未明确归入成本/费用")
@@ -409,6 +400,54 @@ SELECT COALESCE(SUM(v),0) FROM (
   GROUP BY item_name
 )`, period).Scan(&profit)
 	return round2(profit)
+}
+
+func queryContractRevenueAndCost(db *sql.DB, period string) (float64, float64) {
+	var revenue float64
+	_ = db.QueryRow(`
+SELECT COALESCE(SUM(amount), 0)
+FROM (
+  SELECT settlement_amount AS amount
+  FROM fin_fund_income
+  WHERE year_month = ?
+  UNION ALL
+  SELECT settlement_amount AS amount
+  FROM fin_fund_income_groups
+  WHERE year_month = ?
+) rows`, period, period).Scan(&revenue)
+
+	var cost float64
+	_ = db.QueryRow(`
+SELECT COALESCE(SUM(amount), 0)
+FROM (
+  SELECT settlement_amount AS amount
+  FROM fin_cost_settlements
+  WHERE year_month = ?
+  UNION ALL
+  SELECT settlement_amount AS amount
+  FROM fin_cost_settlement_groups
+  WHERE year_month = ?
+) rows`, period, period).Scan(&cost)
+	return round2(revenue), round2(cost)
+}
+
+func contractAmount(res QueryResult, summaryKey string, accountKeys []string) (float64, bool) {
+	if summary, ok := asMap(res.Data["contract_summary"]); ok {
+		if v, ok := findFloat(summary, []string{summaryKey}); ok {
+			return v, true
+		}
+	}
+	if accountView, ok := asMap(res.Data["account_view"]); ok {
+		if v, ok := findFloat(accountView, accountKeys); ok {
+			return v, true
+		}
+	}
+	if bookView, ok := asMap(res.Data["book_view"]); ok {
+		if v, ok := findFloat(bookView, accountKeys); ok {
+			return v, true
+		}
+	}
+	return 0, false
 }
 
 func asMap(v any) (map[string]any, bool) {

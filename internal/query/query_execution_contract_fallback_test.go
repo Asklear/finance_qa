@@ -77,21 +77,18 @@ func TestContractDimensionFailureStopsAtStrictContractSource(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "合同口径当前不能直接回答") {
-		t.Fatalf("message should disclose strict contract miss, got: %s", res.Message)
+	if !strings.Contains(res.Message, "已回退到财务账/流水口径") {
+		t.Fatalf("message should disclose financial/cash fallback, got: %s", res.Message)
 	}
-	if strings.Contains(res.Message, "已回退到财务账/流水口径") {
-		t.Fatalf("message should not auto fallback to financial/cash source, got: %s", res.Message)
+	if !strings.Contains(res.Message, "账上确认收入 500.00") {
+		t.Fatalf("message should expose fallback revenue amount, got: %s", res.Message)
 	}
 	if got, _ := res.Data["contract_fallback_reason"].(string); got == "" {
 		t.Fatalf("contract_fallback_reason missing: %+v", res.Data)
 	}
-	if got, _ := res.Data["contract_answer_status"].(string); got != "missing" {
-		t.Fatalf("contract_answer_status = %q, want missing", got)
-	}
 	sourceNote, _ := res.Data["source_note"].(string)
-	if !strings.Contains(sourceNote, "《合同信息表》") || !containsAnyForContractFallbackTest(sourceNote, []string{"优集资金收入计算表", "合同资金收入表"}) {
-		t.Fatalf("source_note should disclose attempted contract source, got %q", sourceNote)
+	if !strings.Contains(sourceNote, "《序时帐》") || !strings.Contains(sourceNote, "《银行流水》") {
+		t.Fatalf("source_note should disclose fallback source, got %q", sourceNote)
 	}
 	spec, ok := res.Data["query_spec"].(map[string]any)
 	if !ok {
@@ -102,7 +99,7 @@ func TestContractDimensionFailureStopsAtStrictContractSource(t *testing.T) {
 	}
 }
 
-func TestContractDimensionARAPFailureStopsAtStrictContractSource(t *testing.T) {
+func TestContractDimensionARAPFailureFallsBackToFinancialWhenContractMissing(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "contract-arap-source-fallback.sqlite")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -141,22 +138,19 @@ func TestContractDimensionARAPFailureStopsAtStrictContractSource(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "合同口径当前不能直接回答") {
-		t.Fatalf("message should disclose strict contract miss, got: %s", res.Message)
+	if !strings.Contains(res.Message, "已回退到财务账/流水口径") {
+		t.Fatalf("message should disclose financial/cash fallback, got: %s", res.Message)
 	}
-	if strings.Contains(res.Message, "期末余额 12000.00") {
-		t.Fatalf("message should not expose financial fallback amount in strict contract mode, got: %s", res.Message)
+	if !strings.Contains(res.Message, "期末余额 12000.00") {
+		t.Fatalf("message should expose financial fallback amount, got: %s", res.Message)
 	}
 	sourceNote, _ := res.Data["source_note"].(string)
-	if !strings.Contains(sourceNote, "《合同信息表》") || !containsAnyForContractFallbackTest(sourceNote, []string{"优集成本计算表", "合同成本结算表"}) {
-		t.Fatalf("source_note should disclose attempted contract payable source, got %q", sourceNote)
-	}
-	if strings.Contains(sourceNote, "《序时帐》") {
-		t.Fatalf("source_note should not claim journal source when strict contract answer did not use it, got %q", sourceNote)
+	if !strings.Contains(sourceNote, "《序时帐》") {
+		t.Fatalf("source_note should disclose fallback journal source, got %q", sourceNote)
 	}
 	primary, ok := res.Data["primary_source_tables"].([]string)
-	if !ok || !containsBaseTableForContractFallbackTest(primary, "fin_cost_settlements") {
-		t.Fatalf("primary_source_tables = %#v, want contract cost table", res.Data["primary_source_tables"])
+	if !ok || !containsBaseTableForContractFallbackTest(primary, "fin_journal") {
+		t.Fatalf("primary_source_tables = %#v, want journal fallback table", res.Data["primary_source_tables"])
 	}
 }
 

@@ -6,7 +6,20 @@ import (
 )
 
 func shouldStopAtStrictContractSource(ctx queryExecutionContext) bool {
+	if shouldAllowContractMissingFinancialFallback(ctx) {
+		return false
+	}
 	return shouldUseStrictContractSourceForSpec(ctx.spec)
+}
+
+func shouldAllowContractMissingFinancialFallback(ctx queryExecutionContext) bool {
+	if !ctx.hasRealEntity {
+		return false
+	}
+	if shouldUseContractDetailQuestion(ctx.q) || inferContractAskedTopic(ctx.q) == "content" {
+		return false
+	}
+	return containsAny(ctx.q, counterpartyMetricKeywords(ctx.cfg))
 }
 
 func shouldUseStrictContractSourceForSpec(spec QuerySpec) bool {
