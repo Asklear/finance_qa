@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	dbpkg "financeqa/internal/db"
 )
 
 type Repository struct {
@@ -312,10 +314,10 @@ func (r *Repository) LinkPendingInvoicesToContract(ctx context.Context, rootToke
 	if rootToken == "" || relationKey == "" || contractID == 0 {
 		return 0, nil
 	}
-	if ok, err := r.tableExists(ctx, "contract_invoices"); err != nil || !ok {
+	if ok, err := dbpkg.TableExists(ctx, r.db, "contract_invoices"); err != nil || !ok {
 		return 0, err
 	}
-	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{"contract_id", "feishu_root_token", "feishu_relation_key", "last_seen_at"}); err != nil || !ok {
+	if ok, err := dbpkg.ColumnsExist(ctx, r.db, "contract_invoices", []string{"contract_id", "feishu_root_token", "feishu_relation_key", "last_seen_at"}); err != nil || !ok {
 		return 0, err
 	}
 	res, err := r.db.ExecContext(ctx, `
@@ -413,7 +415,7 @@ RETURNING id
 }
 
 func (r *Repository) defaultContractCategoryID(ctx context.Context) int64 {
-	if ok, err := r.tableExists(ctx, "contract_categories"); err != nil || !ok {
+	if ok, err := dbpkg.TableExists(ctx, r.db, "contract_categories"); err != nil || !ok {
 		return 1
 	}
 	var id int64
@@ -472,7 +474,7 @@ func (r *Repository) UpsertInvoicePDFState(ctx context.Context, state InvoicePDF
 	if state.ContractID == 0 {
 		return 0, errors.New("invoice PDF state requires a linked contract_id")
 	}
-	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{
+	if ok, err := dbpkg.ColumnsExist(ctx, r.db, "contract_invoices", []string{
 		"contract_id",
 		"invoice_number",
 		"file_name",
@@ -668,10 +670,10 @@ func (r *Repository) markInvoiceDeletedByMissingTokens(ctx context.Context, root
 	if rootToken == "" {
 		return 0, nil
 	}
-	if ok, err := r.tableExists(ctx, "contract_invoices"); err != nil || !ok {
+	if ok, err := dbpkg.TableExists(ctx, r.db, "contract_invoices"); err != nil || !ok {
 		return 0, err
 	}
-	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{"sync_status", "feishu_deleted_at", "last_seen_at", "feishu_root_token", "feishu_parent_token", "feishu_file_token"}); err != nil || !ok {
+	if ok, err := dbpkg.ColumnsExist(ctx, r.db, "contract_invoices", []string{"sync_status", "feishu_deleted_at", "last_seen_at", "feishu_root_token", "feishu_parent_token", "feishu_file_token"}); err != nil || !ok {
 		return 0, err
 	}
 	args := []any{SyncStatusDeleted, rootToken, rootToken}
@@ -707,10 +709,10 @@ WHERE `+filter, args...)
 }
 
 func (r *Repository) InsertDuplicateLog(ctx context.Context, log DuplicateLog) error {
-	if ok, err := r.tableExists(ctx, "contract_duplicate_logs"); err != nil || !ok {
+	if ok, err := dbpkg.TableExists(ctx, r.db, "contract_duplicate_logs"); err != nil || !ok {
 		return nil
 	}
-	if ok, err := r.columnsExist(ctx, "contract_duplicate_logs", []string{
+	if ok, err := dbpkg.ColumnsExist(ctx, r.db, "contract_duplicate_logs", []string{
 		"event_type",
 		"source_file_token",
 		"existing_contract_id",
@@ -785,10 +787,10 @@ LIMIT 1`
 }
 
 func (r *Repository) findInvoicePDFState(ctx context.Context, filter string, args ...any) (InvoicePDFState, bool, error) {
-	if ok, err := r.tableExists(ctx, "contract_invoices"); err != nil || !ok {
+	if ok, err := dbpkg.TableExists(ctx, r.db, "contract_invoices"); err != nil || !ok {
 		return InvoicePDFState{}, false, err
 	}
-	if ok, err := r.columnsExist(ctx, "contract_invoices", []string{
+	if ok, err := dbpkg.ColumnsExist(ctx, r.db, "contract_invoices", []string{
 		"contract_id",
 		"invoice_number",
 		"file_name",
@@ -860,66 +862,6 @@ LIMIT 1`
 	return state, true, nil
 }
 
-func (r *Repository) tableExists(ctx context.Context, tableName string) (bool, error) {
-	var count int
-	err := r.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name = ?`, tableName).Scan(&count)
-	if err == nil {
-		return count > 0, nil
-	}
-
-	var regclass sql.NullString
-	err = r.db.QueryRowContext(ctx, `SELECT to_regclass(?)`, tableName).Scan(&regclass)
-	if err != nil {
-		return false, err
-	}
-	return regclass.Valid && strings.TrimSpace(regclass.String) != "", nil
-}
-
-func (r *Repository) columnsExist(ctx context.Context, tableName string, columns []string) (bool, error) {
-	existing := map[string]bool{}
-	rows, err := r.db.QueryContext(ctx, `PRAGMA table_info(`+tableName+`)`)
-	if err == nil {
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var cid int
-			var name string
-			var typ string
-			var notNull int
-			var defaultValue sql.NullString
-			var pk int
-			if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-				return false, err
-			}
-			existing[name] = true
-		}
-		if err := rows.Err(); err != nil {
-			return false, err
-		}
-		return containsAllColumns(existing, columns), nil
-	}
-
-	rows, err = r.db.QueryContext(ctx, `
-SELECT column_name
-FROM information_schema.columns
-WHERE table_name = ?
-`, tableName)
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return false, err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	return containsAllColumns(existing, columns), nil
-}
-
 func nullableString(value string) any {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -940,15 +882,6 @@ func nullableInt64(value int64) any {
 		return nil
 	}
 	return value
-}
-
-func containsAllColumns(existing map[string]bool, columns []string) bool {
-	for _, column := range columns {
-		if !existing[column] {
-			return false
-		}
-	}
-	return true
 }
 
 func parseDBTime(value string) time.Time {

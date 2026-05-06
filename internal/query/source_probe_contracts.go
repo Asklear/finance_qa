@@ -150,48 +150,7 @@ func isCostSettlementAmountColumn(column string) bool {
 }
 
 func (e *Engine) countCostSettlementAmountRows(ctx context.Context, rewrite BossQueryRewrite, amountColumn string) (int, int, error) {
-	entity := strings.TrimSpace(rewrite.Entity)
-	directSQL := fmt.Sprintf(`
-SELECT cs.year_month AS year_month
-FROM fin_cost_settlements cs
-JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE cs.year_month BETWEEN ? AND ?
-  AND cs.%s IS NOT NULL`, amountColumn)
-	args := []any{rewrite.PeriodFrom, rewrite.PeriodTo}
-	if entity != "" {
-		directSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
-		like := "%" + entity + "%"
-		args = append(args, like, like)
-	}
-
-	groupSQL := fmt.Sprintf(`
-SELECT g.year_month AS year_month
-FROM fin_cost_settlement_groups g
-WHERE g.year_month BETWEEN ? AND ?
-  AND g.%s IS NOT NULL`, amountColumn)
-	args = append(args, rewrite.PeriodFrom, rewrite.PeriodTo)
-	if entity != "" {
-		like := "%" + entity + "%"
-		groupSQL += `
-  AND (
-    g.customer_name LIKE ?
-    OR EXISTS (
-      SELECT 1
-      FROM fin_cost_settlement_group_members gm
-      JOIN fin_contracts c ON c.contract_id = gm.contract_id
-      WHERE gm.group_id = g.id
-        AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)
-    )
-  )`
-		args = append(args, like, like, like)
-	}
-
-	sqlText := `
-SELECT COUNT(*), COUNT(DISTINCT year_month)
-FROM (` + directSQL + ` UNION ALL ` + groupSQL + `) cost_settlement_amount_rows`
-	var rows, months int
-	err := e.db.QueryRowContext(ctx, sqlText, args...).Scan(&rows, &months)
-	return rows, months, err
+	return e.countContractGroupedAmountRows(ctx, rewrite, costSettlementTotalsSpec(), amountColumn, "cost_settlement_amount_rows")
 }
 
 func isFundIncomeAmountColumn(column string) bool {
@@ -204,13 +163,17 @@ func isFundIncomeAmountColumn(column string) bool {
 }
 
 func (e *Engine) countFundIncomeAmountRows(ctx context.Context, rewrite BossQueryRewrite, amountColumn string) (int, int, error) {
+	return e.countContractGroupedAmountRows(ctx, rewrite, fundIncomeTotalsSpec(), amountColumn, "fund_income_amount_rows")
+}
+
+func (e *Engine) countContractGroupedAmountRows(ctx context.Context, rewrite BossQueryRewrite, spec contractFinanceTotalsSpec, amountColumn, alias string) (int, int, error) {
 	entity := strings.TrimSpace(rewrite.Entity)
 	directSQL := fmt.Sprintf(`
-SELECT f.year_month AS year_month
-FROM fin_fund_income f
-JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE f.year_month BETWEEN ? AND ?
-  AND f.%s IS NOT NULL`, amountColumn)
+SELECT d.year_month AS year_month
+FROM %[1]s d
+JOIN fin_contracts c ON c.contract_id = d.contract_id
+WHERE d.year_month BETWEEN ? AND ?
+  AND d.%[2]s IS NOT NULL`, spec.DirectTable, amountColumn)
 	args := []any{rewrite.PeriodFrom, rewrite.PeriodTo}
 	if entity != "" {
 		directSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
@@ -220,9 +183,9 @@ WHERE f.year_month BETWEEN ? AND ?
 
 	groupSQL := fmt.Sprintf(`
 SELECT g.year_month AS year_month
-FROM fin_fund_income_groups g
+FROM %[1]s g
 WHERE g.year_month BETWEEN ? AND ?
-  AND g.%s IS NOT NULL`, amountColumn)
+  AND g.%[2]s IS NOT NULL`, spec.GroupTable, amountColumn)
 	args = append(args, rewrite.PeriodFrom, rewrite.PeriodTo)
 	if entity != "" {
 		like := "%" + entity + "%"
@@ -231,7 +194,7 @@ WHERE g.year_month BETWEEN ? AND ?
     g.customer_name LIKE ?
     OR EXISTS (
       SELECT 1
-      FROM fin_fund_income_group_members gm
+      FROM ` + spec.GroupMemberTable + ` gm
       JOIN fin_contracts c ON c.contract_id = gm.contract_id
       WHERE gm.group_id = g.id
         AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)
@@ -242,7 +205,7 @@ WHERE g.year_month BETWEEN ? AND ?
 
 	sqlText := `
 SELECT COUNT(*), COUNT(DISTINCT year_month)
-FROM (` + directSQL + ` UNION ALL ` + groupSQL + `) fund_income_amount_rows`
+FROM (` + directSQL + ` UNION ALL ` + groupSQL + `) ` + alias
 	var rows, months int
 	err := e.db.QueryRowContext(ctx, sqlText, args...).Scan(&rows, &months)
 	return rows, months, err

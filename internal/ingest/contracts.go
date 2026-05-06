@@ -1584,25 +1584,7 @@ WHERE contract_content LIKE '合并金额组%'
 }
 
 func deleteCostSettlementGroupsBySourceScope(ctx context.Context, tx *sql.Tx, reportTypes []contractWorkbookKind, sheetNames []string) error {
-	sheetNames = dedupeContractStrings(sheetNames)
-	reportTypes = dedupeContractWorkbookKinds(reportTypes)
-	if len(sheetNames) == 0 || len(reportTypes) == 0 {
-		return nil
-	}
-
-	args := make([]any, 0, len(reportTypes)+len(sheetNames))
-	reportPlaceholders := make([]string, 0, len(reportTypes))
-	for _, reportType := range reportTypes {
-		reportPlaceholders = append(reportPlaceholders, "?")
-		args = append(args, string(reportType))
-	}
-	sheetPlaceholders := make([]string, 0, len(sheetNames))
-	for _, sheetName := range sheetNames {
-		sheetPlaceholders = append(sheetPlaceholders, "?")
-		args = append(args, sheetName)
-	}
-	filter := fmt.Sprintf(`source_report_type IN (%s) AND source_sheet_name IN (%s)`, strings.Join(reportPlaceholders, ", "), strings.Join(sheetPlaceholders, ", "))
-	if err := deleteCostSettlementGroupsByFilter(ctx, tx, filter, args...); err != nil {
+	if err := deleteContractGroupsBySourceScope(ctx, tx, "fin_cost_settlement_groups", "fin_cost_settlement_group_members", reportTypes, sheetNames); err != nil {
 		return fmt.Errorf("clear fin_cost_settlement_groups by source scope: %w", err)
 	}
 	return nil
@@ -1620,37 +1602,28 @@ source_report_type = ?
 }
 
 func deleteCostSettlementGroupsByFilter(ctx context.Context, tx *sql.Tx, filter string, args ...any) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM fin_cost_settlement_groups WHERE `+filter, args...)
-	if err != nil {
-		return err
-	}
-	groupIDs := []int64{}
-	for rows.Next() {
-		var groupID int64
-		if err := rows.Scan(&groupID); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		groupIDs = append(groupIDs, groupID)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, groupID := range groupIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM fin_cost_settlement_group_members WHERE group_id = ?`, groupID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM fin_cost_settlement_groups WHERE id = ?`, groupID); err != nil {
-			return err
-		}
+	return deleteContractGroupRowsByFilter(ctx, tx, "fin_cost_settlement_groups", "fin_cost_settlement_group_members", filter, args...)
+}
+
+func deleteFundIncomeGroupsBySourceScope(ctx context.Context, tx *sql.Tx, reportTypes []contractWorkbookKind, sheetNames []string) error {
+	if err := deleteContractGroupsBySourceScope(ctx, tx, "fin_fund_income_groups", "fin_fund_income_group_members", reportTypes, sheetNames); err != nil {
+		return fmt.Errorf("clear fin_fund_income_groups by source scope: %w", err)
 	}
 	return nil
 }
 
-func deleteFundIncomeGroupsBySourceScope(ctx context.Context, tx *sql.Tx, reportTypes []contractWorkbookKind, sheetNames []string) error {
+func deleteFundIncomeGroupByIdentity(ctx context.Context, tx *sql.Tx, reportType contractWorkbookKind, sheetName, customerName, yearMonth string, sourceStartRow, sourceEndRow int) error {
+	return deleteFundIncomeGroupsByFilter(ctx, tx, `
+	source_report_type = ?
+	  AND source_sheet_name = ?
+	  AND customer_name = ?
+	  AND year_month = ?
+	  AND source_start_row = ?
+	  AND source_end_row = ?
+	`, string(reportType), strings.TrimSpace(sheetName), strings.TrimSpace(customerName), strings.TrimSpace(yearMonth), sourceStartRow, sourceEndRow)
+}
+
+func deleteContractGroupsBySourceScope(ctx context.Context, tx *sql.Tx, groupTable, memberTable string, reportTypes []contractWorkbookKind, sheetNames []string) error {
 	sheetNames = dedupeContractStrings(sheetNames)
 	reportTypes = dedupeContractWorkbookKinds(reportTypes)
 	if len(sheetNames) == 0 || len(reportTypes) == 0 {
@@ -1669,25 +1642,18 @@ func deleteFundIncomeGroupsBySourceScope(ctx context.Context, tx *sql.Tx, report
 		args = append(args, sheetName)
 	}
 	filter := fmt.Sprintf(`source_report_type IN (%s) AND source_sheet_name IN (%s)`, strings.Join(reportPlaceholders, ", "), strings.Join(sheetPlaceholders, ", "))
-	if err := deleteFundIncomeGroupsByFilter(ctx, tx, filter, args...); err != nil {
-		return fmt.Errorf("clear fin_fund_income_groups by source scope: %w", err)
+	if err := deleteContractGroupRowsByFilter(ctx, tx, groupTable, memberTable, filter, args...); err != nil {
+		return fmt.Errorf("clear %s by source scope: %w", groupTable, err)
 	}
 	return nil
 }
 
-func deleteFundIncomeGroupByIdentity(ctx context.Context, tx *sql.Tx, reportType contractWorkbookKind, sheetName, customerName, yearMonth string, sourceStartRow, sourceEndRow int) error {
-	return deleteFundIncomeGroupsByFilter(ctx, tx, `
-source_report_type = ?
-  AND source_sheet_name = ?
-  AND customer_name = ?
-  AND year_month = ?
-  AND source_start_row = ?
-  AND source_end_row = ?
-`, string(reportType), strings.TrimSpace(sheetName), strings.TrimSpace(customerName), strings.TrimSpace(yearMonth), sourceStartRow, sourceEndRow)
+func deleteFundIncomeGroupsByFilter(ctx context.Context, tx *sql.Tx, filter string, args ...any) error {
+	return deleteContractGroupRowsByFilter(ctx, tx, "fin_fund_income_groups", "fin_fund_income_group_members", filter, args...)
 }
 
-func deleteFundIncomeGroupsByFilter(ctx context.Context, tx *sql.Tx, filter string, args ...any) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM fin_fund_income_groups WHERE `+filter, args...)
+func deleteContractGroupRowsByFilter(ctx context.Context, tx *sql.Tx, groupTable, memberTable, filter string, args ...any) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM `+groupTable+` WHERE `+filter, args...)
 	if err != nil {
 		return err
 	}
@@ -1707,10 +1673,10 @@ func deleteFundIncomeGroupsByFilter(ctx context.Context, tx *sql.Tx, filter stri
 		return err
 	}
 	for _, groupID := range groupIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM fin_fund_income_group_members WHERE group_id = ?`, groupID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+memberTable+` WHERE group_id = ?`, groupID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM fin_fund_income_groups WHERE id = ?`, groupID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+groupTable+` WHERE id = ?`, groupID); err != nil {
 			return err
 		}
 	}

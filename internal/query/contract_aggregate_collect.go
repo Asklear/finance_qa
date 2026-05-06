@@ -309,96 +309,39 @@ func (e *Engine) collectContractAggregateItems(sqlText string, args []any) ([]co
 }
 
 func (e *Engine) collectRevenueInvoiceOpenItems(periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
-	unionSQL := `
-SELECT c.customer_name,
-       c.contract_content,
-       COALESCE(f.invoice_amount, 0) AS invoice_amount,
-       COALESCE(f.received_amount, 0) AS received_amount,
-       CASE WHEN COALESCE(f.invoice_amount, 0) > COALESCE(f.received_amount, 0) THEN COALESCE(f.invoice_amount, 0) - COALESCE(f.received_amount, 0) ELSE 0 END AS open_amount
-FROM fin_fund_income f
-JOIN fin_contracts c ON c.contract_id = f.contract_id
-WHERE f.year_month BETWEEN ? AND ?`
-	args := []any{periodFrom, periodTo}
-	if strings.TrimSpace(like) != "" {
-		unionSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
-		args = append(args, like, like)
-	}
-	if e.hasFundIncomeGroupTables() {
-		groupContent := e.mergedGroupContractContentSQL("fin_fund_income_group_members", "g")
-		unionSQL += `
-UNION ALL
-SELECT g.customer_name,
-       ` + groupContent + ` AS contract_content,
-       COALESCE(g.invoice_amount, 0) AS invoice_amount,
-       COALESCE(g.received_amount, 0) AS received_amount,
-       CASE WHEN COALESCE(g.invoice_amount, 0) > COALESCE(g.received_amount, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.received_amount, 0) ELSE 0 END AS open_amount
-FROM fin_fund_income_groups g
-WHERE g.year_month BETWEEN ? AND ?`
-		args = append(args, periodFrom, periodTo)
-		if strings.TrimSpace(like) != "" {
-			unionSQL += ` AND g.customer_name LIKE ?`
-			args = append(args, like)
-		}
-	}
-	sqlText := `
-SELECT customer_name,
-       contract_content,
-       COALESCE(SUM(invoice_amount), 0),
-       COALESCE(SUM(received_amount), 0),
-       COALESCE(SUM(open_amount), 0)
-FROM (` + unionSQL + `) revenue_invoice_open_items
-GROUP BY customer_name, contract_content
-HAVING COALESCE(SUM(open_amount), 0) > 0
-ORDER BY 5 DESC, customer_name, contract_content`
-	rows, err := e.db.Query(sqlText, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := []contractAggregateOpenItem{}
-	for rows.Next() {
-		var item contractAggregateOpenItem
-		if err := rows.Scan(&item.CustomerName, &item.ContractContent, &item.InvoiceAmount, &item.ReceivedAmount, &item.OpenAmount); err != nil {
-			return nil, err
-		}
-		item.InvoiceAmount = round2(item.InvoiceAmount)
-		item.ReceivedAmount = round2(item.ReceivedAmount)
-		item.OpenAmount = round2(item.OpenAmount)
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return e.collectContractAggregateInvoiceOpenItems(fundIncomeTotalsSpec(), "revenue_invoice_open_items", periodFrom, periodTo, like)
 }
 
 func (e *Engine) collectCostInvoiceOpenItems(periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
-	unionSQL := `
+	return e.collectContractAggregateInvoiceOpenItems(costSettlementTotalsSpec(), "cost_invoice_open_items", periodFrom, periodTo, like)
+}
+
+func (e *Engine) collectContractAggregateInvoiceOpenItems(spec contractFinanceTotalsSpec, alias, periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
+	unionSQL := fmt.Sprintf(`
 SELECT c.customer_name,
        c.contract_content,
-       COALESCE(cs.invoice_amount, 0) AS invoice_amount,
-       COALESCE(cs.paid_amount, 0) AS paid_amount,
-       CASE WHEN COALESCE(cs.invoice_amount, 0) > COALESCE(cs.paid_amount, 0) THEN COALESCE(cs.invoice_amount, 0) - COALESCE(cs.paid_amount, 0) ELSE 0 END AS open_amount
-FROM fin_cost_settlements cs
-JOIN fin_contracts c ON c.contract_id = cs.contract_id
-WHERE cs.year_month BETWEEN ? AND ?`
+       COALESCE(d.invoice_amount, 0) AS invoice_amount,
+       COALESCE(d.%[1]s, 0) AS movement_amount,
+       CASE WHEN COALESCE(d.invoice_amount, 0) > COALESCE(d.%[1]s, 0) THEN COALESCE(d.invoice_amount, 0) - COALESCE(d.%[1]s, 0) ELSE 0 END AS open_amount
+FROM %[2]s d
+JOIN fin_contracts c ON c.contract_id = d.contract_id
+WHERE d.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.DirectTable)
 	args := []any{periodFrom, periodTo}
 	if strings.TrimSpace(like) != "" {
 		unionSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
 		args = append(args, like, like)
 	}
-	if e.hasCostSettlementGroupTables() {
-		groupContent := e.mergedGroupContractContentSQL("fin_cost_settlement_group_members", "g")
-		unionSQL += `
+	if e.hasContractFinanceGroupTables(spec) {
+		groupContent := e.mergedGroupContractContentSQL(spec.GroupMemberTable, "g")
+		unionSQL += fmt.Sprintf(`
 UNION ALL
 SELECT g.customer_name,
-       ` + groupContent + ` AS contract_content,
+       %[3]s AS contract_content,
        COALESCE(g.invoice_amount, 0) AS invoice_amount,
-       COALESCE(g.paid_amount, 0) AS paid_amount,
-       CASE WHEN COALESCE(g.invoice_amount, 0) > COALESCE(g.paid_amount, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.paid_amount, 0) ELSE 0 END AS open_amount
-FROM fin_cost_settlement_groups g
-WHERE g.year_month BETWEEN ? AND ?`
+       COALESCE(g.%[1]s, 0) AS movement_amount,
+       CASE WHEN COALESCE(g.invoice_amount, 0) > COALESCE(g.%[1]s, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.%[1]s, 0) ELSE 0 END AS open_amount
+FROM %[2]s g
+WHERE g.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.GroupTable, groupContent)
 		args = append(args, periodFrom, periodTo)
 		if strings.TrimSpace(like) != "" {
 			unionSQL += ` AND g.customer_name LIKE ?`
@@ -407,11 +350,11 @@ WHERE g.year_month BETWEEN ? AND ?`
 	}
 	sqlText := `
 SELECT customer_name,
-       contract_content,
-       COALESCE(SUM(invoice_amount), 0),
-       COALESCE(SUM(paid_amount), 0),
-       COALESCE(SUM(open_amount), 0)
-FROM (` + unionSQL + `) cost_invoice_open_items
+	       contract_content,
+	       COALESCE(SUM(invoice_amount), 0),
+       COALESCE(SUM(movement_amount), 0),
+	       COALESCE(SUM(open_amount), 0)
+FROM (` + unionSQL + `) ` + alias + `
 GROUP BY customer_name, contract_content
 HAVING COALESCE(SUM(open_amount), 0) > 0
 ORDER BY 5 DESC, customer_name, contract_content`

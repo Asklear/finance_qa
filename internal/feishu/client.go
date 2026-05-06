@@ -334,74 +334,78 @@ func (c *HTTPClient) accessToken(ctx context.Context) (string, error) {
 	return c.tenantAccessToken(ctx)
 }
 
-func (c *HTTPClient) tenantAccessToken(ctx context.Context) (string, error) {
+func (c *HTTPClient) cachedToken(token string, expiry time.Time) (string, bool) {
+	token = strings.TrimSpace(token)
+	if token != "" && time.Now().Before(expiry) {
+		return token, true
+	}
+	return "", false
+}
+
+func (c *HTTPClient) rememberToken(slot *string, expirySlot *time.Time, token string, expiresIn time.Duration) {
+	if expiresIn <= 0 {
+		expiresIn = time.Hour
+	}
 	c.mu.Lock()
-	if c.token != "" && time.Now().Before(c.tokenExpiry) {
-		token := c.token
+	*slot = token
+	*expirySlot = time.Now().Add(expiresIn - time.Minute)
+	c.mu.Unlock()
+}
+
+func (c *HTTPClient) tokenFromCacheOrFetch(slot *string, expirySlot *time.Time, fetch func() (string, time.Duration, error)) (string, error) {
+	c.mu.Lock()
+	if token, ok := c.cachedToken(*slot, *expirySlot); ok {
 		c.mu.Unlock()
 		return token, nil
 	}
 	c.mu.Unlock()
 
-	var resp tenantTokenResponse
-	if err := c.doJSONWithBearer(ctx, http.MethodPost, "/open-apis/auth/v3/tenant_access_token/internal", map[string]string{
-		"app_id":     c.appID,
-		"app_secret": c.appSecret,
-	}, &resp, ""); err != nil {
+	token, expiresIn, err := fetch()
+	if err != nil {
 		return "", err
 	}
-	if err := checkCode(resp.Code, resp.Msg); err != nil {
-		return "", err
-	}
-	token := strings.TrimSpace(resp.TenantAccessToken)
-	if token == "" {
-		return "", errors.New("feishu tenant token response was empty")
-	}
-	expiresIn := time.Duration(resp.Expire) * time.Second
-	if expiresIn <= 0 {
-		expiresIn = time.Hour
-	}
-
-	c.mu.Lock()
-	c.token = token
-	c.tokenExpiry = time.Now().Add(expiresIn - time.Minute)
-	c.mu.Unlock()
+	c.rememberToken(slot, expirySlot, token, expiresIn)
 	return token, nil
 }
 
+func (c *HTTPClient) tenantAccessToken(ctx context.Context) (string, error) {
+	return c.tokenFromCacheOrFetch(&c.token, &c.tokenExpiry, func() (string, time.Duration, error) {
+		var resp tenantTokenResponse
+		if err := c.doJSONWithBearer(ctx, http.MethodPost, "/open-apis/auth/v3/tenant_access_token/internal", map[string]string{
+			"app_id":     c.appID,
+			"app_secret": c.appSecret,
+		}, &resp, ""); err != nil {
+			return "", 0, err
+		}
+		if err := checkCode(resp.Code, resp.Msg); err != nil {
+			return "", 0, err
+		}
+		token := strings.TrimSpace(resp.TenantAccessToken)
+		if token == "" {
+			return "", 0, errors.New("feishu tenant token response was empty")
+		}
+		return token, time.Duration(resp.Expire) * time.Second, nil
+	})
+}
+
 func (c *HTTPClient) appAccessToken(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	if c.appToken != "" && time.Now().Before(c.appTokenExpiry) {
-		token := c.appToken
-		c.mu.Unlock()
-		return token, nil
-	}
-	c.mu.Unlock()
-
-	var resp appTokenResponse
-	if err := c.doJSONWithBearer(ctx, http.MethodPost, "/open-apis/auth/v3/app_access_token/internal", map[string]string{
-		"app_id":     c.appID,
-		"app_secret": c.appSecret,
-	}, &resp, ""); err != nil {
-		return "", err
-	}
-	if err := checkCode(resp.Code, resp.Msg); err != nil {
-		return "", err
-	}
-	token := strings.TrimSpace(resp.AppAccessToken)
-	if token == "" {
-		return "", errors.New("feishu app token response was empty")
-	}
-	expiresIn := time.Duration(resp.Expire) * time.Second
-	if expiresIn <= 0 {
-		expiresIn = time.Hour
-	}
-
-	c.mu.Lock()
-	c.appToken = token
-	c.appTokenExpiry = time.Now().Add(expiresIn - time.Minute)
-	c.mu.Unlock()
-	return token, nil
+	return c.tokenFromCacheOrFetch(&c.appToken, &c.appTokenExpiry, func() (string, time.Duration, error) {
+		var resp appTokenResponse
+		if err := c.doJSONWithBearer(ctx, http.MethodPost, "/open-apis/auth/v3/app_access_token/internal", map[string]string{
+			"app_id":     c.appID,
+			"app_secret": c.appSecret,
+		}, &resp, ""); err != nil {
+			return "", 0, err
+		}
+		if err := checkCode(resp.Code, resp.Msg); err != nil {
+			return "", 0, err
+		}
+		token := strings.TrimSpace(resp.AppAccessToken)
+		if token == "" {
+			return "", 0, errors.New("feishu app token response was empty")
+		}
+		return token, time.Duration(resp.Expire) * time.Second, nil
+	})
 }
 
 func (c *HTTPClient) userAccessToken(ctx context.Context) (string, error) {
