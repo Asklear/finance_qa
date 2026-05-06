@@ -10,8 +10,9 @@ flowchart LR
     H --> BR["Bridge / CLI 层<br/>finance-query / finance-host-data / finance-upload<br/>finance-sync / finance-dimensions"]
     BR --> RT["Query Runtime<br/>engine_runtime + result_types"]
 
-    RT --> RW["老板问题改写<br/>query_rewrite<br/>期间 / 指标 / 实体 / 口径槽位"]
-    RW --> CAT["语义能力目录<br/>semantic_catalog<br/>字段注释 + 功能模块"]
+    RT --> RW["老板问题改写<br/>query_rewrite<br/>期间 / 指标 / 实体候选 / 口径槽位"]
+    RW --> ER["实体确认<br/>DB candidates + scored resolver<br/>低置信度拒答 / 澄清"]
+    ER --> CAT["语义能力目录<br/>semantic_catalog<br/>字段注释 + 功能模块"]
     CAT --> PROBE["轻量覆盖探测<br/>source_probe + source_probe_contracts"]
     PROBE --> RD["主口径决策<br/>route_decision<br/>contract_aggregate / bank_statement / fallback"]
 
@@ -46,9 +47,9 @@ flowchart LR
 1. 老板核心指标默认先尝试合同/专家表口径：`fin_contracts + fin_fund_income + fin_cost_settlements`。
 2. 合同/专家表是否能回答，不靠关键词硬猜，而是经过 `query_rewrite -> semantic_catalog -> source_probe -> route_decision`。
 3. 明确现金问题（银行、银行卡、实际到账、实际支出、回款、付款、净增加）优先走 `bank_cash_queries`。
-4. `query_execution*` 负责执行阶段排序和口径切换策略；合同优先问题在合同表不能覆盖时默认停止并说明缺口，只有用户显式要求账上或银行流水口径时才切换到现金或财务账。
+4. `query_execution*` 负责执行阶段排序和口径切换策略；公司级合同优先问题在合同表不能覆盖时默认停止并说明缺口。带有数据库候选确认真实主体的金额、付款、回款、应收、应付类问题，可以在后端明确返回 `contract_fallback_target` 时受控切换到财务账或流水；合同/发票 PDF 原文问题不回退到 `fin_*`。
 5. `orchestrator + source_adapter_*` 负责多源事实集合并，`contract_aggregate_*` 负责老板口径的合同/项目汇总。
-6. 来源追溯统一在查询收口阶段完成：财务来源文件名和更新时间读取 `fin_file_mappings`，没有映射就不展示该来源；合同和发票来源分别读取 `contract_main`、`contract_invoices`。表/字段注释只作为语义能力目录和审计辅助，不作为老板可见来源文件名兜底。
+6. 来源追溯统一在查询收口阶段完成：财务来源文件名和更新时间读取 `fin_file_mappings`，没有映射就不展示该来源；合同和发票来源分别读取 `contract_main`、`contract_invoices`。`source_cell_notes` 和 `remarks` 保留给宿主 LLM/审计解释备注、批注、谈判状态和异常说明，不替代 `source_note/source_update_note`。表/字段注释只作为语义能力目录和审计辅助，不作为老板可见来源文件名兜底。
 7. 底层数据库默认 PostgreSQL；SQLite 只作为显式本地兼容模式，不再默认回退根目录 `finance.db`。
 8. Bridge 当前暴露 5 个工具：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 9. 接口 JSON 必须保留 `route_decision/probe_results/trace/executed_sql` 等审计字段；老板可见回复必须翻译成业务概念，不直接展示数据库辅助字段。

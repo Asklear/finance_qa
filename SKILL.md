@@ -115,6 +115,8 @@ metadata:
    - `data.source_documents`
    - `data.primary_source_tables`
    - `data.supporting_source_documents`
+   - `data.fact_sets` 或 `data.llm_payload` 中的 `source_cell_notes`
+   - `data.fact_sets` 或 `data.llm_payload` 中的 `remarks`
    - `data.extraction_errors`
    - `data.contract_fallback_reason`
    - `data.contract_fallback_target`
@@ -128,6 +130,7 @@ metadata:
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
    - 若同时存在 `data.source_update_note`，老板可见回答也必须保留来源更新时间
+   - `source_cell_notes` 是 Excel 批注/单元格备注，`remarks` 是收入明细可见“备注”列；它们用于宿主 LLM 解释谈判状态、备注金额、异常说明和单元格依据，不能替代来源文件名和更新时间，也不要在普通金额答案里默认展开
 9. 若 `bridge_meta.capabilities.exposed_tools` 存在：
    - 仅把其中列出的工具视为当前 bridge 可调用能力
    - 不要把仓库内其他 CLI 子命令误当成 OpenClaw / Claude 当前可直接调用的 bridge tool
@@ -164,7 +167,7 @@ metadata:
    - 说明系统已先尝试合同/项目口径，但合同台账当前不能直接回答
    - 若同时存在 `data.contract_answer_status=missing` 或 `data.source_priority=contract_strict`，表示系统已阻断自动回退；宿主只能说明合同口径缺口，不能自行改用财务账/流水下结论
    - 若同时存在 `data.contract_continuity_candidates`，这些是“历史同名合同/项目在当前期间挂到其他主体”的候选证据；宿主可以据此做疑似连续性推断，但必须说明不是固定主体映射
-   - 只有当后端明确返回 `data.contract_fallback_target` 时，才可说明已经切换到对应非合同口径
+   - 只有当后端明确返回 `data.contract_fallback_target` 时，才可说明已经切换到对应非合同口径；这类受控回退只适用于已由数据库候选确认真实主体的金额、付款、回款、应收、应付类问题，不适用于整公司核心汇总或合同/发票 PDF 原文问题
 9. 若存在 `data.extraction_errors`：
    - 说明 `finance-host-data` 或自动 fallback 的宿主数据包提取不完整
    - 宿主不能把 `data.llm_payload` 视为完整证据继续生成确定性结论
@@ -175,15 +178,17 @@ metadata:
    - 如果老板在问整公司或区间汇总的 `收入 / 营收 / 成本 / 利润 / 销售额`，先尝试 `fin_contracts + fin_fund_income + fin_cost_settlements`
    - 合同/项目汇总能回答时，优先按老板口径返回合同营收、合同成本、合同利润；可补充合同回款/开票
    - 合同/项目汇总是否能回答，由 `route_decision.probe_results` 的真实数据覆盖探测决定，不靠关键词硬猜
-   - 合同/项目汇总表答不全时，默认返回“合同口径当前不能直接回答”，并停止自动回退，避免把非老板口径冒充合同口径
-   - 只有用户明确说“账上/科目余额/资产负债表/序时账/银行流水/实际到账/实际支出”等非合同口径时，才改查对应财务账或现金流水
+   - 公司级合同/项目汇总表答不全时，默认返回“合同口径当前不能直接回答”，并停止自动回退，避免把非老板口径冒充合同口径
+   - 已由数据库候选确认真实主体的金额、付款、回款、应收、应付类问题，可以在后端明确返回 `contract_fallback_target` 时受控回退到财务账或现金流水；用户明确说“账上/科目余额/资产负债表/序时账/银行流水/实际到账/实际支出”等非合同口径时，才绕开合同优先
    - 银行流水 / 实际到账 / 实际支出 / 净增加 / 回款 这类现金问题，不要强行先走合同汇总
    - `利润` 默认按 `收入 - 成本及费用 + 营业外收入 - 营业外支出`
    - 如果老板明确问 `净利润`，再单独按净利润回答，不要和“利润”混说
 2. 差异原因：
    - 只有在用户追问“为什么不一样/差额是什么造成”时，再展开利润调现金桥、回款时点和成本确认时差
 3. 明确主体问题：
-   - 如果问题明确点名客户 / 供应商 / 员工 / 项目 / 分公司，优先回答主体审计结果
+   - 如果问题明确点名客户 / 供应商 / 员工 / 项目 / 分公司，且该主体能从数据库候选实体中高置信度确认，优先回答主体审计结果
+   - 实体识别采用数据库候选召回 + 打分确认：候选来自银行流水对手方、序时账对手方和摘要、合同客户、合同内容；修饰词、指标词、时间词不能因为出现在问题中就被当成实体
+   - 若候选分数不足或前两名过于接近，宿主应保留后端的拒答/澄清，不要自行从问题片段猜实体
    - 不要强行改成整月汇总
 4. 人力成本：
    - 要看 `hr_breakdown`
@@ -276,6 +281,7 @@ metadata:
    - `fin_contracts` 保存合同主信息：`customer_name`、`contract_content`，以及可归一化的 `contract_start_date`、`contract_end_date`、`settlement_cycle`
    - `fin_cost_settlements` 保存供应商/成本侧行项目字段：`quantity`、`settlement_amount`、`invoice_amount`、`paid_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
    - `fin_fund_income` 保存客户/收入侧行项目字段：`quantity`、`settlement_amount`、`received_amount`、`invoice_amount`、`remarks`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
+   - Excel 批注/单元格备注保存到 `source_cell_notes`；收入明细可见“备注”列保存到 `fin_fund_income.remarks` 和 `fin_fund_income_groups.remarks`。这两个字段是宿主 LLM 兜底和审计材料，回答备注、批注、谈判中、备注金额或异常说明时可以使用；普通金额汇总不应把备注行计入收入/收款/开票合计
    - 两张行项目表都会附带 `source_report_type`、`source_sheet_name`，用于按来源分区做全量覆盖，避免一个合同 Excel 的重传把另一来源的数据整表冲掉
    - `source_report_type`、`source_sheet_name`、`contract_id`、`account_code` 等是数据库治理/溯源辅助字段；对老板回答时必须翻译成“来源 Excel / sheet / 合同或项目 / 会计科目含义”，不要原样展示字段名或编码
    - 除 `year_month` 会按规则推断外，其他合同扩展字段默认以源 Excel 原值为准；源单元格为空时，库中也保持为空，不做人为硬补

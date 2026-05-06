@@ -7,6 +7,7 @@ sequenceDiagram
     participant Bridge as finance_bridge / financeqa CLI
     participant RT as engine_runtime
     participant Rewrite as query_rewrite
+    participant Entity as DB candidate entity resolver
     participant Catalog as semantic_catalog + source mapping
     participant Probe as source_probe + route_decision
     participant Exec as query_execution / stage policy
@@ -26,7 +27,11 @@ sequenceDiagram
     Bridge->>Bridge: 校验 skill_contract_version / appendix 存在性
     Bridge->>RT: financeqa query / Engine.Query
     RT->>Rewrite: 改写老板问题为意图槽位
-    Rewrite-->>RT: 指标 / 实体 / 主期间 / 子期间 / 现金语义 / 合同优先标记
+    Rewrite-->>RT: 指标 / 实体片段 / 主期间 / 子期间 / 现金语义 / 合同优先标记
+    RT->>Entity: 用数据库候选实体打分确认
+    Entity->>DB: 读取银行流水、序时账、摘要、合同客户、合同内容候选
+    DB-->>Entity: candidate entities
+    Entity-->>RT: 高置信度实体或拒绝实体
     RT->>Catalog: 构建数据源能力目录
     Catalog->>DB: 读取字段注释 / 功能目录 / fin_file_mappings
     DB-->>Catalog: 表能力 / 字段语义 / 来源 Excel 映射
@@ -85,5 +90,6 @@ sequenceDiagram
 5. `route_decision/probe_results` 是宿主和审计链路使用的口径解释字段，不能原样贴给老板。
 6. `source_note` 是老板可见来源说明的主入口；`source_update_note` 是老板可见来源更新时间。宿主应优先直接引用，不要用 SQL、表名、字段名、表注释或历史记忆重拼来源。
 7. 财务来源文件名和更新时间只从 `fin_file_mappings` 获取；没有映射就不展示该财务来源。合同和发票来源分别来自 `contract_main`、`contract_invoices`。
-8. 如果结果来自序时账经营口径，必须消费 `data.tax_inclusion/data.tax_inclusion_note`，说明默认未主动剔税。
-9. 老板可见回复必须过滤数据库 id、合同 id、科目代码、SQL、trace、bridge_meta 等辅助字段。
+8. `source_cell_notes` 和 `remarks` 是宿主 LLM 可用的补充解释字段，用于备注、批注、谈判状态、异常说明和单元格依据；普通金额答案不默认展开，且不能替代 `source_note/source_update_note`。
+9. 如果结果来自序时账经营口径，必须消费 `data.tax_inclusion/data.tax_inclusion_note`，说明默认未主动剔税。
+10. 老板可见回复必须过滤数据库 id、合同 id、科目代码、SQL、trace、bridge_meta 等辅助字段。
