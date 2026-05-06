@@ -57,27 +57,28 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 21. `data.fact_sets`
 22. `data.source_catalog`
 23. `data.source_note`
-24. `data.source_documents`
-25. `data.primary_source_tables`
-26. `data.supporting_source_documents`
-27. `data.extraction_errors`
-28. `data.contract_fallback_reason`
-29. `data.contract_fallback_target`
-30. `data.exposed_fields.intent_trace`
-31. `data.tax_inclusion`
-32. `data.tax_inclusion_note`
-33. `bridge_meta.skill_contract_version`
-34. `bridge_meta.protocol_version`
-35. `bridge_meta.capabilities`
-36. `bridge_meta.capabilities.exposed_tools`
-37. `bridge_meta.capabilities.result_structures`
-38. `bridge_meta.skill_appendix_relative_path`
-39. `bridge_meta.skill_appendix_path`
-40. `bridge_meta.skill_appendix_exists`
+24. `data.source_update_note`
+25. `data.source_documents`
+26. `data.primary_source_tables`
+27. `data.supporting_source_documents`
+28. `data.extraction_errors`
+29. `data.contract_fallback_reason`
+30. `data.contract_fallback_target`
+31. `data.exposed_fields.intent_trace`
+32. `data.tax_inclusion`
+33. `data.tax_inclusion_note`
+34. `bridge_meta.skill_contract_version`
+35. `bridge_meta.protocol_version`
+36. `bridge_meta.capabilities`
+37. `bridge_meta.capabilities.exposed_tools`
+38. `bridge_meta.capabilities.result_structures`
+39. `bridge_meta.skill_appendix_relative_path`
+40. `bridge_meta.skill_appendix_path`
+41. `bridge_meta.skill_appendix_exists`
 
 说明：即使结果无法直接回答，也要尽量保留完整业务过程。若底层已经产出更完整的 trace、证据等级或规则链路，bridge 可保留脱敏摘要；SQL、数据库 id、科目代码和内部字段名不得默认透出给宿主老板问答。
 重要边界：过程暴露是给宿主、前端和审计链路使用，不等于对老板展示。老板可见回复必须经过字段净化，只输出业务概念、金额、期间、口径和来源，不原样暴露数据库辅助字段。
-补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序。
+补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序；如果同时存在 `data.source_update_note`，也要保留来源更新时间。
 
 ## 3. 宿主运行接口（按需）
 
@@ -132,10 +133,11 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
    - 合并单元格产生的空客户名不能直接跳过，要继承上一条非空客户名
    - 资金到账表要兼容任意 `xx年Qn收入明细` sheet，不允许只支持固定季度名称
    - `fin_revenue_settlements` 已废弃，仅保留历史兼容，不再作为查询来源
-5. 每张业务表都应把“来源 Excel / sheet / 报表类型”写进表注释：
-   - 注释格式统一为结构化 `financeqa_source`
-   - 查询收口阶段统一从表注释提取 `source_note/source_documents`
-   - 历史遗留的纯文本注释会在 bootstrap/query/import 时自动升级
+5. 财务来源文件名和更新时间以 `fin_file_mappings` 为准：
+   - `fin_fund_income`、`fin_cost_settlements`、银行流水、序时账、科目余额、利润表、资产负债表等财务来源表，查询收口阶段只能用 `fin_file_mappings` 生成 `source_note/source_documents/source_update_note`
+   - 没有映射就不展示该财务来源，不用表注释、写死文件名或历史默认名兜底
+   - 合同 PDF 来源来自 `contract_main`，发票 PDF 来源来自 `contract_invoices`
+   - 表/字段注释只作为语义能力目录和审计辅助，不作为老板可见来源文件名兜底
 
 ## 4. 查询响应契约（Agent 必须按此解析）
 
@@ -185,6 +187,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 8. 兜底查询：处理供应商数量、人力成本、整体支出、项目收入成本、某主体金额等问题。
 9. 精确余额查询：查货币资金、银行存款、指定科目期末余额。
 10. 合同维度查询：查客户合同结算/到账/开票，或供应商合同成本/实际付款。
+11. 合同/发票 PDF 内容查询：合同条款、合同全文、正文、页码、服务范围、付款条款查 `contract_main + contract_pages`；发票内容、发票号、票面项目、购买方/销售方、税额、备注查 `contract_invoices` 并关联 `contract_main`。
 
 补充规则：
 
@@ -272,6 +275,10 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
    - 供应商合同先回答现金口径实际付款，再补财务口径合同成本
    - 混合合同也必须先现金、再财务
    - 合同优先关键词、来源表映射应视为可配置规则，不假设写死在代码中
+7. 如果问的是合同/发票 PDF 内容，而不是经营金额：
+   - 合同条款、合同全文、正文、页码、服务范围、付款条款查 `contract_main + contract_pages`
+   - 发票内容、发票号、票面项目、购买方/销售方、税额、备注查 `contract_invoices` 并关联 `contract_main`
+   - 不从 `fin_*` 合同经营台账推断 PDF 原文内容
 
 ## 8. 核心指标返回规则
 

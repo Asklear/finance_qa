@@ -4,14 +4,14 @@
 flowchart LR
     A["外部数据源<br/>财报 Excel / 银行流水 / 序时账 / 科目余额 / 合同收入成本台账"] --> B["Ingest 层<br/>parser + ingest + 合并单元格展开 + 来源分区覆盖"]
     B --> C[("Configured DB<br/>PostgreSQL default<br/>SQLite explicit compatibility")]
-    C -. 表/字段注释 .-> SRC["Source Catalog<br/>schema_comment_reader + source_attribution_*<br/>financeqa_source 元数据"]
+    C -. 映射/注释 .-> SRC["Source Catalog<br/>fin_file_mappings + source_attribution_*<br/>合同/发票文件表 + 语义注释"]
 
     S["宿主 Skill 层<br/>SKILL.md + docs/SKILL_APPENDIX_FULL.md"] --> H["宿主入口<br/>OpenClaw / Claude Code / CLI"]
     H --> BR["Bridge / CLI 层<br/>finance-query / finance-host-data / finance-upload<br/>finance-sync / finance-dimensions"]
     BR --> RT["Query Runtime<br/>engine_runtime + result_types"]
 
     RT --> RW["老板问题改写<br/>query_rewrite<br/>期间 / 指标 / 实体 / 口径槽位"]
-    RW --> CAT["语义能力目录<br/>semantic_catalog<br/>表注释 + 字段注释 + 功能模块"]
+    RW --> CAT["语义能力目录<br/>semantic_catalog<br/>字段注释 + 功能模块"]
     CAT --> PROBE["轻量覆盖探测<br/>source_probe + source_probe_contracts"]
     PROBE --> RD["主口径决策<br/>route_decision<br/>contract_aggregate / bank_statement / fallback"]
 
@@ -35,7 +35,7 @@ flowchart LR
     CFG -.读取.-> EXEC
     CFG -.读取.-> QFB
 
-    EXEC --> FIN["收口与归因<br/>query_finalize + source_attribution_*<br/>source_note / source_documents"]
+    EXEC --> FIN["收口与归因<br/>query_finalize + source_attribution_*<br/>source_note / source_update_note / source_documents"]
     SRC --> FIN
     FIN --> O["输出<br/>structured JSON + boss_reply + route_decision + trace"]
     O --> SAN["老板可见层<br/>隐藏 id / 科目代码 / SQL / trace<br/>只展示金额 / 期间 / 口径 / 来源 Excel"]
@@ -48,7 +48,7 @@ flowchart LR
 3. 明确现金问题（银行、银行卡、实际到账、实际支出、回款、付款、净增加）优先走 `bank_cash_queries`。
 4. `query_execution*` 负责执行阶段排序和口径切换策略；合同优先问题在合同表不能覆盖时默认停止并说明缺口，只有用户显式要求账上或银行流水口径时才切换到现金或财务账。
 5. `orchestrator + source_adapter_*` 负责多源事实集合并，`contract_aggregate_*` 负责老板口径的合同/项目汇总。
-6. 来源追溯统一在查询收口阶段完成：优先读取表/字段注释中的结构化 `financeqa_source` 元数据，生成 `source_note/source_documents`。
+6. 来源追溯统一在查询收口阶段完成：财务来源文件名和更新时间读取 `fin_file_mappings`，没有映射就不展示该来源；合同和发票来源分别读取 `contract_main`、`contract_invoices`。表/字段注释只作为语义能力目录和审计辅助，不作为老板可见来源文件名兜底。
 7. 底层数据库默认 PostgreSQL；SQLite 只作为显式本地兼容模式，不再默认回退根目录 `finance.db`。
 8. Bridge 当前暴露 5 个工具：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 9. 接口 JSON 必须保留 `route_decision/probe_results/trace/executed_sql` 等审计字段；老板可见回复必须翻译成业务概念，不直接展示数据库辅助字段。

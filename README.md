@@ -8,6 +8,7 @@
 ### 1. 老板口径优先的数据血缘
 系统既保留底层“序时帐 / 银行流水 / 科目余额 / 利润表 / 资产负债表”的可追溯证据，也优先使用财务专家按老板意图整理后的合同维度台账：
 - **老板口径主源**：收入、销售额、营收、成本、利润、客户、供应商、项目、合同类问题，优先探测 `fin_contracts + fin_fund_income + fin_cost_settlements`。
+- **PDF 内容主源**：当用户问合同条款、合同全文、服务范围、付款条款、发票内容、发票号码、购买方/销售方或票面项目时，查询 `contract_main + contract_pages + contract_invoices`；这类问题不从 `fin_*` 经营台账推断。
 - **底层财务证据**：当合同/专家表无法覆盖问题时，默认先说明合同口径缺口；只有用户显式要求账上或银行流水口径时，才查序时帐、科目余额、利润表、资产负债表或银行流水。
 - **全格式兼容**：内建 `Python/xlrd` 回落机制，支持老式用友/金蝶产生的 OLE2 腐败文件，并实现了**全自动多页签 (Multi-sheet) 遍历解析**。
 - **智能期间识别**：支持复合期间报表（如 `2026.01-2026.02`）的无损提取与分录重组。
@@ -515,10 +516,13 @@ go test ./tests/integration/... -count=1
 老板核心指标（收入/营收/销售额/成本/利润/客户/供应商/项目/合同）默认按“合同/专家表优先”输出：
 
 1. 先探测 `fin_contracts + fin_fund_income + fin_cost_settlements` 是否能回答老板问题；能回答时，以这些表作为主要口径。
-2. 合同/专家表不能覆盖时，默认返回合同口径缺口；只有显式问“银行流水/实际到账/实际支出”或“账上/科目余额/序时账/资产负债表”时，再切到对应口径，不把非合同结果伪装成合同口径。
-3. 问题明确包含 `银行`、`银行卡`、`到账`、`实际收款`、`实际支出`、`回款`、`付款` 等现金语义时，优先走银行流水。
-4. 当问题继续追问 `差异原因`、`为什么不一样`、`回款和利润差异` 时，再展开 `cash_flow`、`difference_bridge` 与 `profit_cash_bridge`。
-5. 老板可见回答必须翻译成财务概念与 Excel 来源，不展示数据库 ID、科目代码、SQL、`route_decision`、`probe_results` 等辅助字段。
+2. 用户问合同 PDF 或发票 PDF 的内容、条款、正文、全文、页码、发票号码、票面项目、购买方/销售方、税额、备注时，走 `contract_*` 明细库：合同主信息在 `contract_main`，合同 OCR 全文在 `contract_pages`，发票结构化 OCR 在 `contract_invoices`。
+3. 合同/专家表不能覆盖时，默认返回合同口径缺口；只有显式问“银行流水/实际到账/实际支出”或“账上/科目余额/序时账/资产负债表”时，再切到对应口径，不把非合同结果伪装成合同口径。
+4. 问题明确包含 `银行`、`银行卡`、`到账`、`实际收款`、`实际支出`、`回款`、`付款` 等现金语义时，优先走银行流水。
+5. 当问题继续追问 `差异原因`、`为什么不一样`、`回款和利润差异` 时，再展开 `cash_flow`、`difference_bridge` 与 `profit_cash_bridge`。
+6. 老板可见回答必须翻译成财务概念与 Excel 来源，不展示数据库 ID、科目代码、SQL、`route_decision`、`probe_results` 等辅助字段。
+7. 老板可见回答必须保留 `data.source_note` 和 `data.source_update_note`；不要从表名、SQL 或记忆中重写来源文件名。
+8. 财务来源文件名和更新时间只从 `tenant_uhub.fin_file_mappings` 获取；没有映射就不展示该财务来源，不用表注释或硬编码文件名兜底。合同来源来自 `tenant_uhub.contract_main`，发票来源来自 `tenant_uhub.contract_invoices`。
 
 桥接层（`plugin/openclaw-finance/server/finance_bridge.py`）会额外补充：
 
@@ -530,18 +534,21 @@ go test ./tests/integration/... -count=1
 6. `data.route_decision`
 7. `data.route_decision.probe_results`
 8. `data.source_note`
-9. `data.source_documents`
-10. `data.primary_source_tables`
-11. `data.supporting_source_documents`
-12. `bridge_meta.skill_contract_version`
-13. `bridge_meta.protocol_version`（当前 `v2`）
-14. `bridge_meta.capabilities`
-15. `bridge_meta.capabilities.exposed_tools`
-16. `bridge_meta.skill_appendix_relative_path`
-17. `bridge_meta.skill_appendix_path`
-18. `bridge_meta.skill_appendix_exists`
-19. `bridge_meta.final_answer_available`
-20. `bridge_meta.final_answer_source`
+9. `data.source_update_note`
+10. `data.source_documents`
+11. `data.primary_source_tables`
+12. `data.supporting_source_documents`
+13. `bridge_meta.skill_contract_version`
+14. `bridge_meta.protocol_version`（当前 `v2`）
+15. `bridge_meta.capabilities`
+16. `bridge_meta.capabilities.exposed_tools`
+17. `bridge_meta.skill_appendix_relative_path`
+18. `bridge_meta.skill_appendix_path`
+19. `bridge_meta.skill_appendix_exists`
+20. `bridge_meta.final_answer_available`
+21. `bridge_meta.final_answer_source`
+
+来源规则：财务类来源文件名和更新时间统一来自 `fin_file_mappings`。如果某个财务来源没有映射，查询层不会再用表注释、旧文件名或硬编码文案兜底；这代表当前库里没有可对老板展示的来源文件。合同和发票文件分别从 `contract_main`、`contract_invoices` 取文件名、更新时间和 OSS 路径。
 
 说明：桥接层不再读取/注入 `SKILL.md` 或 appendix 的正文规则，skill 仍由宿主（OpenClaw/Claude Code）skills 机制加载；但桥接层会读取 `SKILL.md` 顶部的契约版本标记，校验 appendix 相对路径是否存在，并把这些元数据写回响应。
 当前推荐使用“核心版 SKILL + 附录”：

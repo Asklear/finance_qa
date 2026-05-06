@@ -24,6 +24,8 @@
 3. 如果接口层能返回完整的中间过程、证据等级、SQL 或规则链路，优先完整保留给宿主或前端，不要在桥接层自行裁剪。
 4. `route_decision` / `probe_results` 用于判断主口径和回退原因，必须保留给宿主或审计链路，但不能把字段名原样贴给老板。
 5. 老板可见回复禁止原样展示数据库 id、合同编号、科目代码、表名字段名、SQL、trace、bridge_meta 等辅助字段；必须翻译成合同/项目、会计科目含义和来源 Excel。
+6. 老板可见回复必须保留 bridge 返回的 `source_note` 和 `source_update_note`。财务来源文件名和更新时间只认 `fin_file_mappings`，没有映射就不要用表注释、历史文件名或记忆兜底；合同和发票来源分别来自 `contract_main`、`contract_invoices`。
+7. 合同/发票 PDF 内容问题不能用 `fin_*` 经营台账推断。问合同条款、合同全文、正文、页码、服务范围、付款条款时看 `contract_main + contract_pages`；问发票内容、发票号、票面项目、购买方/销售方、税额、备注时看 `contract_invoices`，必要时关联 `contract_main`。
 
 ## 工具调用策略
 
@@ -31,7 +33,7 @@
    ```bash
    printf '%s' '{"action":"call","name":"finance-query","arguments":{"query":"用户原问题"}}' | python3 /root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py
    ```
-   若当前环境没有线上 OpenClaw bridge，则使用仓库内 `plugin/openclaw-finance/server/finance_bridge.py`。解析返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 bridge 的最终答案。
+   若当前环境没有线上 OpenClaw bridge，则使用仓库内 `plugin/openclaw-finance/server/finance_bridge.py`。解析返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源和来源更新时间，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 bridge 的最终答案。
 1. 优先调用 `finance-query` 获取结构化回答。
 2. 若 `success=false` 或 `answer_method=llm_payload`，立即调用 `finance-host-data` 做兜底推理。
 3. 涉及报表导入，使用 `finance-upload`（单文件）。

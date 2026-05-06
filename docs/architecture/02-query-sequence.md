@@ -7,7 +7,7 @@ sequenceDiagram
     participant Bridge as finance_bridge / financeqa CLI
     participant RT as engine_runtime
     participant Rewrite as query_rewrite
-    participant Catalog as semantic_catalog + source metadata
+    participant Catalog as semantic_catalog + source mapping
     participant Probe as source_probe + route_decision
     participant Exec as query_execution / stage policy
     participant Bank as bank_cash_queries
@@ -28,8 +28,8 @@ sequenceDiagram
     RT->>Rewrite: 改写老板问题为意图槽位
     Rewrite-->>RT: 指标 / 实体 / 主期间 / 子期间 / 现金语义 / 合同优先标记
     RT->>Catalog: 构建数据源能力目录
-    Catalog->>DB: 读取表注释 / 字段注释 / financeqa_source
-    DB-->>Catalog: 表能力 / 字段语义 / 来源 Excel 元数据
+    Catalog->>DB: 读取字段注释 / 功能目录 / fin_file_mappings
+    DB-->>Catalog: 表能力 / 字段语义 / 来源 Excel 映射
     RT->>Probe: 对候选来源做轻量覆盖探测
     Probe->>DB: 探测合同/专家表、银行流水、财务账覆盖情况
     DB-->>Probe: probe_results
@@ -60,7 +60,7 @@ sequenceDiagram
 
     Exec->>Final: 合并结果、trace、route_decision、source_plan
     Final->>DB: 读取来源元数据
-    DB-->>Final: source_note / source_documents
+    DB-->>Final: source_note / source_update_note / source_documents
     Final-->>Bridge: stdout JSON(success / data / boss_reply / bridge_meta)
     Bridge-->>Host: content[0].text(JSON)
     Host->>Host: 解析 JSON，保留审计字段，净化老板可见字段
@@ -83,6 +83,7 @@ sequenceDiagram
 3. 老板核心指标先走合同/专家表候选，但必须经过轻量探测确认覆盖；不能因为识别到实体就绕开合同口径。
 4. 明确现金问题不强行走合同汇总，直接优先银行流水。
 5. `route_decision/probe_results` 是宿主和审计链路使用的口径解释字段，不能原样贴给老板。
-6. `source_note` 是老板可见来源说明的主入口；宿主应优先直接引用，不要用 SQL、表名或字段名重拼来源。
-7. 如果结果来自序时账经营口径，必须消费 `data.tax_inclusion/data.tax_inclusion_note`，说明默认未主动剔税。
-8. 老板可见回复必须过滤数据库 id、合同 id、科目代码、SQL、trace、bridge_meta 等辅助字段。
+6. `source_note` 是老板可见来源说明的主入口；`source_update_note` 是老板可见来源更新时间。宿主应优先直接引用，不要用 SQL、表名、字段名、表注释或历史记忆重拼来源。
+7. 财务来源文件名和更新时间只从 `fin_file_mappings` 获取；没有映射就不展示该财务来源。合同和发票来源分别来自 `contract_main`、`contract_invoices`。
+8. 如果结果来自序时账经营口径，必须消费 `data.tax_inclusion/data.tax_inclusion_note`，说明默认未主动剔税。
+9. 老板可见回复必须过滤数据库 id、合同 id、科目代码、SQL、trace、bridge_meta 等辅助字段。

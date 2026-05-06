@@ -111,6 +111,7 @@ metadata:
    - `data.fact_sets`
    - `data.source_catalog`
    - `data.source_note`
+   - `data.source_update_note`
    - `data.source_documents`
    - `data.primary_source_tables`
    - `data.supporting_source_documents`
@@ -126,6 +127,7 @@ metadata:
 8. 若存在 `data.source_note`：
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
+   - 若同时存在 `data.source_update_note`，老板可见回答也必须保留来源更新时间
 9. 若 `bridge_meta.capabilities.exposed_tools` 存在：
    - 仅把其中列出的工具视为当前 bridge 可调用能力
    - 不要把仓库内其他 CLI 子命令误当成 OpenClaw / Claude 当前可直接调用的 bridge tool
@@ -200,6 +202,7 @@ metadata:
    - 客户合同默认先答“现金口径：到账/回款”，再答“财务口径：合同台账结算/开票”
    - 供应商合同默认先答“现金口径：实际付款”，再答“财务口径：合同成本”
    - 混合合同也要先现金、再财务，不能把两个口径揉成一段
+   - 如果问题问的是合同/发票 PDF 内容，而不是经营金额：合同条款、全文、正文、页码、服务范围、付款条款查 `contract_main + contract_pages`；发票内容、发票号、票面项目、购买方/销售方、税额、备注查 `contract_invoices` 并关联 `contract_main`
    - 如果合同台账当前不能直接回答，要保留 `data.contract_fallback_reason`，并明确说明“未自动切到财务账或银行流水”；用户显式要求非合同口径后再查对应来源
    - 合同优先关键词、合同来源表映射都应视为可配置规则，不要假设是写死常量
 8. 证据不足：
@@ -280,10 +283,11 @@ metadata:
    - 合并单元格导致的空客户名，要沿用上一条非空客户名，避免漏导合同
    - 资金到账表要支持任意 `xx年Qn收入明细` sheet，不要只写死 `25年Q4` / `26年Q1`
    - `fin_revenue_settlements` 已废弃，仅保留历史兼容，不再作为导入或查询主表
-5. 每次导入后，目标表的表注释都会写入结构化来源元数据：
-   - 主要从 Excel 文件名和 sheet 名生成
-   - 查询时统一从表注释提取 `source_note/source_documents`
-   - 旧纯文本表注释会在 bootstrap/query/import 时自动升级成结构化 `financeqa_source`
+5. 财务来源文件名和更新时间统一来自 `fin_file_mappings`：
+   - `fin_fund_income`、`fin_cost_settlements`、银行流水、序时账、科目余额、利润表、资产负债表等财务来源表，查询时只能用 `fin_file_mappings` 生成 `source_note/source_documents/source_update_note`
+   - 没有映射就不展示该财务来源，不用表注释、写死文件名或历史默认名兜底
+   - 合同 PDF 来源来自 `contract_main`，发票 PDF 来源来自 `contract_invoices`
+   - 表/字段注释只作为语义能力目录和审计辅助，不作为老板可见来源文件名兜底
 
 ## 8. 附录说明
 
