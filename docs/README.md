@@ -8,7 +8,8 @@
 2. `architecture/01-layered-architecture.md`：当前分层架构图。
 3. `architecture/02-query-sequence.md`：当前查询请求时序图。
 4. `architecture/03-deployment-runtime.md`：当前部署与运行图，包含 OpenClaw/Claude bridge、飞书主动扫描、OSS ODS、Gemini OCR worker、定时任务和上线验收步骤。
-5. `calc-plan.md`：`calc_plan` 结构化计算协议说明。
+5. `architecture/04-code-quality-audit.md`：当前代码重复度、模块正交性和测试覆盖整改清单。
+6. `calc-plan.md`：`calc_plan` 结构化计算协议说明。
 
 ## 不再保留的文档类型
 
