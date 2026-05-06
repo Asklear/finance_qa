@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -33,7 +34,7 @@ func (e *Engine) collectContractDetail(ctx context.Context, spec QuerySpec, prob
 	}
 	ids := contractDetailInternalIDs(primaryCandidates)
 	if probe.Intent == ContractDetailIntentInvoice {
-		invoices, err := e.collectContractInvoices(ids)
+		invoices, err := e.collectContractInvoicesForQuestion(ids, spec.NormalizedQuestion)
 		if err != nil {
 			return result, err
 		}
@@ -116,9 +117,55 @@ func contractDetailMatchesFromCandidates(candidates []contractDetailCandidate) [
 			TaxRate:         candidate.TaxRate,
 			ServiceScope:    strings.TrimSpace(candidate.ServiceScope),
 			FileName:        strings.TrimSpace(candidate.FileName),
+			UpdatedAt:       normalizeSourceUpdatedAt(candidate.UpdatedAt),
 		})
 	}
 	return out
+}
+
+func (e *Engine) collectContractInvoicesForQuestion(ids []string, question string) ([]ContractInvoiceDetail, error) {
+	invoices, err := e.collectContractInvoices(ids)
+	if err != nil || len(invoices) == 0 {
+		return invoices, err
+	}
+	exact := make([]ContractInvoiceDetail, 0, 1)
+	for _, invoice := range invoices {
+		number := strings.TrimSpace(invoice.InvoiceNumber)
+		if number != "" && strings.Contains(question, number) {
+			exact = append(exact, invoice)
+		}
+	}
+	if len(exact) > 0 {
+		return exact, nil
+	}
+	type scoredInvoice struct {
+		invoice ContractInvoiceDetail
+		score   int
+	}
+	scored := make([]scoredInvoice, 0, len(invoices))
+	for _, invoice := range invoices {
+		score := scoreContractInvoiceQuestionMatch(question, invoice)
+		if score > 0 {
+			scored = append(scored, scoredInvoice{invoice: invoice, score: score})
+		}
+	}
+	if len(scored) == 0 {
+		return invoices, nil
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score == scored[j].score {
+			return scored[i].invoice.IssueDate > scored[j].invoice.IssueDate
+		}
+		return scored[i].score > scored[j].score
+	})
+	top := scored[0].score
+	out := make([]ContractInvoiceDetail, 0, len(scored))
+	for _, item := range scored {
+		if item.score == top || item.score*2 >= top {
+			out = append(out, item.invoice)
+		}
+	}
+	return out, nil
 }
 
 func (e *Engine) collectContractInvoices(ids []string) ([]ContractInvoiceDetail, error) {
@@ -130,6 +177,7 @@ func (e *Engine) collectContractInvoices(ids []string) ([]ContractInvoiceDetail,
 		return nil, nil
 	}
 	selects := []string{
+		"CAST(contract_id AS TEXT)",
 		contractDetailTextSelectExpr(cols, "invoice_number"),
 		contractDetailTextSelectExpr(cols, "issue_date"),
 		contractDetailTextSelectExpr(cols, "buyer_name"),
@@ -139,6 +187,10 @@ func (e *Engine) collectContractInvoices(ids []string) ([]ContractInvoiceDetail,
 		contractDetailNumericSelectExpr(cols, "total_amount"),
 		contractDetailTextSelectExpr(cols, "remarks"),
 		contractDetailTextSelectExpr(cols, "items_json"),
+		contractDetailTextSelectExpr(cols, "file_name"),
+		contractDetailTextSelectExpr(cols, "feishu_file_name"),
+		contractDetailTextSelectExpr(cols, "storage_key"),
+		contractDetailTextSelectExpr(cols, "updated_at"),
 	}
 	orderBy := "invoice_number"
 	if cols["issue_date"] {
@@ -159,7 +211,9 @@ func (e *Engine) collectContractInvoices(ids []string) ([]ContractInvoiceDetail,
 	out := make([]ContractInvoiceDetail, 0, 10)
 	for rows.Next() {
 		var item ContractInvoiceDetail
+		var fileName, feishuFileName, storageKey string
 		if err := rows.Scan(
+			&item.ContractID,
 			&item.InvoiceNumber,
 			&item.IssueDate,
 			&item.BuyerName,
@@ -169,12 +223,96 @@ func (e *Engine) collectContractInvoices(ids []string) ([]ContractInvoiceDetail,
 			&item.TotalAmount,
 			&item.Remarks,
 			&item.ItemsJSON,
+			&fileName,
+			&feishuFileName,
+			&storageKey,
+			&item.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		item.FileName = preferredSourceFileName(fileName, feishuFileName, storageKey)
+		item.UpdatedAt = normalizeSourceUpdatedAt(item.UpdatedAt)
+		item.ItemsSummary = summarizeInvoiceItemsJSON(item.ItemsJSON)
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func summarizeInvoiceItemsJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" || raw == "{}" {
+		return ""
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		runes := []rune(raw)
+		if len(runes) > 120 {
+			return string(runes[:120])
+		}
+		return raw
+	}
+	items := make([]string, 0, 4)
+	var walk func(any)
+	walk = func(value any) {
+		if len(items) >= 4 {
+			return
+		}
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				walk(item)
+				if len(items) >= 4 {
+					return
+				}
+			}
+		case map[string]any:
+			name := firstStringValue(typed, "name", "item", "item_name", "goods_name", "project_name", "货物或应税劳务名称", "项目名称", "名称")
+			amount := firstNumberValue(typed, "amount", "total", "金额", "价税合计", "不含税金额")
+			tax := firstNumberValue(typed, "tax", "tax_amount", "税额")
+			if name == "" {
+				for _, value := range typed {
+					if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+						name = strings.TrimSpace(s)
+						break
+					}
+				}
+			}
+			if name != "" {
+				part := name
+				if amount != 0 {
+					part += fmt.Sprintf(" 金额%.2f", amount)
+				}
+				if tax != 0 {
+					part += fmt.Sprintf(" 税额%.2f", tax)
+				}
+				items = append(items, part)
+			}
+		}
+	}
+	walk(decoded)
+	return strings.Join(items, "；")
+}
+
+func firstStringValue(row map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := row[key]; ok {
+			if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+func firstNumberValue(row map[string]any, keys ...string) float64 {
+	for _, key := range keys {
+		if value, ok := row[key]; ok {
+			if number := anyToFloat64(value); number != 0 {
+				return number
+			}
+		}
+	}
+	return 0
 }
 
 func summarizeContractInvoices(candidates []contractDetailCandidate, invoices []ContractInvoiceDetail) ContractInvoiceSummaryDetail {

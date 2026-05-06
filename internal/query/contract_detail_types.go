@@ -46,6 +46,7 @@ type ContractDetailMatch struct {
 	TaxRate         float64
 	ServiceScope    string
 	FileName        string
+	UpdatedAt       string
 }
 
 type ContractInvoiceSummaryDetail struct {
@@ -59,6 +60,7 @@ type ContractInvoiceSummaryDetail struct {
 }
 
 type ContractInvoiceDetail struct {
+	ContractID             string
 	InvoiceNumber         string
 	IssueDate             string
 	BuyerName             string
@@ -68,6 +70,9 @@ type ContractInvoiceDetail struct {
 	TotalAmount           float64
 	Remarks               string
 	ItemsJSON             string
+	ItemsSummary          string
+	FileName              string
+	UpdatedAt             string
 }
 
 type ContractPageSnippet struct {
@@ -93,6 +98,7 @@ type contractDetailCandidate struct {
 	TaxRate          float64
 	ServiceScope     string
 	FileName         string
+	UpdatedAt        string
 	matchScore       int
 	structuredFields int
 }

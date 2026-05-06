@@ -84,7 +84,6 @@ func contractDetailResultData(detail ContractDetailResult) map[string]any {
 	data := map[string]any{
 		"intent":        string(detail.Probe.Intent),
 		"source_tables": append([]string{}, detail.SourceTables...),
-		"source_note":   contractDetailSourceNote(detail.SourceTables),
 		"contracts":     contractDetailMatchesData(detail.MatchedContracts),
 		"probe": map[string]any{
 			"intent":                   string(detail.Probe.Intent),
@@ -95,6 +94,14 @@ func contractDetailResultData(detail ContractDetailResult) map[string]any {
 			"confidence":               detail.Probe.Confidence,
 			"business_matching_reason": detail.Probe.Reason,
 		},
+	}
+	if note := contractDetailSourceNoteFromRows(detail); note != "" {
+		data["source_note"] = note
+	} else {
+		data["source_note"] = contractDetailSourceNote(detail.SourceTables)
+	}
+	if updateNote := contractDetailSourceUpdateNoteFromRows(detail); updateNote != "" {
+		data["source_update_note"] = updateNote
 	}
 	if detail.InvoiceSummary.InvoiceCount > 0 || detail.InvoiceSummary.TotalInvoicedAmount != 0 {
 		data["invoice_summary"] = contractInvoiceSummaryData(detail.InvoiceSummary)
@@ -127,6 +134,7 @@ func contractDetailMatchesData(matches []ContractDetailMatch) []map[string]any {
 			"tax_rate":         match.TaxRate,
 			"service_scope":    match.ServiceScope,
 			"file_name":        match.FileName,
+			"updated_at":       match.UpdatedAt,
 		}
 		out = append(out, row)
 	}
@@ -157,6 +165,9 @@ func contractInvoicesData(invoices []ContractInvoiceDetail) []map[string]any {
 			"total_tax_amount":         invoice.TotalTaxAmount,
 			"total_amount":             invoice.TotalAmount,
 			"remarks":                  invoice.Remarks,
+			"items_summary":            invoice.ItemsSummary,
+			"file_name":                invoice.FileName,
+			"updated_at":               invoice.UpdatedAt,
 		})
 	}
 	return out
@@ -225,6 +236,9 @@ func buildContractDetailClauseMessage(title string, contract map[string]any, dat
 	if note := strings.TrimSpace(anyToString(data["source_note"])); note != "" {
 		parts = append(parts, note)
 	}
+	if updateNote := strings.TrimSpace(anyToString(data["source_update_note"])); updateNote != "" {
+		parts = append(parts, updateNote)
+	}
 	return sanitizeContractDetailText(strings.Join(parts, "\n"))
 }
 
@@ -250,19 +264,36 @@ func buildContractDetailInvoiceMessage(title string, data map[string]any) string
 	}
 	invoices := anyToMapSlice(data["invoices"])
 	for _, invoice := range invoices {
-		parts = append(parts, fmt.Sprintf(
-			"明细：%s，发票号%s，含税%.2f元，税额%.2f元。",
-			anyToString(invoice["issue_date"]),
-			anyToString(invoice["invoice_number"]),
-			anyToFloat64(invoice["total_amount"]),
-			anyToFloat64(invoice["total_tax_amount"]),
-		))
+		detailParts := []string{
+			fmt.Sprintf("明细：%s，发票号%s，含税%.2f元，税额%.2f元",
+				anyToString(invoice["issue_date"]),
+				anyToString(invoice["invoice_number"]),
+				anyToFloat64(invoice["total_amount"]),
+				anyToFloat64(invoice["total_tax_amount"]),
+			),
+		}
+		if buyer := strings.TrimSpace(anyToString(invoice["buyer_name"])); buyer != "" {
+			detailParts = append(detailParts, "购买方："+buyer)
+		}
+		if seller := strings.TrimSpace(anyToString(invoice["seller_name"])); seller != "" {
+			detailParts = append(detailParts, "销售方："+seller)
+		}
+		if items := strings.TrimSpace(anyToString(invoice["items_summary"])); items != "" {
+			detailParts = append(detailParts, "票面项目："+items)
+		}
+		if remarks := strings.TrimSpace(anyToString(invoice["remarks"])); remarks != "" {
+			detailParts = append(detailParts, "备注："+remarks)
+		}
+		parts = append(parts, strings.Join(detailParts, "，")+"。")
 	}
 	if len(parts) == 1 {
 		parts = append(parts, "合同明细库里没有找到这份合同对应的发票记录。")
 	}
 	if note := strings.TrimSpace(anyToString(data["source_note"])); note != "" {
 		parts = append(parts, note)
+	}
+	if updateNote := strings.TrimSpace(anyToString(data["source_update_note"])); updateNote != "" {
+		parts = append(parts, updateNote)
 	}
 	return sanitizeContractDetailText(strings.Join(parts, "\n"))
 }
@@ -283,6 +314,50 @@ func contractDetailSourceNote(tables []string) string {
 		return ""
 	}
 	return "来源：" + strings.Join(dedupeStrings(labels), "、")
+}
+
+func contractDetailSourceNoteFromRows(detail ContractDetailResult) string {
+	contractFiles := make([]string, 0, len(detail.MatchedContracts))
+	for _, match := range detail.MatchedContracts {
+		if fileName := normalizeSourceFileName(match.FileName); fileName != "" {
+			contractFiles = append(contractFiles, "《"+fileName+"》")
+		}
+	}
+	invoiceFiles := make([]string, 0, len(detail.Invoices))
+	for _, invoice := range detail.Invoices {
+		if fileName := normalizeSourceFileName(invoice.FileName); fileName != "" {
+			invoiceFiles = append(invoiceFiles, "《"+fileName+"》")
+		}
+	}
+	parts := []string{}
+	if len(contractFiles) > 0 {
+		parts = append(parts, strings.Join(dedupeStrings(contractFiles), "、"))
+	}
+	if len(invoiceFiles) > 0 {
+		parts = append(parts, strings.Join(dedupeStrings(invoiceFiles), "、"))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "来源：" + strings.Join(parts, "；")
+}
+
+func contractDetailSourceUpdateNoteFromRows(detail ContractDetailResult) string {
+	latest := ""
+	for _, match := range detail.MatchedContracts {
+		if updatedAt := normalizeSourceUpdatedAt(match.UpdatedAt); updatedAt != "" && updatedAt > latest {
+			latest = updatedAt
+		}
+	}
+	for _, invoice := range detail.Invoices {
+		if updatedAt := normalizeSourceUpdatedAt(invoice.UpdatedAt); updatedAt != "" && updatedAt > latest {
+			latest = updatedAt
+		}
+	}
+	if latest == "" {
+		return ""
+	}
+	return "来源更新时间：" + latest
 }
 
 func firstContractDetailTitle(detail ContractDetailResult) string {

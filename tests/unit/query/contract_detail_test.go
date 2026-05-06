@@ -30,6 +30,42 @@ func TestContractDetailInvoiceQuestionRoutesToContractDetail(t *testing.T) {
 	}
 }
 
+func TestInvoiceContentQuestionRoutesToContractDetail(t *testing.T) {
+	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
+	spec := query.BuildQuerySpec("INV-EDGE-002这张发票内容是什么？", now)
+	if spec.QueryFamily != query.QueryFamilyContractDetail {
+		t.Fatalf("QueryFamily = %s, want %s", spec.QueryFamily, query.QueryFamilyContractDetail)
+	}
+}
+
+func TestInvoiceWrittenContentQuestionRoutesToContractDetail(t *testing.T) {
+	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
+	spec := query.BuildQuerySpec("INV-EDGE-002这张发票里写了什么？", now)
+	if spec.QueryFamily != query.QueryFamilyContractDetail {
+		t.Fatalf("QueryFamily = %s, want %s", spec.QueryFamily, query.QueryFamilyContractDetail)
+	}
+}
+
+func TestContractContentQuestionRoutesToPages(t *testing.T) {
+	engine := newContractDetailTestEngine(t)
+	defer engine.Close()
+
+	res := engine.Query("百度边缘计算资源服务协议合同内容是什么？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if !strings.Contains(res.Message, "乙方提供边缘计算资源服务") {
+		t.Fatalf("contract content question should include OCR page text, got: %s", res.Message)
+	}
+	sourceTables, ok := res.Data["source_tables"].([]string)
+	if !ok {
+		t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
+	}
+	if !hasString(sourceTables, "contract_main") || !hasString(sourceTables, "contract_pages") {
+		t.Fatalf("source_tables = %#v, want contract_main + contract_pages", sourceTables)
+	}
+}
+
 func TestContractOperatingQuestionStillUsesExistingContractFlow(t *testing.T) {
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("2026年3月已开票未回款的项目有哪些？", now)
@@ -198,6 +234,40 @@ func TestContractDetailInvoiceQueryReturnsAmountsAndDatesSafely(t *testing.T) {
 	if hasString(sourceTables, "contract_invoice_summaries") || !hasString(sourceTables, "contract_invoices") {
 		t.Fatalf("source_tables = %#v", sourceTables)
 	}
+	sourceNote, _ := res.Data["source_note"].(string)
+	if !strings.Contains(sourceNote, "百度边缘计算资源服务协议.pdf") || !strings.Contains(sourceNote, "百度边缘计算资源服务协议-3月发票.pdf") {
+		t.Fatalf("source_note should use contract_main and contract_invoices file names, got %q", sourceNote)
+	}
+	sourceUpdateNote, _ := res.Data["source_update_note"].(string)
+	if !strings.Contains(sourceUpdateNote, "2026-05-06 10:20:00") {
+		t.Fatalf("source_update_note should use latest contract/invoice row update time, got %q", sourceUpdateNote)
+	}
+}
+
+func TestContractDetailInvoiceContentQueryCanMatchInvoiceDirectly(t *testing.T) {
+	engine := newContractDetailTestEngine(t)
+	defer engine.Close()
+
+	res := engine.Query("INV-EDGE-002这张发票内容是什么？")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	for _, want := range []string{"INV-EDGE-002", "百度在线网络技术(北京)有限公司", "南京优集数据科技有限公司", "边缘计算资源服务费", "41500.00"} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message should contain %q, got: %s", want, res.Message)
+		}
+	}
+	if strings.Contains(res.Message, "INV-EDGE-001") {
+		t.Fatalf("exact invoice-number question should not include sibling invoices, got: %s", res.Message)
+	}
+	assertContractDetailResultSafe(t, res)
+	sourceTables, ok := res.Data["source_tables"].([]string)
+	if !ok {
+		t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
+	}
+	if !hasString(sourceTables, "contract_invoices") {
+		t.Fatalf("source_tables = %#v, want contract_invoices", sourceTables)
+	}
 }
 
 func TestContractDetailInvoiceQueryAggregatesWithoutSummaryTable(t *testing.T) {
@@ -320,7 +390,8 @@ func buildContractDetailTestDB(t *testing.T) string {
 			tax_rate REAL,
 			service_scope TEXT,
 			file_name TEXT,
-			sync_status TEXT
+			sync_status TEXT,
+			updated_at TEXT
 		)`,
 		`CREATE TABLE contract_pages (
 			id INTEGER PRIMARY KEY,
@@ -352,7 +423,10 @@ func buildContractDetailTestDB(t *testing.T) string {
 			total_tax_amount REAL,
 			total_amount REAL,
 			remarks TEXT,
-			items_json TEXT
+			items_json TEXT,
+			file_name TEXT,
+			feishu_file_name TEXT,
+			updated_at TEXT
 		)`,
 		`CREATE TABLE fin_contracts (
 			contract_id TEXT PRIMARY KEY,
@@ -364,13 +438,13 @@ func buildContractDetailTestDB(t *testing.T) string {
 		`INSERT INTO contract_main(
 			id, contract_number, contract_title, party_a, party_b, sign_date,
 			start_date, end_date, contract_amount, amount_currency, settlement_cycle,
-			settlement_unit_price, payment_terms, payment_method, tax_rate, service_scope, file_name
+			settlement_unit_price, payment_terms, payment_method, tax_rate, service_scope, file_name, updated_at
 		) VALUES (
 			1, 'BAIDU-EDGE-2026', '百度边缘计算资源服务协议',
 			'百度在线网络技术(北京)有限公司', '南京优集数据科技有限公司',
 			'2026-01-05', '2026-01-01', '2026-12-31', 124500, 'CNY',
 			'按月结算', '资源用量单价', '甲方收到合格发票后30日内付款',
-			'银行转账', 0.06, '边缘计算资源服务', '百度边缘计算资源服务协议.pdf'
+			'银行转账', 0.06, '边缘计算资源服务', '百度边缘计算资源服务协议.pdf', '2026-05-06 10:10:00'
 		)`,
 		`INSERT INTO contract_main(
 			id, contract_number, contract_title, party_a, party_b, sign_date,
@@ -392,10 +466,10 @@ func buildContractDetailTestDB(t *testing.T) string {
 		) VALUES (21, 1, 2, 83000, 4698.11, 124500, 0.6667, '2026-03-28', 'INV-EDGE-002')`,
 		`INSERT INTO contract_invoices(
 			id, contract_id, invoice_number, issue_date, buyer_name, seller_name,
-			total_amount_without_tax, total_tax_amount, total_amount, remarks, items_json
+			total_amount_without_tax, total_tax_amount, total_amount, remarks, items_json, file_name, updated_at
 		) VALUES
-			(31, 1, 'INV-EDGE-001', '2026-02-28', '百度在线网络技术(北京)有限公司', '南京优集数据科技有限公司', 39150.94, 2349.06, 41500, '2月服务费', '[]'),
-			(32, 1, 'INV-EDGE-002', '2026-03-28', '百度在线网络技术(北京)有限公司', '南京优集数据科技有限公司', 39150.94, 2349.06, 41500, '3月服务费', '[]')`,
+			(31, 1, 'INV-EDGE-001', '2026-02-28', '百度在线网络技术(北京)有限公司', '南京优集数据科技有限公司', 39150.94, 2349.06, 41500, '2月服务费', '[{"name":"边缘计算资源服务费","amount":39150.94,"tax":2349.06}]', '百度边缘计算资源服务协议-2月发票.pdf', '2026-05-06 10:18:00'),
+			(32, 1, 'INV-EDGE-002', '2026-03-28', '百度在线网络技术(北京)有限公司', '南京优集数据科技有限公司', 39150.94, 2349.06, 41500, '3月服务费', '[{"name":"边缘计算资源服务费","amount":39150.94,"tax":2349.06}]', '百度边缘计算资源服务协议-3月发票.pdf', '2026-05-06 10:20:00')`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

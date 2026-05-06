@@ -130,7 +130,8 @@ func (e *Engine) applyLegacyContractContentFallback(q string, spec QuerySpec) Qu
 	if len(e.tableColumns("contract_main")) > 0 {
 		return spec
 	}
-	if inferContractDetailIntent(q) != ContractDetailIntentField {
+	intent := inferContractDetailIntent(q)
+	if intent != ContractDetailIntentField && intent != ContractDetailIntentPage {
 		return spec
 	}
 	if !containsAny(q, []string{"合同内容", "内容是什么", "是什么"}) {

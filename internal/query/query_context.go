@@ -22,8 +22,11 @@ type queryExecutionContext struct {
 }
 
 func shouldResolveEntityDeeply(spec QuerySpec) bool {
+	if spec.QueryFamily == QueryFamilyContractDetail {
+		return false
+	}
 	seedEntity := strings.TrimSpace(spec.Entity)
-	meaningfulSeedEntity := seedEntity != "" && !looksLikeSyntheticQuestionFragment(seedEntity) && !looksLikeAccountFragment(seedEntity)
+	meaningfulSeedEntity := seedEntity != "" && !looksLikeSyntheticQuestionFragment(seedEntity) && !looksLikeAccountFragment(seedEntity) && !looksLikePeriodOnlyEntity(seedEntity)
 	if meaningfulSeedEntity {
 		return true
 	}

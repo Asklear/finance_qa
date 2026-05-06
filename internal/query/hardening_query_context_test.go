@@ -140,6 +140,11 @@ func TestShouldResolveEntityDeeplySkipsEntitylessCompanyLevelRoutes(t *testing.T
 			want: true,
 		},
 		{
+			name: "contract detail uses document matcher instead of finance entity resolver",
+			spec: QuerySpec{Intent: IntentFallback, QueryFamily: QueryFamilyContractDetail, Entity: "商指针产品服务协议"},
+			want: false,
+		},
+		{
 			name: "raw entity already present",
 			spec: QuerySpec{Intent: IntentMonthlySummary, QueryFamily: QueryFamilyCoreMetric, Entity: "飞未"},
 			want: true,
