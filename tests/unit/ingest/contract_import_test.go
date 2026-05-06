@@ -226,6 +226,54 @@ WHERE source_report_type='contract_fund_income'
 `, 1)
 }
 
+func TestImportFileWithOptions_MixedWorkbookFullReplaceUsesCurrentWorkbookInSourceMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "contract-mixed-replaces-source-metadata.sqlite")
+	fundWorkbook := filepath.Join(t.TempDir(), "优集资金收入计算表-2026.xlsx")
+	costWorkbook := filepath.Join(t.TempDir(), "优集成本计算表-4.23-池.xlsx")
+	currentWorkbook := filepath.Join(t.TempDir(), "优集收入、成本计算表 - 上传.xlsx")
+	if err := createFundWorkbook(fundWorkbook); err != nil {
+		t.Fatalf("create fund workbook: %v", err)
+	}
+	if err := createCostOnlyWorkbook(costWorkbook); err != nil {
+		t.Fatalf("create cost workbook: %v", err)
+	}
+	if err := createMixedFundAndCostWorkbook(currentWorkbook); err != nil {
+		t.Fatalf("create mixed workbook: %v", err)
+	}
+
+	imp := ingest.NewImporter(nil)
+	for _, workbook := range []string{fundWorkbook, costWorkbook, currentWorkbook} {
+		if _, err := imp.ImportFileWithOptions(ctx, dbPath, workbook, ingest.ImportOptions{
+			Incremental:     false,
+			CompanyOverride: "南京优集数据科技有限公司",
+		}); err != nil {
+			t.Fatalf("import %s failed: %v", filepath.Base(workbook), err)
+		}
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	for _, tableName := range []string{"fin_fund_income", "fin_cost_settlements"} {
+		var comment string
+		if err := db.QueryRow(`SELECT comment FROM meta_table_comments WHERE table_name=?`, tableName).Scan(&comment); err != nil {
+			t.Fatalf("load %s table comment: %v", tableName, err)
+		}
+		if !strings.Contains(comment, "优集收入、成本计算表-上传.xlsx") {
+			t.Fatalf("%s source metadata should use current Feishu workbook name, got %q", tableName, comment)
+		}
+		if strings.Contains(comment, "优集资金收入计算表-2026.xlsx") || strings.Contains(comment, "优集成本计算表-4.23-池.xlsx") {
+			t.Fatalf("%s source metadata should not keep replaced workbook names, got %q", tableName, comment)
+		}
+	}
+}
+
 func TestImportFileWithOptions_ContractFundWorkbookLoadsFundIncome(t *testing.T) {
 	t.Parallel()
 
@@ -712,7 +760,7 @@ WHERE g.year_month = '2026-01'
 `, 4)
 }
 
-func TestImportFileWithOptions_ContractCostWorkbookDedupesMergedMembersAndSkipsUnmergedBlankContractPayment(t *testing.T) {
+func TestImportFileWithOptions_ContractCostWorkbookDedupesMergedMembersAndKeepsCustomerLevelBlankContractPayment(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -738,15 +786,20 @@ func TestImportFileWithOptions_ContractCostWorkbookDedupesMergedMembersAndSkipsU
 
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_contracts`, 1)
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlements`, 0)
-	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_groups`, 1)
+	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_groups`, 2)
 	assertCount(t, db, `SELECT COUNT(1) FROM fin_cost_settlement_group_members`, 1)
 	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(settlement_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 100)
-	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(paid_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 0)
+	assertYearMonthAmount(t, db, `SELECT COALESCE(SUM(paid_amount),0) FROM fin_cost_settlement_groups WHERE year_month='2026-01'`, 576127.10)
 	assertCount(t, db, `
 SELECT COUNT(1)
-FROM fin_cost_settlements
-WHERE paid_amount = 576127.10 OR settlement_amount = 576127.10 OR invoice_amount = 576127.10
-`, 0)
+FROM fin_cost_settlement_groups
+WHERE customer_name = '南京林悦智能科技有限公司'
+  AND paid_amount = 576127.10
+  AND settlement_amount = 0
+  AND invoice_amount = 0
+  AND source_start_row = 5
+  AND source_end_row = 5
+`, 1)
 }
 
 func TestImportFileWithOptions_ContractCostWorkbookSeparatesDifferentMergedMetricRanges(t *testing.T) {

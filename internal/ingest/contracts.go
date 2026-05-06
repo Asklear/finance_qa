@@ -250,7 +250,7 @@ func (i *Importer) importContractWorkbook(ctx context.Context, dbPath, filePath 
 	default:
 		return ImportSummary{}, fmt.Errorf("unsupported contract workbook kind: %s", kind)
 	}
-	if err := annotateContractWorkbookSource(ctx, tx, dbPath, filePath, bundle); err != nil {
+	if err := annotateContractWorkbookSource(ctx, tx, dbPath, filePath, bundle, opts.Incremental); err != nil {
 		return ImportSummary{}, err
 	}
 
@@ -671,7 +671,7 @@ func parseCostSettlementRows(sheetName string, rows [][]string, mergedRanges []c
 		row := rows[idx]
 		name := strings.TrimSpace(cellValue(row, 0))
 		content := strings.TrimSpace(cellValue(row, 1))
-		if name == "" || content == "" || content == "分配" {
+		if name == "" || content == "分配" {
 			continue
 		}
 		accountCode := strings.TrimSpace(cellValue(row, 6))
@@ -701,6 +701,12 @@ func parseCostSettlementRows(sheetName string, rows [][]string, mergedRanges []c
 			}
 			directMetricRanges := costMergedAmountContainingRanges(mergedRanges, idx, monthCol)
 			sourceNotes := sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 6), intRange(monthCol.Index, monthCol.Index+4)...)...))
+			if content == "" {
+				if groupRow, ok := buildCustomerLevelCostSettlementGroupRow(sheetName, row, idx, monthCol, yearMonth, name, accountCode, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, directMetricRanges, sourceNotes); ok {
+					groups = append(groups, groupRow)
+				}
+				continue
+			}
 			if directRow, ok := buildDirectCostSettlementRow(sheetName, row, monthCol, yearMonth, contractKey{Name: name, Content: content}, accountCode, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, directMetricRanges, sourceNotes); ok {
 				out = append(out, directRow)
 			}
@@ -739,6 +745,42 @@ func buildDirectCostSettlementRow(sheetName string, row []string, monthCol month
 		ContractEndDate:     contractEndDate,
 		SettlementCycle:     settlementCycle,
 		SettlementUnitPrice: settlementUnitPrice,
+		SourceCellNotes:     sourceCellNotes,
+	}, true
+}
+
+func buildCustomerLevelCostSettlementGroupRow(sheetName string, row []string, rowIdx int, monthCol monthColumn, yearMonth, customerName, accountCode, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice string, metricRanges map[string]contractMergedCellRange, sourceCellNotes string) (contractCostSettlementGroupRow, bool) {
+	settlement := 0.0
+	if _, merged := metricRanges["settlement"]; !merged {
+		settlement = parseContractFloat(cellValue(row, monthCol.Index+1))
+	}
+	invoice := 0.0
+	if _, merged := metricRanges["invoice"]; !merged {
+		invoice = parseContractFloat(cellValue(row, monthCol.Index+3))
+	}
+	paid := 0.0
+	if _, merged := metricRanges["paid"]; !merged {
+		paid = parseContractFloat(cellValue(row, monthCol.Index+4))
+	}
+	if settlement <= 0 && invoice <= 0 && paid <= 0 {
+		return contractCostSettlementGroupRow{}, false
+	}
+	return contractCostSettlementGroupRow{
+		CustomerName:        strings.TrimSpace(customerName),
+		SourceSheetName:     strings.TrimSpace(sheetName),
+		YearMonth:           yearMonth,
+		Quantity:            defaultContractText(cellValue(row, monthCol.Index), "/"),
+		SettlementAmount:    settlement,
+		IsInvoiced:          defaultContractText(cellValue(row, monthCol.Index+2), "否"),
+		InvoiceAmount:       invoice,
+		PaidAmount:          paid,
+		AccountCode:         accountCode,
+		ContractStartDate:   contractStartDate,
+		ContractEndDate:     contractEndDate,
+		SettlementCycle:     settlementCycle,
+		SettlementUnitPrice: settlementUnitPrice,
+		SourceStartRow:      rowIdx + 1,
+		SourceEndRow:        rowIdx + 1,
 		SourceCellNotes:     sourceCellNotes,
 	}, true
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -71,7 +72,7 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 		meta.Token = fileToken
 	}
 
-	snapshotPath := filepath.Join(snapshotDir, fileToken+".xlsx")
+	snapshotPath := workbookSnapshotPath(snapshotDir, fileToken, meta)
 	if isXLSXDriveFile(meta) {
 		err = s.client.DownloadFile(ctx, fileToken, snapshotPath)
 	} else {
@@ -140,6 +141,26 @@ func isXLSXDriveFile(file feishu.DriveFile) bool {
 		return true
 	}
 	return strings.EqualFold(strings.TrimSpace(file.MimeType), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+}
+
+func workbookSnapshotPath(snapshotDir, fileToken string, file feishu.DriveFile) string {
+	name := safeObjectKeyPart(strings.TrimSpace(file.Name))
+	if name == "" || looksLikeFeishuTokenWorkbookName(name) {
+		name = safeObjectKeyPart(strings.TrimSpace(fileToken))
+	}
+	if !strings.EqualFold(filepath.Ext(name), ".xlsx") {
+		name += ".xlsx"
+	}
+	return filepath.Join(snapshotDir, name)
+}
+
+func looksLikeFeishuTokenWorkbookName(name string) bool {
+	name = strings.TrimSpace(name)
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	if name == "" {
+		return false
+	}
+	return regexp.MustCompile(`^[A-Za-z0-9]{20,}$`).MatchString(name)
 }
 
 func (s *WorkbookScanner) storeWorkbookSnapshot(ctx context.Context, src SyncSource, file feishu.DriveFile, snapshotPath, hash string) (string, error) {

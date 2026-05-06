@@ -254,6 +254,34 @@ func TestWorkbookScannerImportsChangedSnapshotNonIncrementally(t *testing.T) {
 	}
 }
 
+func TestWorkbookScannerUsesFeishuTitleForImportedSnapshotPath(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedWorkbookSource(t, repo, "old-hash")
+	client := &fakeFeishuClient{
+		files:     []feishu.DriveFile{{Token: src.SourceToken, Name: "优集收入、成本计算表 - 上传.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Revision: "rev-2"}},
+		downloads: map[string][]byte{src.SourceToken: []byte("workbook-v2")},
+	}
+	importer := &recordingWorkbookImporter{
+		summary: ingest.ImportSummary{ReportType: "contract_workbook", RecordCount: 12},
+	}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司")
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook: %v", err)
+	}
+	if result.Created != 1 || len(importer.calls) != 1 {
+		t.Fatalf("result=%#v imports=%#v", result, importer.calls)
+	}
+	gotBase := filepath.Base(importer.calls[0].filePath)
+	if gotBase != "优集收入、成本计算表 - 上传.xlsx" {
+		t.Fatalf("imported snapshot basename = %q, want Feishu title instead of token", gotBase)
+	}
+}
+
 func TestWorkbookScannerUploadsSnapshotToObjectStore(t *testing.T) {
 	t.Parallel()
 
