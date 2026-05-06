@@ -120,6 +120,53 @@ func TestRunOCRRequiresSubcommand(t *testing.T) {
 	}
 }
 
+func TestBuildSQLAuditSectionsIncludesContractGroupRows(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
+		`CREATE TABLE fin_fund_income (contract_id TEXT, year_month TEXT, settlement_amount REAL, received_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_fund_income_groups (customer_name TEXT, year_month TEXT, settlement_amount REAL, received_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_cost_settlements (contract_id TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_cost_settlement_groups (customer_name TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_bank_statement (transaction_date TEXT, credit_amount REAL, debit_amount REAL)`,
+		`CREATE TABLE fin_income_statement (period TEXT, item_name TEXT, current_amount REAL)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C1','飞未云科测试','收入合同'), ('C2','南京林悦测试','成本合同')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, settlement_amount, received_amount, invoice_amount) VALUES ('C1','2026-03',100,80,90)`,
+		`INSERT INTO fin_fund_income_groups(customer_name, year_month, settlement_amount, received_amount, invoice_amount) VALUES ('飞未云科测试','2026-03',7,6,5)`,
+		`INSERT INTO fin_cost_settlements(contract_id, year_month, settlement_amount, paid_amount, invoice_amount) VALUES ('C2','2026-03',40,30,20)`,
+		`INSERT INTO fin_cost_settlement_groups(customer_name, year_month, settlement_amount, paid_amount, invoice_amount) VALUES ('南京林悦测试','2026-03',4,3,2)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec %q: %v", stmt, err)
+		}
+	}
+
+	sections, err := buildSQLAuditSections(context.Background(), db)
+	if err != nil {
+		t.Fatalf("buildSQLAuditSections: %v", err)
+	}
+	contractMarch := auditSectionByNameForTest(t, sections, "contract_2026_03")
+	assertAuditAmountForTest(t, contractMarch, "settlement_amount", 107)
+	assertAuditAmountForTest(t, contractMarch, "cash_amount", 86)
+	assertAuditAmountForTest(t, contractMarch, "invoice_amount", 95)
+	if contractMarch.Rows != 2 {
+		t.Fatalf("contract rows = %d, want 2", contractMarch.Rows)
+	}
+	costMarch := auditSectionByNameForTest(t, sections, "cost_2026_03")
+	assertAuditAmountForTest(t, costMarch, "settlement_amount", 44)
+	assertAuditAmountForTest(t, costMarch, "cash_amount", 33)
+	assertAuditAmountForTest(t, costMarch, "invoice_amount", 22)
+	if costMarch.Rows != 2 {
+		t.Fatalf("cost rows = %d, want 2", costMarch.Rows)
+	}
+}
+
 func TestRunOCRProcessFileRequiresFile(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "ocr.sqlite")
 	code, _, stderr := runCLIForTest(t, "ocr", "process-file", "--db", dbPath)
@@ -411,6 +458,30 @@ func runCLIForTest(t *testing.T, args ...string) (int, string, string) {
 	var stderr bytes.Buffer
 	code := run(args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
+}
+
+func auditSectionByNameForTest(t *testing.T, sections []auditSection, name string) auditSection {
+	t.Helper()
+	for _, section := range sections {
+		if section.Name == name {
+			return section
+		}
+	}
+	t.Fatalf("missing audit section %q in %#v", name, sections)
+	return auditSection{}
+}
+
+func assertAuditAmountForTest(t *testing.T, section auditSection, name string, want float64) {
+	t.Helper()
+	for _, amount := range section.Amounts {
+		if amount.Name == name {
+			if amount.Value != want {
+				t.Fatalf("%s.%s = %v, want %v", section.Name, name, amount.Value, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing amount %q in %#v", name, section.Amounts)
 }
 
 func createContractPDFStateTablesForCmdTest(t *testing.T, db *sql.DB) {

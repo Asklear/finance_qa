@@ -56,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runFeishu(args[1:], stdout, stderr)
 	case "ocr":
 		return runOCR(args[1:], stdout, stderr)
+	case "audit-accuracy":
+		return runAuditAccuracy(args[1:], stdout, stderr)
 	default:
 		return runQuery(args, stdout, stderr)
 	}
@@ -353,4 +355,5 @@ func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "  financeqa ocr process-pending [--db <dsn>] [--limit <n>]")
 	fmt.Fprintln(out, "  financeqa ocr process-file [--db <dsn>] --file <pdf> [--contract-id <id>]")
 	fmt.Fprintln(out, "  financeqa ocr retry-failed [--db <dsn>] [--limit <n>]")
+	fmt.Fprintln(out, "  financeqa audit-accuracy [--db <dsn>] [--workbook <xlsx>] [--out <json>]")
 }

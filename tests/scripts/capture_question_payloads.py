@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Capture full FinanceQA payloads for accuracy audits."""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+SUITES = [
+    "tests/testdata/top20_questions_2026-04-14.json",
+    "tests/testdata/user19_questions_2026-04-20.json",
+    "tests/testdata/user15_questions_2026-04-20.json",
+    "tests/testdata/q1_finance_feedback_cases.json",
+]
+
+
+def load_questions(root):
+    questions = []
+    seen = set()
+    for rel in SUITES:
+        data = json.loads((root / rel).read_text(encoding="utf-8"))
+        for item in data:
+            question = str(item.get("question") or item.get("query") or "").strip()
+            if not question or question in seen:
+                continue
+            seen.add(question)
+            questions.append({"id": len(questions) + 1, "source": rel, "question": question})
+    return questions
+
+
+def bridge_payload(stdout):
+    outer = json.loads(stdout)
+    content = outer.get("content") if isinstance(outer, dict) else None
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                return json.loads(item.get("text") or "{}")
+    return outer
+
+
+def run_local(root, question, timeout):
+    proc = subprocess.run(
+        [str(root / "financeqa"), "query", question],
+        cwd=str(root),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        timeout=timeout,
+    )
+    return proc.returncode, json.loads(proc.stdout), proc.stderr
+
+
+def run_bridge(root, question, timeout):
+    env = os.environ.copy()
+    env.setdefault("FINANCEQA_BIN", str(root / "financeqa"))
+    env.setdefault("FINANCEQA_SKILL_PATH", str(root / "SKILL.md"))
+    request = {"action": "call", "name": "finance-query", "arguments": {"query": question}}
+    proc = subprocess.run(
+        ["python3", str(root / "plugin/openclaw-finance/server/finance_bridge.py")],
+        cwd=str(root),
+        input=json.dumps(request, ensure_ascii=False),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        timeout=timeout,
+        env=env,
+    )
+    return proc.returncode, bridge_payload(proc.stdout), proc.stderr
+
+
+def compact(text):
+    return " ".join(str(text or "").split())[:500]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--mode", choices=["local-cli", "bridge"], required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--timeout", type=int, default=150)
+    args = parser.parse_args()
+
+    root = Path(args.root).resolve()
+    rows = []
+    started = time.time()
+    questions = load_questions(root)
+    for item in questions:
+        t0 = time.time()
+        row = dict(item)
+        row["mode"] = args.mode
+        try:
+            if args.mode == "local-cli":
+                code, payload, stderr = run_local(root, item["question"], args.timeout)
+            else:
+                code, payload, stderr = run_bridge(root, item["question"], args.timeout)
+            row.update(
+                {
+                    "exit_code": code,
+                    "elapsed_ms": int((time.time() - t0) * 1000),
+                    "success": payload.get("success") if isinstance(payload, dict) else None,
+                    "payload": payload,
+                    "stderr": compact(stderr),
+                }
+            )
+        except Exception as exc:
+            row.update(
+                {
+                    "exit_code": 1,
+                    "elapsed_ms": int((time.time() - t0) * 1000),
+                    "success": False,
+                    "error": compact(f"{type(exc).__name__}: {exc}"),
+                }
+            )
+        rows.append(row)
+        status = "PASS" if row.get("exit_code") == 0 and row.get("success") is True else "FAIL"
+        print(f"[{status}] {row['id']:02d}/{len(questions)} {row['question']}", flush=True)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {
+                "mode": args.mode,
+                "total": len(rows),
+                "elapsed_ms": int((time.time() - started) * 1000),
+                "rows": rows,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return 0 if all(row.get("exit_code") == 0 and row.get("success") is True for row in rows) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
