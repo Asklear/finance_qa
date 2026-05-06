@@ -303,7 +303,7 @@ var schemaAnnotations = map[string]SchemaTableAnnotation{
 	"feishu_sync_sources": buildSchemaTableAnnotation(
 		"飞书主动扫描来源状态表，记录云盘文件夹和财务表格的扫描游标、同步状态与快照元数据。",
 		map[string]string{
-			"source_type":       "飞书来源类型，例如 pdf_folder 或 finance_workbook",
+			"source_type":       "飞书来源类型，例如 pdf_folder、finance_workbook 或 finance_workbook_folder",
 			"source_token":      "飞书文件夹或文件 token",
 			"source_url":        "飞书来源访问 URL",
 			"display_name":      "来源展示名称",

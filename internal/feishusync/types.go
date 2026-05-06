@@ -6,8 +6,9 @@ import (
 )
 
 const (
-	SourceTypePDFFolder       = "pdf_folder"
-	SourceTypeFinanceWorkbook = "finance_workbook"
+	SourceTypePDFFolder             = "pdf_folder"
+	SourceTypeFinanceWorkbook       = "finance_workbook"
+	SourceTypeFinanceWorkbookFolder = "finance_workbook_folder"
 
 	SyncStatusActive   = "active"
 	SyncStatusPending  = "pending"

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -226,6 +227,7 @@ func TestOCRConcurrencyDefaultsFromEnv(t *testing.T) {
 func TestRunFeishuSeedSources(t *testing.T) {
 	t.Setenv("FEISHU_SYNC_SOURCES_JSON", `[
 		{"source_type":"finance_workbook","source_token":"workbook-token","source_url":"https://example.feishu.cn/file/workbook-token","display_name":"飞书财务表格","metadata_json":{"oss_prefix":"tenant/uhub/finance"}},
+		{"source_type":"finance_workbook_folder","source_token":"finance-folder-token","source_url":"https://example.feishu.cn/drive/folder/finance-folder-token","display_name":"飞书财务表文件夹","metadata_json":{"oss_prefix":"tenant/uhub/finance"}},
 		{"source_type":"pdf_folder","source_token":"folder-token","source_url":"https://example.feishu.cn/drive/folder/folder-token","display_name":"飞书 PDF 文件夹","metadata_json":{"oss_prefix":"tenant/uhub/contract"}}
 	]`)
 	dbPath := filepath.Join(t.TempDir(), "feishu.sqlite")
@@ -241,6 +243,9 @@ func TestRunFeishuSeedSources(t *testing.T) {
 	if !strings.Contains(stdout, "workbook-token") {
 		t.Fatalf("stdout = %q", stdout)
 	}
+	if !strings.Contains(stdout, "finance-folder-token") {
+		t.Fatalf("stdout = %q", stdout)
+	}
 
 	code, stdout, stderr = runCLIForTest(t, "feishu", "sources", "--db", dbPath)
 	if code != 0 {
@@ -254,6 +259,7 @@ func TestRunFeishuSeedSources(t *testing.T) {
 func TestRunFeishuSourcesListsSeededSources(t *testing.T) {
 	t.Setenv("FEISHU_SYNC_SOURCES_JSON", `[
 		{"source_type":"finance_workbook","source_token":"workbook-token"},
+		{"source_type":"finance_workbook_folder","source_token":"finance-folder-token"},
 		{"source_type":"pdf_folder","source_token":"folder-token"}
 	]`)
 	dbPath := filepath.Join(t.TempDir(), "feishu-sources.sqlite")
@@ -272,6 +278,31 @@ func TestRunFeishuSourcesListsSeededSources(t *testing.T) {
 	if strings.Contains(stdout, "workbook-token") {
 		t.Fatalf("source type filter should exclude workbook: %q", stdout)
 	}
+
+	code, stdout, stderr = runCLIForTest(t, "feishu", "sources", "--db", dbPath, "--source-type", "finance_workbook_folder")
+	if code != 0 {
+		t.Fatalf("sources finance folder code = %d, stderr = %s", code, stderr)
+	}
+	if got := sourceTokensFromJSONForTest(t, stdout); !reflect.DeepEqual(got, []string{"finance-folder-token"}) {
+		t.Fatalf("finance folder filter tokens = %#v, stdout = %q", got, stdout)
+	}
+}
+
+func sourceTokensFromJSONForTest(t *testing.T, raw string) []string {
+	t.Helper()
+	var payload struct {
+		Data []struct {
+			SourceToken string `json:"source_token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("parse json: %v", err)
+	}
+	out := make([]string, 0, len(payload.Data))
+	for _, row := range payload.Data {
+		out = append(out, row.SourceToken)
+	}
+	return out
 }
 
 func TestRunFeishuSeedSourcesRequiresConfiguredSources(t *testing.T) {

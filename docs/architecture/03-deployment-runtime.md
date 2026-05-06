@@ -159,9 +159,10 @@ GOOS=linux GOARCH=amd64 go build -o financeqa ./cmd/financeqa
 
 运行链路：
 
-1. `feishu scan` 主动调用飞书 API，扫描 `feishu_sync_sources` 中已配置的财务表格和 PDF 文件夹；来源由 `FEISHU_SYNC_SOURCES_FILE` 或 `FEISHU_SYNC_SOURCES_JSON` 通过 `feishu seed-sources` 写入，不在代码里固化租户 token。
+1. `feishu scan` 主动调用飞书 API，扫描 `feishu_sync_sources` 中已配置的财务表格、财务表文件夹和 PDF 文件夹；来源由 `FEISHU_SYNC_SOURCES_FILE` 或 `FEISHU_SYNC_SOURCES_JSON` 通过 `feishu seed-sources` 写入，不在代码里固化租户 token。财务表推荐配置为 `finance_workbook_folder`：来源 token 是共享文件夹 token，扫描时在文件夹内选择最新修改的工作簿，避免旧工作簿删除重传后固定文件 token 失效。
 2. PDF 下载到本地 snapshot 后计算 SHA256；hash 已存在时直接复用已有 `storage_key`，不重复上传。合同 PDF 写入 `contract_main`，发票 PDF 写入 `contract_invoices`，发票只按去掉 `发票/开票/invoice` 目录后的关系 key 关联到同目录合同，不按文件名猜测。hash 新增或同业务位置内容变化时，才上传到 `boss-agent` 的历史合同前缀，默认 `tenant/uhub/contract`，可用 `feishu_sync_sources.metadata_json.oss_prefix` 精确到 `tenant/uhub/contract/优集客户合同` 等子目录。
-3. 财务表格下载或导出为 `.xlsx`，hash 未变则跳过上传和导入；hash 变化则先写入 `tenant/uhub/finance` 或显式配置的 `tenant/uhub/finance/2025`、`tenant/uhub/finance/2026` 历史前缀，再复用现有导入链路刷新 `fin_contracts`、`fin_fund_income`、`fin_cost_settlements` 及合并组表；导出文件中的 Excel 批注/单元格备注会按单元格坐标保存到各财务事实表的 `source_cell_notes`，收入明细可见“备注”列单独保存到收入表的 `remarks`；OSS 快照 key 写入 `feishu_sync_sources.metadata_json.storage_key`。
+3. 财务表格下载或导出为 `.xlsx`，hash 未变则跳过上传和导入；hash 变化则先写入 `tenant/uhub/finance` 或显式配置的 `tenant/uhub/finance/2025`、`tenant/uhub/finance/2026` 历史前缀，再复用现有导入链路刷新 `fin_contracts`、`fin_fund_income`、`fin_cost_settlements` 及合并组表；导出文件中的 Excel 批注/单元格备注会按单元格坐标保存到各财务事实表的 `source_cell_notes`，收入明细可见“备注”列单独保存到收入表的 `remarks`；只有备注、没有金额的收入行会以当季末月 0 金额记录保留，不参与金额合计；OSS 快照 key、实际文件 token 和文件名写入 `feishu_sync_sources.metadata_json`。
+   - 删除旧财务表并上传新表时，文件夹来源会选择新文件；OSS 按 SHA256 去重，同内容复用已有对象，不同内容写入新对象。若历史路径已有不同内容，使用 hash 后缀 key，避免覆盖旧快照。
 4. `ocr process-pending` 消费 `contract_main.ocr_status='pending'` 和 `contract_invoices.ocr_status='pending'` 的 PDF；如果 `storage_key` 是 OSS object key 相对路径，例如 `tenant/uhub/contract/...pdf`，先从 `OSS_BUCKET` 下载临时文件，再调用 Gemini。旧的 `s3://bucket/...` 值仍兼容读取，但新写入统一保存相对路径。
 5. OCR 结果写回对应表：合同写回 `contract_main` 并保存 `contract_pages` 全文；发票更新同一条 `contract_invoices`。未匹配到合同的发票不会落库，等待后续合同出现后再扫描。
 

@@ -321,7 +321,7 @@ func runFeishuScan(args []string, stdout, stderr io.Writer) int {
 	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", support.DefaultCompanyName(), "company override for workbook import")
 	snapshotDir := fs.String("snapshot-dir", defaultFeishuSnapshotDir(), "directory for downloaded Feishu snapshots")
-	sourceType := fs.String("source-type", "all", "source type: all, pdf_folder, finance_workbook")
+	sourceType := fs.String("source-type", "all", "source type: all, pdf_folder, finance_workbook, finance_workbook_folder")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -482,7 +482,7 @@ func (r *feishuRunner) scanSource(ctx context.Context, src feishusync.SyncSource
 	switch src.SourceType {
 	case feishusync.SourceTypePDFFolder:
 		return r.pdf.ScanFolder(ctx, src)
-	case feishusync.SourceTypeFinanceWorkbook:
+	case feishusync.SourceTypeFinanceWorkbook, feishusync.SourceTypeFinanceWorkbookFolder:
 		return r.workbook.ScanWorkbook(ctx, src)
 	default:
 		return feishusync.ScanResult{SourceID: src.ID, Source: src.SourceToken}, fmt.Errorf("unsupported feishu source type: %s", src.SourceType)
@@ -495,7 +495,7 @@ func normalizeFeishuSourceType(sourceType string) (string, error) {
 		return "", nil
 	}
 	switch sourceType {
-	case feishusync.SourceTypePDFFolder, feishusync.SourceTypeFinanceWorkbook:
+	case feishusync.SourceTypePDFFolder, feishusync.SourceTypeFinanceWorkbook, feishusync.SourceTypeFinanceWorkbookFolder:
 		return sourceType, nil
 	default:
 		return "", fmt.Errorf("unsupported --source-type: %s", sourceType)

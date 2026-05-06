@@ -254,6 +254,123 @@ func TestWorkbookScannerImportsChangedSnapshotNonIncrementally(t *testing.T) {
 	}
 }
 
+func TestWorkbookScannerImportsLatestWorkbookFromFolderSource(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	src := feishusync.SyncSource{
+		SourceType:      feishusync.SourceTypeFinanceWorkbookFolder,
+		SourceToken:     "folder-token",
+		DisplayName:     "飞书财务表文件夹",
+		SyncStatus:      feishusync.SyncStatusActive,
+		LastContentHash: "old-hash",
+		MetadataJSON:    `{"oss_prefix":"tenant/uhub/finance"}`,
+	}
+	if err := repo.UpsertSource(context.Background(), src); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+	sources, err := repo.ListSources(context.Background(), feishusync.SourceFilter{SourceType: feishusync.SourceTypeFinanceWorkbookFolder})
+	if err != nil {
+		t.Fatalf("list sources: %v", err)
+	}
+	if len(sources) != 1 {
+		t.Fatalf("source count = %d, want 1", len(sources))
+	}
+	src = sources[0]
+	oldFile := feishu.DriveFile{Token: "old-workbook-token", Name: "优集收入、成本计算表 - 旧.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ModifiedTime: "2026-04-01T10:00:00+08:00", Revision: "rev-old"}
+	latestFile := feishu.DriveFile{Token: "latest-workbook-token", Name: "优集收入、成本计算表 - 上传.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ModifiedTime: "2026-05-06T15:47:00+08:00", Revision: "rev-latest"}
+	client := &fakeFeishuClient{
+		files:         []feishu.DriveFile{oldFile, latestFile},
+		filesByFolder: map[string][]feishu.DriveFile{"folder-token": {oldFile, latestFile}},
+		downloads:     map[string][]byte{"latest-workbook-token": []byte("latest-workbook")},
+	}
+	importer := &recordingWorkbookImporter{
+		summary: ingest.ImportSummary{ReportType: "contract_workbook", RecordCount: 12},
+	}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司")
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan workbook folder: %v", err)
+	}
+	if result.Created != 1 || result.Scanned != 1 || len(importer.calls) != 1 {
+		t.Fatalf("result=%#v imports=%#v", result, importer.calls)
+	}
+	if len(client.downloadedTokens) != 1 || client.downloadedTokens[0] != "latest-workbook-token" {
+		t.Fatalf("downloaded tokens = %#v", client.downloadedTokens)
+	}
+	updated := mustSingleSource(t, repo)
+	if updated.SourceToken != "folder-token" || updated.LastRevision != "rev-latest" {
+		t.Fatalf("source after folder scan = %#v", updated)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["file_token"] != "latest-workbook-token" || metadata["source_token"] != "folder-token" {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+}
+
+func TestWorkbookScannerFolderSourceUpdatesStorageKeyForReuploadedWorkbook(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	repo := feishusync.NewRepository(sqlDB)
+	oldHash := writeSnapshotAndHash(t, "old-workbook")
+	src := feishusync.SyncSource{
+		SourceType:      feishusync.SourceTypeFinanceWorkbookFolder,
+		SourceToken:     "folder-token",
+		DisplayName:     "飞书财务表文件夹",
+		SyncStatus:      feishusync.SyncStatusActive,
+		LastContentHash: oldHash,
+		MetadataJSON:    `{"oss_prefix":"tenant/uhub/finance/2026","storage_key":"tenant/uhub/finance/2026/旧表.xlsx"}`,
+	}
+	if err := repo.UpsertSource(context.Background(), src); err != nil {
+		t.Fatalf("seed source: %v", err)
+	}
+	sources, err := repo.ListSources(context.Background(), feishusync.SourceFilter{SourceType: feishusync.SourceTypeFinanceWorkbookFolder})
+	if err != nil {
+		t.Fatalf("list sources: %v", err)
+	}
+	src = sources[0]
+	newFile := feishu.DriveFile{Token: "new-workbook-token", Name: "优集收入、成本计算表 - 上传.xlsx", MimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ModifiedTime: "2026-05-06T15:47:00+08:00", Revision: "rev-new"}
+	client := &fakeFeishuClient{
+		files:         []feishu.DriveFile{newFile},
+		filesByFolder: map[string][]feishu.DriveFile{"folder-token": {newFile}},
+		downloads:     map[string][]byte{"new-workbook-token": []byte("new-workbook")},
+	}
+	store := &recordingObjectStore{}
+	importer := &recordingWorkbookImporter{
+		summary: ingest.ImportSummary{ReportType: "contract_workbook", RecordCount: 12},
+	}
+	scanner := feishusync.NewWorkbookScanner(client, repo, importer, "db.sqlite", t.TempDir(), "测试公司", store)
+
+	result, err := scanner.ScanWorkbook(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan reuploaded workbook: %v", err)
+	}
+	if result.Created != 1 || len(store.puts) != 1 || len(importer.calls) != 1 {
+		t.Fatalf("result=%#v puts=%#v imports=%#v", result, store.puts, importer.calls)
+	}
+	wantKey := "tenant/uhub/finance/2026/优集收入、成本计算表 - 上传.xlsx"
+	if store.puts[0].key != wantKey {
+		t.Fatalf("uploaded key = %q, want %q", store.puts[0].key, wantKey)
+	}
+	updated := mustSingleSource(t, repo)
+	if updated.LastContentHash == "" || updated.LastContentHash == oldHash || updated.LastRevision != "rev-new" {
+		t.Fatalf("source after reupload scan = %#v", updated)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(updated.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("metadata json: %v", err)
+	}
+	if metadata["file_token"] != "new-workbook-token" || metadata["storage_key"] != wantKey {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+}
+
 func TestWorkbookScannerUsesFeishuTitleForImportedSnapshotPath(t *testing.T) {
 	t.Parallel()
 

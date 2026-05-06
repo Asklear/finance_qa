@@ -109,7 +109,7 @@ func normalizeConfiguredSource(item configuredSyncSource) (SyncSource, error) {
 		return SyncSource{}, errors.New("source_type is required")
 	}
 	switch src.SourceType {
-	case SourceTypePDFFolder, SourceTypeFinanceWorkbook:
+	case SourceTypePDFFolder, SourceTypeFinanceWorkbook, SourceTypeFinanceWorkbookFolder:
 	default:
 		return SyncSource{}, fmt.Errorf("unsupported source_type: %s", src.SourceType)
 	}

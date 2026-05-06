@@ -31,6 +31,13 @@ func TestDefaultSourcesLoadFromJSONEnv(t *testing.T) {
 			"metadata_json": {"oss_prefix": "tenant/uhub/finance/2026"}
 		},
 		{
+			"source_type": "finance_workbook_folder",
+			"source_token": "finance-folder-token",
+			"source_url": "https://example.feishu.cn/drive/folder/finance-folder-token",
+			"display_name": "财务表文件夹",
+			"metadata_json": {"oss_prefix": "tenant/uhub/finance"}
+		},
+		{
 			"source_type": "pdf_folder",
 			"source_token": "folder-token",
 			"source_url": "https://example.feishu.cn/drive/folder/folder-token",
@@ -43,8 +50,8 @@ func TestDefaultSourcesLoadFromJSONEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultSources: %v", err)
 	}
-	if len(sources) != 2 {
-		t.Fatalf("source count = %d, want 2", len(sources))
+	if len(sources) != 3 {
+		t.Fatalf("source count = %d, want 3", len(sources))
 	}
 	if sources[0].SourceToken != "workbook-token" || sources[0].SyncMode != "active_scan" || sources[0].SyncStatus != feishusync.SyncStatusActive {
 		t.Fatalf("workbook source defaults not normalized: %#v", sources[0])
@@ -52,8 +59,11 @@ func TestDefaultSourcesLoadFromJSONEnv(t *testing.T) {
 	if sources[0].MetadataJSON != `{"oss_prefix":"tenant/uhub/finance/2026"}` {
 		t.Fatalf("metadata json = %q", sources[0].MetadataJSON)
 	}
-	if sources[1].SourceType != feishusync.SourceTypePDFFolder || sources[1].SourceToken != "folder-token" {
-		t.Fatalf("folder source = %#v", sources[1])
+	if sources[1].SourceType != feishusync.SourceTypeFinanceWorkbookFolder || sources[1].SourceToken != "finance-folder-token" {
+		t.Fatalf("finance folder source = %#v", sources[1])
+	}
+	if sources[2].SourceType != feishusync.SourceTypePDFFolder || sources[2].SourceToken != "folder-token" {
+		t.Fatalf("folder source = %#v", sources[2])
 	}
 }
 

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +60,15 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 	fileToken := strings.TrimSpace(src.SourceToken)
 	if fileToken == "" {
 		return result, errors.New("source token is required")
+	}
+	if src.SourceType == SourceTypeFinanceWorkbookFolder {
+		file, err := s.resolveWorkbookFolderFile(ctx, fileToken)
+		if err != nil {
+			_ = s.repo.MarkSourceError(ctx, src.ID, err.Error(), time.Time{})
+			return result, err
+		}
+		fileToken = strings.TrimSpace(file.Token)
+		result.Source = src.SourceToken
 	}
 	snapshotDir := s.snapshotDir
 	if snapshotDir == "" {
@@ -134,6 +146,78 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 		return result, err
 	}
 	return result, nil
+}
+
+func (s *WorkbookScanner) resolveWorkbookFolderFile(ctx context.Context, folderToken string) (feishu.DriveFile, error) {
+	files, err := s.client.ListFolderFiles(ctx, folderToken)
+	if err != nil {
+		return feishu.DriveFile{}, err
+	}
+	candidates := make([]feishu.DriveFile, 0, len(files))
+	for _, file := range files {
+		if !isWorkbookDriveFile(file) {
+			continue
+		}
+		candidates = append(candidates, file)
+	}
+	if len(candidates) == 0 {
+		return feishu.DriveFile{}, fmt.Errorf("no finance workbook found in folder %s", folderToken)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left := workbookModifiedTime(candidates[i])
+		right := workbookModifiedTime(candidates[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return strings.TrimSpace(candidates[i].Name) > strings.TrimSpace(candidates[j].Name)
+	})
+	if strings.TrimSpace(candidates[0].Token) == "" {
+		return feishu.DriveFile{}, fmt.Errorf("selected finance workbook in folder %s has empty token", folderToken)
+	}
+	return candidates[0], nil
+}
+
+func isWorkbookDriveFile(file feishu.DriveFile) bool {
+	if isFolderDriveFile(file) {
+		return false
+	}
+	name := strings.TrimSpace(file.Name)
+	if name == "" || strings.HasPrefix(name, "~$") || strings.HasPrefix(name, ".") {
+		return false
+	}
+	if isXLSXDriveFile(file) {
+		return true
+	}
+	fileType := strings.ToLower(strings.TrimSpace(file.Type))
+	mime := strings.ToLower(strings.TrimSpace(file.MimeType))
+	return fileType == "sheet" || fileType == "bitable" || strings.Contains(mime, "spreadsheet")
+}
+
+func workbookModifiedTime(file feishu.DriveFile) time.Time {
+	value := strings.TrimSpace(file.ModifiedTime)
+	if value == "" {
+		return time.Time{}
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed
+		}
+	}
+	if unix, err := strconv.ParseInt(value, 10, 64); err == nil && unix > 0 {
+		if unix > 1_000_000_000_000 {
+			return time.UnixMilli(unix)
+		}
+		return time.Unix(unix, 0)
+	}
+	return time.Time{}
 }
 
 func isXLSXDriveFile(file feishu.DriveFile) bool {
@@ -255,6 +339,8 @@ func (s *WorkbookScanner) resolveWorkbookSnapshot(ctx context.Context, src SyncS
 func workbookMetadata(src SyncSource, file feishu.DriveFile, summary ingest.ImportSummary, skipped bool, storageKey string) string {
 	data, err := json.Marshal(map[string]any{
 		"source":       "feishu_active_scan",
+		"source_token": strings.TrimSpace(src.SourceToken),
+		"source_type":  strings.TrimSpace(src.SourceType),
 		"file_token":   file.Token,
 		"file_name":    file.Name,
 		"revision":     file.Revision,
