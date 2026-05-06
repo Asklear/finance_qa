@@ -31,7 +31,7 @@ if [[ "$cmd" == "query" ]]; then
     exit 1
   fi
   cat <<'JSON'
-{"success":true,"message":"ok","answer_method":"sql","data":{"metric":"人力成本","period":"2026-03","total":68600,"hr_breakdown":{"wage":64300,"social_security":3669,"housing_fund":639},"arithmetic_checks":{"status":"pass"},"intent_trace":{"final_intent":"human_cost"}},"executed_sql":["SELECT 1"],"calculation_logs":["calc-ok"]}
+{"success":true,"message":"ok","answer_method":"sql","data":{"metric":"人力成本","period":"2026-03","total":68600,"hr_breakdown":{"wage":64300,"social_security":3669,"housing_fund":639},"arithmetic_checks":{"status":"pass"},"intent_trace":{"final_intent":"human_cost"},"source_cell_notes":{"26年Q1收入明细!H12":"谈判中，预计补充结算"},"remarks":"谈判中"},"executed_sql":["SELECT 1"],"calculation_logs":["calc-ok"]}
 JSON
   exit 0
 fi
@@ -119,6 +119,16 @@ exit 2
 	if exposedTools, ok := capabilities["exposed_tools"].([]any); !ok || len(exposedTools) != 5 {
 		t.Fatalf("bridge_meta.capabilities.exposed_tools should list 5 bridge tools, got %v", capabilities["exposed_tools"])
 	}
+	exposedFieldNames, ok := capabilities["exposed_fields"].([]any)
+	if !ok {
+		t.Fatalf("bridge_meta.capabilities.exposed_fields should be a list, got %T", capabilities["exposed_fields"])
+	}
+	if !containsStringAny(exposedFieldNames, "source_cell_notes") {
+		t.Fatalf("bridge_meta.capabilities.exposed_fields should include source_cell_notes, got %v", exposedFieldNames)
+	}
+	if !containsStringAny(exposedFieldNames, "remarks") {
+		t.Fatalf("bridge_meta.capabilities.exposed_fields should include remarks, got %v", exposedFieldNames)
+	}
 	data := mustMapMap(t, payload, "data")
 	if _, ok := data["trace"].(map[string]any); !ok {
 		t.Fatalf("trace should exist in data, got %T", data["trace"])
@@ -129,6 +139,12 @@ exit 2
 	}
 	if _, ok := exposed["arithmetic_checks"].(map[string]any); !ok {
 		t.Fatalf("exposed_fields.arithmetic_checks should exist, got %T", exposed["arithmetic_checks"])
+	}
+	if notes, ok := exposed["source_cell_notes"].(map[string]any); !ok || notes["26年Q1收入明细!H12"] != "谈判中，预计补充结算" {
+		t.Fatalf("exposed_fields.source_cell_notes should preserve cell notes, got %v", exposed["source_cell_notes"])
+	}
+	if remarks := exposed["remarks"]; remarks != "谈判中" {
+		t.Fatalf("exposed_fields.remarks should preserve visible remarks, got %v", remarks)
 	}
 }
 
@@ -1579,6 +1595,15 @@ func mustMapMap(t *testing.T, m map[string]any, key string) map[string]any {
 		t.Fatalf("key %s should be object, got %T", key, v)
 	}
 	return obj
+}
+
+func containsStringAny(values []any, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func sampleSkillMarkdown() string {
