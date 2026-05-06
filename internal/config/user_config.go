@@ -121,7 +121,7 @@ func (m *UserConfigManager) GetMetric(name string) *types.ConfigMetric {
 	if !ok {
 		return nil
 	}
-	copyMetric := metric
+	copyMetric := cloneConfigMetric(metric)
 	return &copyMetric
 }
 
@@ -162,7 +162,7 @@ func (m *UserConfigManager) ListMetrics() map[string]types.ConfigMetric {
 
 	metrics := make(map[string]types.ConfigMetric, len(m.config.Metrics))
 	for name, metric := range m.config.Metrics {
-		metrics[name] = metric
+		metrics[name] = cloneConfigMetric(metric)
 	}
 	return metrics
 }
@@ -225,11 +225,19 @@ func (m *UserConfigManager) GetAllConfig() types.UserConfig {
 	cfg := m.config
 	cfg.Metrics = make(map[string]types.ConfigMetric, len(m.config.Metrics))
 	for k, v := range m.config.Metrics {
-		cfg.Metrics[k] = v
+		cfg.Metrics[k] = cloneConfigMetric(v)
 	}
 	cfg.AccountAliases = make(map[string]string, len(m.config.AccountAliases))
 	for k, v := range m.config.AccountAliases {
 		cfg.AccountAliases[k] = v
 	}
 	return cfg
+}
+
+func cloneConfigMetric(metric types.ConfigMetric) types.ConfigMetric {
+	return types.ConfigMetric{
+		Description: metric.Description,
+		Accounts:    append([]string(nil), metric.Accounts...),
+		Exclude:     append([]string(nil), metric.Exclude...),
+	}
 }

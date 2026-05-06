@@ -3,6 +3,7 @@ package dimensions
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -101,9 +102,12 @@ func (m *Manager) GetMapper(ctx context.Context, company string) (*Mapper, error
 	if err != nil {
 		return nil, err
 	}
-	// Sort by priority descending
-	// Note: ListMappingRules might already sort, but we ensure it here if needed.
-	// For now assume high priority comes first or sort manually.
+	sort.SliceStable(rules, func(i, j int) bool {
+		if rules[i].Priority == rules[j].Priority {
+			return rules[i].ID < rules[j].ID
+		}
+		return rules[i].Priority > rules[j].Priority
+	})
 	return &Mapper{Rules: rules}, nil
 }
 
