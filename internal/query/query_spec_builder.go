@@ -42,11 +42,9 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 }
 
 func reconcileQuerySpec(spec QuerySpec, resolvedEntity string, cfg RuleConfig) QuerySpec {
-	if strings.TrimSpace(resolvedEntity) != "" {
-		spec.Entity = strings.TrimSpace(resolvedEntity)
-		if looksLikeBossRewriteNonEntity(spec.Entity) {
-			spec.Entity = ""
-		}
+	spec.Entity = strings.TrimSpace(resolvedEntity)
+	if looksLikeBossRewriteNonEntity(spec.Entity) {
+		spec.Entity = ""
 	}
 
 	spec.QueryFamily = detectQueryFamily(

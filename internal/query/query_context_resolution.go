@@ -38,7 +38,11 @@ func (e *Engine) normalizeQuestionAndResolveCompany(question string) string {
 func (e *Engine) resolveQueryEntity(q string, spec QuerySpec) string {
 	entity := spec.Entity
 	if shouldResolveEntityDeeply(spec) {
-		entity = e.extractNamedEntity(q)
+		if resolved := e.resolveEntityByScoredCandidates(q); resolved != "" {
+			entity = resolved
+		} else {
+			entity = ""
+		}
 	}
 	if looksLikeBossRewriteNonEntity(entity) {
 		return ""

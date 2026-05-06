@@ -45,8 +45,10 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 				rewrite.Entity = resolvedEntity
 			}
 			spec.BossRewrite = rewrite
-			if resolvedEntity == "" && strings.TrimSpace(rewrite.Entity) != "" {
-				spec.Entity = strings.TrimSpace(rewrite.Entity)
+			if resolvedEntity == "" {
+				rewrite.Entity = ""
+				spec.BossRewrite = rewrite
+				spec.Entity = ""
 			}
 			if strings.TrimSpace(rewrite.PeriodFrom) != "" && strings.TrimSpace(rewrite.PeriodTo) != "" {
 				spec.PeriodFrom = rewrite.PeriodFrom
@@ -137,6 +139,9 @@ func shouldSkipBossProbeRouting(spec QuerySpec, rewrite BossQueryRewrite) bool {
 }
 
 func shouldRouteContractProbeAsDimension(rewrite BossQueryRewrite) bool {
+	if rewrite.Metric == BossMetricARAP && strings.TrimSpace(rewrite.Entity) == "" {
+		return false
+	}
 	if rewrite.Scope == BossScopeEntity {
 		return true
 	}

@@ -1,6 +1,7 @@
 package query
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -90,6 +91,8 @@ func (e *Engine) counterpartyNameCandidates() []string {
 			out = append(out, name)
 		}
 	}
+	out = append(out, e.summaryDerivedCounterpartyCandidates()...)
+	out = dedupeStrings(out)
 
 	e.cacheMu.Lock()
 	e.counterpartyNames[companyKey] = append([]string{}, out...)
@@ -99,6 +102,97 @@ func (e *Engine) counterpartyNameCandidates() []string {
 
 func (e *Engine) resolveCounterpartyCandidates(alias string) []string {
 	return rankCounterpartyAliasMatches(alias, e.counterpartyNameCandidates())
+}
+
+func (e *Engine) summaryDerivedCounterpartyCandidates() []string {
+	rows, err := e.db.Query(`
+SELECT summary
+FROM journal
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND COALESCE(TRIM(summary), '') <> ''
+`, e.Company, e.Company)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	out := make([]string, 0, 32)
+	for rows.Next() {
+		var summary string
+		if err := rows.Scan(&summary); err != nil {
+			continue
+		}
+		if name := extractCounterpartyNameFromSummary(summary); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+var queryCompanyNamePattern = regexp.MustCompile(`[\p{Han}A-Za-z0-9（）()·]+?(?:有限责任公司|股份有限公司|有限公司|事务所|中心|分公司|公司)`)
+
+func extractCounterpartyNameFromSummary(summary string) string {
+	text := strings.TrimSpace(summary)
+	if text == "" {
+		return ""
+	}
+	candidates := make([]string, 0, 4)
+	for _, matched := range queryCompanyNamePattern.FindAllString(trimSummaryEntityNoise(text), -1) {
+		candidates = append(candidates, matched)
+	}
+	separators := []string{"_", "-", "－", "—", ":", "：", "/", "／", "(", ")", "（", "）"}
+	for _, sep := range separators {
+		text = strings.ReplaceAll(text, sep, " ")
+	}
+	for _, part := range strings.Fields(text) {
+		part = trimSummaryEntityNoise(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "公司") || strings.Contains(part, "中心") || strings.Contains(part, "事务所") {
+			candidates = append(candidates, part)
+		}
+	}
+	best := ""
+	bestLen := 0
+	for _, candidate := range candidates {
+		candidate = trimSummaryEntityNoise(strings.TrimSpace(candidate))
+		if candidate == "" || !isRealishQueryEntity(candidate) {
+			continue
+		}
+		candidateLen := len([]rune(normalizeEntityText(candidate)))
+		if candidateLen < 6 {
+			continue
+		}
+		if best == "" || candidateLen < bestLen {
+			best = candidate
+			bestLen = candidateLen
+		}
+	}
+	return best
+}
+
+func trimSummaryEntityNoise(name string) string {
+	name = strings.TrimSpace(name)
+	prefixes := []string{"收到", "转账", "支付", "付款", "付", "为", "向", "给", "预提成本", "冲销", "冲回", "结转", "购买", "采购", "购入", "购买了", "采购了", "代付", "代收"}
+	suffixes := []string{"发票", "服务", "服务费", "转账", "结算款", "款"}
+	changed := true
+	for changed {
+		changed = false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				name = strings.TrimSpace(strings.TrimPrefix(name, prefix))
+				changed = true
+			}
+		}
+		for _, suffix := range suffixes {
+			if strings.HasSuffix(name, suffix) {
+				name = strings.TrimSpace(strings.TrimSuffix(name, suffix))
+				changed = true
+			}
+		}
+	}
+	return strings.TrimSpace(name)
 }
 
 func rankCounterpartyAliasMatches(alias string, names []string) []string {

@@ -175,6 +175,23 @@ func TestResolveQueryRoutingDoesNotTreatOverallExpenseAsEntity(t *testing.T) {
 	}
 }
 
+func TestResolveQueryRoutingDoesNotTreatCurrentModifierAsARAPEntity(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("当前的应收账款汇总")
+	if route.entity != "" || route.hasRealEntity {
+		t.Fatalf("entity = %q hasRealEntity=%t, want no business entity", route.entity, route.hasRealEntity)
+	}
+	if route.spec.NeedsContractDimension {
+		t.Fatalf("NeedsContractDimension = true, want false")
+	}
+}
+
 func TestResolveQueryRoutingKeepsReadinessFamilyAndResolvedEntity(t *testing.T) {
 	dbPath := buildQueryContextResolutionDB(t)
 	engine, err := NewEngine(dbPath, "测试公司")
