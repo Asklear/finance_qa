@@ -104,6 +104,8 @@ func RewriteBossQuery(question string, anchor time.Time) BossQueryRewrite {
 func detectBossMetric(q string) BossMetric {
 	cfg := getRuleConfig()
 	switch {
+	case shouldUsePreciseBalanceQuestion(q):
+		return BossMetricUnknown
 	case isARAPQuestion(q):
 		return BossMetricARAP
 	case containsAny(q, []string{"回款", "到账", "收款"}):
@@ -135,6 +137,8 @@ func detectBossMetric(q string) BossMetric {
 
 func detectBossPerspectiveAndSource(q string, metric BossMetric) (BossPerspective, string) {
 	switch {
+	case shouldUsePreciseBalanceQuestion(q):
+		return BossPerspectiveOfficialThenEvidence, BossSourceBalance
 	case containsAny(q, []string{"银行", "银行卡", "流水", "现金流", "实际到账", "实际支出", "现金口径"}):
 		return BossPerspectiveExplicitCash, BossSourceBankStatement
 	case shouldUseExplicitFinancialAccountQuestion(q):
@@ -150,6 +154,13 @@ func detectBossPerspectiveAndSource(q string, metric BossMetric) (BossPerspectiv
 	default:
 		return BossPerspectiveUnknown, ""
 	}
+}
+
+func shouldUsePreciseBalanceQuestion(q string) bool {
+	if !containsAny(q, []string{"余额", "期末", "期初", "截至"}) {
+		return false
+	}
+	return containsAny(q, []string{"货币资金", "银行存款"})
 }
 
 func shouldUseExplicitFinancialAccountQuestion(q string) bool {

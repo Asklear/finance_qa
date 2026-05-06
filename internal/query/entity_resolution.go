@@ -165,7 +165,13 @@ func looksLikeTemporalMetricEntity(entity string) bool {
 	if normalized == "" {
 		return false
 	}
+	if looksLikePeriodOnlyEntity(entity) {
+		return true
+	}
 	if regexp.MustCompile(`^q[1-4]$`).MatchString(normalized) {
+		return true
+	}
+	if regexp.MustCompile(`^(?:20)?\d{2}q[1-4]$`).MatchString(normalized) {
 		return true
 	}
 	temporalKeywords := []string{

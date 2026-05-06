@@ -46,6 +46,9 @@ func resolveSourceExecutionStages(ctx queryExecutionContext) []executionStage {
 	if shouldUseDirectBankCashFlow(ctx) {
 		builder.add(executionStageDirectBankCashFlow)
 	}
+	if shouldUseDirectPreciseBalance(ctx) {
+		builder.add(executionStageDirectPreciseBalance)
+	}
 	if shouldUseOrchestratorForSpec(ctx.spec) {
 		builder.add(executionStageOrchestrator)
 	}
@@ -64,6 +67,16 @@ func shouldUseDirectBankCashFlow(ctx queryExecutionContext) bool {
 		return false
 	}
 	return ctx.spec.BossRewrite.Perspective == BossPerspectiveExplicitCash
+}
+
+func shouldUseDirectPreciseBalance(ctx queryExecutionContext) bool {
+	if ctx.hasRealEntity {
+		return false
+	}
+	if ctx.spec.SourceConstraint != BossSourceBalance {
+		return false
+	}
+	return containsAny(ctx.q, []string{"余额", "期末", "期初", "货币资金", "银行存款"})
 }
 
 func resolveLegacySourceFallbackStages(ctx queryExecutionContext) []executionStage {

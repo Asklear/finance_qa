@@ -7,6 +7,7 @@ const (
 	executionStageExpenseBreakdown           executionStage = "expense_breakdown"
 	executionStageOrchestrator               executionStage = "orchestrator"
 	executionStageDirectBankCashFlow         executionStage = "direct_bank_cash_flow"
+	executionStageDirectPreciseBalance       executionStage = "direct_precise_balance"
 	executionStageDirectContractDimension    executionStage = "direct_contract_dimension"
 	executionStageDirectReconciliation       executionStage = "direct_reconciliation"
 	executionStageDirectCoreMetricRange      executionStage = "direct_core_metric_range"

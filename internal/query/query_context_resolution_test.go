@@ -95,6 +95,61 @@ func TestExplicitBankCashReceiptQueryAnswersFromBankStatement(t *testing.T) {
 	}
 }
 
+func TestExplicitBankCashFlowQueryAnswersAllRequestedAmounts(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月银行卡上实际到账、实际支出、净增加分别是多少？")
+	if !res.Success {
+		t.Fatalf("query success = false, message=%s", res.Message)
+	}
+	for _, want := range []string{"实际到账 1200.00 元", "实际支出 500.00 元", "净增加 700.00 元"} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message = %q, want include %q", res.Message, want)
+		}
+	}
+}
+
+func TestBalanceQuestionUsesBalanceSheetInsteadOfBankCashFlow(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO balance_sheet(company, period, account_code, account_name, opening_balance, closing_balance)
+		 VALUES ('测试公司','2026-03','100201','银行存款',80,130)`); err != nil {
+		t.Fatalf("seed bank deposit balance: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("截至2026年3月末，货币资金余额和银行存款余额分别是多少？")
+	if route.spec.SourceConstraint != BossSourceBalance {
+		t.Fatalf("source_constraint = %q, want balance", route.spec.SourceConstraint)
+	}
+	res := engine.Query("截至2026年3月末，货币资金余额和银行存款余额分别是多少？")
+	if !res.Success {
+		t.Fatalf("query success = false, message=%s", res.Message)
+	}
+	for _, want := range []string{"货币资金/银行存款期末余额 130.00 元"} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message = %q, want include %q", res.Message, want)
+		}
+	}
+	if strings.Contains(res.Message, "实际到账") || strings.Contains(res.Message, "实际支出") {
+		t.Fatalf("balance query should not answer bank cash flow: %s", res.Message)
+	}
+}
+
 func TestResolveQueryRoutingDoesNotTreatOverallExpenseAsEntity(t *testing.T) {
 	dbPath := buildQueryContextResolutionDB(t)
 	engine, err := NewEngine(dbPath, "测试公司")
@@ -177,6 +232,81 @@ func TestResolveQueryRoutingUsesContractAnchorForRelativeContractQuestions(t *te
 	}
 }
 
+func TestResolveQueryRoutingShortQuarterRevenueStaysCompanyAggregate(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("26Q1 收入有多少")
+	if route.entity != "" || route.hasRealEntity {
+		t.Fatalf("entity = %q hasRealEntity=%t, want company aggregate", route.entity, route.hasRealEntity)
+	}
+	if route.spec.QueryFamily != QueryFamilyCoreMetric {
+		t.Fatalf("query_family = %s, want %s", route.spec.QueryFamily, QueryFamilyCoreMetric)
+	}
+	if route.spec.NeedsContractDimension {
+		t.Fatalf("NeedsContractDimension = true, want false")
+	}
+	if !route.spec.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want contract aggregate")
+	}
+	if route.spec.PeriodFrom != "2026-01" || route.spec.PeriodTo != "2026-03" {
+		t.Fatalf("period = %s~%s, want 2026-01~2026-03", route.spec.PeriodFrom, route.spec.PeriodTo)
+	}
+}
+
+func TestShortQuarterRevenueQueryDoesNotMatchFY26ContractContent(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
+VALUES ('C-FY26-PDD-1','辽宁金程信息科技有限公司','FY26指定平台商品数据服务采购-pdd'),
+       ('C-FY26-PDD-2','四川其妙科技有限公司','FY26指定平台商品数据服务采购-pdd')`); err != nil {
+		t.Fatalf("seed fy26 contracts: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+VALUES ('C-FY26-PDD-1','2026-01','contract_fund_income','26年Q1收入明细',103500,103500,'是',103500),
+       ('C-FY26-PDD-1','2026-02','contract_fund_income','26年Q1收入明细',103500,0,'否',0),
+       ('C-FY26-PDD-2','2026-03','contract_fund_income','26年Q1收入明细',103500,0,'否',0)`); err != nil {
+		t.Fatalf("seed fy26 income: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("26Q1 收入有多少")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if strings.Contains(res.Message, "FY26指定平台商品数据服务采购-pdd") {
+		t.Fatalf("company aggregate should not be hijacked by FY26 contract content, got %q", res.Message)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; data=%+v message=%s", got, res.Data, res.Message)
+	}
+	if got := res.Data["total"]; got != float64(310500+900) {
+		t.Fatalf("total = %v, want company contract revenue 311400", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["entity"]; got != "" {
+		t.Fatalf("query_spec.entity = %v, want empty company aggregate", got)
+	}
+}
+
 func buildQueryContextResolutionDB(t *testing.T) string {
 	t.Helper()
 
@@ -218,6 +348,14 @@ func buildQueryContextResolutionDB(t *testing.T) string {
 			opening_balance REAL,
 			closing_balance REAL
 		)`,
+		`CREATE TABLE balance_detail (
+			company TEXT,
+			period TEXT,
+			account_code TEXT,
+			account_name TEXT,
+			closing_debit REAL,
+			closing_credit REAL
+		)`,
 		`CREATE TABLE fin_contracts (
 			contract_id TEXT PRIMARY KEY,
 			customer_name TEXT,
@@ -236,6 +374,8 @@ func buildQueryContextResolutionDB(t *testing.T) string {
 		)`,
 		`INSERT INTO balance_sheet(company, period, account_code, account_name, opening_balance, closing_balance)
 		 VALUES ('测试公司','2026-03','1002','货币资金',100,150)`,
+		`INSERT INTO balance_detail(company, period, account_code, account_name, closing_debit, closing_credit)
+		 VALUES ('测试公司','2026-03','1002','银行存款',130,0)`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
 		 VALUES ('C-FW-001','飞未云科（深圳）技术有限公司','飞未项目-京东价格数据')`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)

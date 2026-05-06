@@ -46,6 +46,7 @@ func isRealishQueryEntity(entity string) bool {
 	return len([]rune(trimmed)) >= 2 &&
 		!isGenericMetricEntity(trimmed) &&
 		!looksLikeTemporalMetricEntity(trimmed) &&
+		!looksLikePeriodOnlyEntity(trimmed) &&
 		!looksLikeBusinessDimensionLabel(trimmed) &&
 		!looksLikeSyntheticQuestionFragment(trimmed)
 }

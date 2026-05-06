@@ -45,7 +45,7 @@ func (e *Engine) contractContentCandidates() []string {
 
 func (e *Engine) resolveContractSubjectCandidates(alias string) []string {
 	alias = trimEntityNoiseSuffixes(stripTemporalNoise(strings.TrimSpace(alias)))
-	if looksLikeBusinessDimensionLabel(alias) {
+	if looksLikeBusinessDimensionLabel(alias) || looksLikePeriodOnlyEntity(alias) {
 		return nil
 	}
 	matches := rankCounterpartyAliasMatches(alias, e.contractCustomerCandidates())
@@ -81,7 +81,7 @@ func (e *Engine) resolveContractSubject(question, entity string) string {
 	seen := map[string]struct{}{}
 	for _, term := range terms {
 		term = trimEntityNoiseSuffixes(stripTemporalNoise(strings.TrimSpace(term)))
-		if len([]rune(term)) < 2 || looksLikeBusinessDimensionLabel(term) {
+		if len([]rune(term)) < 2 || looksLikeBusinessDimensionLabel(term) || looksLikePeriodOnlyEntity(term) {
 			continue
 		}
 		if _, ok := seen[term]; ok {
@@ -102,7 +102,7 @@ func (e *Engine) resolveContractSubject(question, entity string) string {
 		for length := len(runes); length >= 2; length-- {
 			for i := 0; i <= len(runes)-length; i++ {
 				sub := trimEntityNoiseSuffixes(stripTemporalNoise(string(runes[i : i+length])))
-				if shouldSkipEntityFragment(sub, 2) || looksLikeBusinessDimensionLabel(sub) {
+				if shouldSkipEntityFragment(sub, 2) || looksLikeBusinessDimensionLabel(sub) || looksLikePeriodOnlyEntity(sub) {
 					continue
 				}
 				if matches := e.resolveContractSubjectCandidates(sub); len(matches) > 0 {

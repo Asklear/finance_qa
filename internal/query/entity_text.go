@@ -1,6 +1,9 @@
 package query
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 func normalizeEntityText(s string) string {
 	replacer := strings.NewReplacer(" ", "", "\t", "", "\n", "", "（", "", "）", "", "(", "", ")", "", "-", "", "_", "", ",", "", "，", "", ".", "", "。", "")
@@ -8,7 +11,51 @@ func normalizeEntityText(s string) string {
 }
 
 func stripTemporalNoise(entity string) string {
-	return strings.TrimSpace(temporalNoisePattern.ReplaceAllString(entity, ""))
+	return strings.TrimSpace(compactSpaces(stripKnownPeriodTokens(entity)))
+}
+
+func stripKnownPeriodTokens(text string) string {
+	out := strings.TrimSpace(text)
+	if out == "" {
+		return ""
+	}
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(?:20)?\d{2}\s*(?:年)?\s*q\s*[1-4]`),
+		regexp.MustCompile(`(?i)(?:20)?\d{2}\s*年\s*第?\s*[一二三四1234]\s*季度`),
+		regexp.MustCompile(`(?i)(?:20)?\d{2}\s*年\s*(?:上半年|下半年|全年|全年度|整年|年度|累计|年内)`),
+		regexp.MustCompile(`(?i)(?:20)?\d{2}\s*年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})\s*月`),
+		regexp.MustCompile(`20\d{2}年?`),
+		regexp.MustCompile(`[0-3]?\d月`),
+		regexp.MustCompile(`[0-3]?\d日`),
+	}
+	for _, pattern := range patterns {
+		out = pattern.ReplaceAllString(out, " ")
+	}
+	return strings.TrimSpace(out)
+}
+
+func compactSpaces(text string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+func looksLikeIsolatedYearToken(entity string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(entity))
+	if normalized == "" {
+		return false
+	}
+	return regexp.MustCompile(`^(?:20)?\d{2}年?$`).MatchString(normalized)
+}
+
+func looksLikePeriodOnlyEntity(entity string) bool {
+	trimmed := strings.TrimSpace(entity)
+	if trimmed == "" {
+		return false
+	}
+	stripped := stripKnownPeriodTokens(trimmed)
+	if strings.TrimSpace(stripped) == "" && strings.TrimSpace(stripped) != strings.TrimSpace(trimmed) {
+		return true
+	}
+	return looksLikeIsolatedYearToken(trimmed)
 }
 
 func trimEntityNoiseSuffixes(entity string) string {

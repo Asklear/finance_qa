@@ -13,6 +13,8 @@ func (e *Engine) queryBankCashFlow(question, from, to string) Result {
 	periodLabel := displayPeriod(from, to)
 	message := fmt.Sprintf("%s 银行卡实际到账 %.2f 元，实际支出 %.2f 元，净增加 %.2f 元。", periodLabel, cash.Income, cash.Expense, cash.Net)
 	switch {
+	case asksFullBankCashFlow(q):
+		message = fmt.Sprintf("%s 银行卡实际到账 %.2f 元，实际支出 %.2f 元，净增加 %.2f 元。", periodLabel, cash.Income, cash.Expense, cash.Net)
 	case containsAny(q, []string{"实际支出", "支出", "付款", "支付"}):
 		message = fmt.Sprintf("%s 银行卡实际支出 %.2f 元。", periodLabel, cash.Expense)
 	case containsAny(q, []string{"净增加", "净流入", "净流出", "净现金流"}):
@@ -37,4 +39,11 @@ func (e *Engine) queryBankCashFlow(question, from, to string) Result {
 		ExecutedSQL:     append([]string{}, e.calc.ExecutedSQLs...),
 		CalculationLogs: append([]string{}, e.calc.CalculationLogs...),
 	}
+}
+
+func asksFullBankCashFlow(q string) bool {
+	hasIncome := containsAny(q, []string{"实际到账", "到账", "回款", "收款", "流入"})
+	hasExpense := containsAny(q, []string{"实际支出", "支出", "付款", "支付", "流出"})
+	hasNet := containsAny(q, []string{"净增加", "净流入", "净流出", "净现金流"})
+	return (hasIncome && hasExpense) || (hasNet && (hasIncome || hasExpense))
 }

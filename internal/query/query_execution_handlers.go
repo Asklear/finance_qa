@@ -19,6 +19,10 @@ func executionStageHandlers() map[executionStage]executionStageHandler {
 			result := e.queryBankCashFlow(ctx.q, ctx.from, ctx.to)
 			return result, result.Success
 		},
+		executionStageDirectPreciseBalance: func(e *Engine, ctx queryExecutionContext) (Result, bool) {
+			result := e.queryPrecise(ctx.q, ctx.to)
+			return result, result.Success
+		},
 		executionStageDirectContractDimension: func(e *Engine, ctx queryExecutionContext) (Result, bool) {
 			result := e.queryContractDimension(ctx.q, ctx.entity, ctx.anchor)
 			return result, result.Success
