@@ -15,6 +15,8 @@ import (
 )
 
 func TestContractDetailClauseQuestionRoutesToContractDetail(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("百度边缘计算资源服务协议付款条款是什么？", now)
 	if spec.QueryFamily != query.QueryFamilyContractDetail {
@@ -23,6 +25,8 @@ func TestContractDetailClauseQuestionRoutesToContractDetail(t *testing.T) {
 }
 
 func TestContractDetailInvoiceQuestionRoutesToContractDetail(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("百度边缘计算资源服务协议发票金额和开票日期是多少？", now)
 	if spec.QueryFamily != query.QueryFamilyContractDetail {
@@ -31,6 +35,8 @@ func TestContractDetailInvoiceQuestionRoutesToContractDetail(t *testing.T) {
 }
 
 func TestInvoiceContentQuestionRoutesToContractDetail(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("INV-EDGE-002这张发票内容是什么？", now)
 	if spec.QueryFamily != query.QueryFamilyContractDetail {
@@ -39,6 +45,8 @@ func TestInvoiceContentQuestionRoutesToContractDetail(t *testing.T) {
 }
 
 func TestInvoiceWrittenContentQuestionRoutesToContractDetail(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("INV-EDGE-002这张发票里写了什么？", now)
 	if spec.QueryFamily != query.QueryFamilyContractDetail {
@@ -47,6 +55,8 @@ func TestInvoiceWrittenContentQuestionRoutesToContractDetail(t *testing.T) {
 }
 
 func TestContractContentQuestionRoutesToPages(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -67,6 +77,8 @@ func TestContractContentQuestionRoutesToPages(t *testing.T) {
 }
 
 func TestContractOperatingQuestionStillUsesExistingContractFlow(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("2026年3月已开票未回款的项目有哪些？", now)
 	if spec.QueryFamily == query.QueryFamilyContractDetail {
@@ -78,6 +90,8 @@ func TestContractOperatingQuestionStillUsesExistingContractFlow(t *testing.T) {
 }
 
 func TestContractDetailProbeClauseChoosesMainAndPageTables(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -100,6 +114,8 @@ func TestContractDetailProbeClauseChoosesMainAndPageTables(t *testing.T) {
 }
 
 func TestContractDetailProbeInvoiceChoosesInvoiceTables(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -119,6 +135,8 @@ func TestContractDetailProbeInvoiceChoosesInvoiceTables(t *testing.T) {
 }
 
 func TestContractDetailProbePageTextChoosesPages(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -135,6 +153,8 @@ func TestContractDetailProbePageTextChoosesPages(t *testing.T) {
 }
 
 func TestContractDetailProbeNotUsedForOperatingAmountQuestion(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("2026年3月收入、成本、利润分别是多少？", now)
 	if spec.QueryFamily == query.QueryFamilyContractDetail {
@@ -143,6 +163,8 @@ func TestContractDetailProbeNotUsedForOperatingAmountQuestion(t *testing.T) {
 }
 
 func TestContractOperatingQuestionsDoNotRouteToContractDetail(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, 4, 26, 0, 0, 0, 0, time.UTC)
 	for _, question := range []string{
 		"2026年3月收入、成本、利润分别是多少？",
@@ -159,6 +181,8 @@ func TestContractOperatingQuestionsDoNotRouteToContractDetail(t *testing.T) {
 }
 
 func TestContractDetailPlanAndRegistryUseDetailSource(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -186,6 +210,8 @@ func TestContractDetailPlanAndRegistryUseDetailSource(t *testing.T) {
 }
 
 func TestContractDetailClauseQueryReturnsPaymentTermsSafely(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -214,6 +240,8 @@ func TestContractDetailClauseQueryReturnsPaymentTermsSafely(t *testing.T) {
 }
 
 func TestContractDetailInvoiceQueryReturnsAmountsAndDatesSafely(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -245,6 +273,8 @@ func TestContractDetailInvoiceQueryReturnsAmountsAndDatesSafely(t *testing.T) {
 }
 
 func TestContractDetailInvoiceContentQueryCanMatchInvoiceDirectly(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 
@@ -271,6 +301,8 @@ func TestContractDetailInvoiceContentQueryCanMatchInvoiceDirectly(t *testing.T) 
 }
 
 func TestContractDetailInvoiceQueryAggregatesWithoutSummaryTable(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractDetailTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -308,6 +340,8 @@ func TestContractDetailInvoiceQueryAggregatesWithoutSummaryTable(t *testing.T) {
 }
 
 func TestContractDetailPageFallbackUsesMarkdownText(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractDetailTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -337,6 +371,8 @@ func TestContractDetailPageFallbackUsesMarkdownText(t *testing.T) {
 }
 
 func TestContractDetailIgnoresDeletedFeishuContracts(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	engine := newContractDetailTestEngine(t)
 	defer engine.Close()
 

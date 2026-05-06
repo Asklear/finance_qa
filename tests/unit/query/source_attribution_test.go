@@ -11,6 +11,8 @@ import (
 )
 
 func TestCompanyAggregateMetricPrimarySourceTablesPreferMetricTableOverContractDimension(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -113,6 +115,8 @@ UPDATE fin_contracts SET updated_at = '2026-05-04 18:00:00';
 }
 
 func TestCompanyAggregateMultiMetricSourceNoteIncludesRevenueAndCostWorkbooks(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -157,6 +161,8 @@ func TestCompanyAggregateMultiMetricSourceNoteIncludesRevenueAndCostWorkbooks(t 
 }
 
 func TestSourceNoteDoesNotExposeFeishuTokenOnlyWorkbookNames(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -193,6 +199,8 @@ INSERT OR REPLACE INTO meta_table_comments(table_name, comment) VALUES
 }
 
 func TestSourceNotePrefersCurrentFinanceFileMappingName(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -261,6 +269,8 @@ VALUES
 }
 
 func TestSourceNoteDoesNotFallBackToTableCommentWhenFinanceFileMappingIsPartial(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -308,6 +318,8 @@ VALUES ('fund-income', '2025-Q4', '南京优集数据科技有限公司', 'tenan
 }
 
 func TestSourceNoteDoesNotFallBackToDifferentPeriodFinanceFileMapping(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -355,6 +367,8 @@ VALUES ('fund-income', '2026-Q1', '南京优集数据科技有限公司', 'tenan
 }
 
 func TestSourceNoteUsesFinanceFileMappingForBankStatement(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildEntityRoutingTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -406,6 +420,8 @@ VALUES ('bank-statement', '2026-Q1', '南京优集数据科技有限公司', 'te
 }
 
 func TestSourceNoteDoesNotExposeMergedGroupHelperTablesToBossReply(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

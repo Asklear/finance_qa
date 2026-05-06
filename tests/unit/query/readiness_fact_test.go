@@ -13,6 +13,8 @@ import (
 )
 
 func TestReadinessSourceAdapterReturnsReadinessFacts(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildReadinessFactDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -38,6 +40,8 @@ func TestReadinessSourceAdapterReturnsReadinessFacts(t *testing.T) {
 }
 
 func TestReadinessQueryExposesSourceBackedFactSets(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildReadinessFactDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -64,6 +68,8 @@ func TestReadinessQueryExposesSourceBackedFactSets(t *testing.T) {
 }
 
 func TestReadinessCountsJournalCounterpartyMatches(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "readiness-counterparty.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -105,6 +111,8 @@ func TestReadinessCountsJournalCounterpartyMatches(t *testing.T) {
 }
 
 func TestReadinessCountsContractLedgerMatches(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "readiness-contract-ledger.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

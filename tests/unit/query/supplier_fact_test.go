@@ -13,6 +13,8 @@ import (
 )
 
 func TestSupplierPaymentSourceAdapterReturnsFactsAndRoster(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildSupplierFactDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -51,6 +53,8 @@ func TestSupplierPaymentSourceAdapterReturnsFactsAndRoster(t *testing.T) {
 }
 
 func TestSupplierPaymentQueryExposesSourceBackedFactSets(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildSupplierFactDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {

@@ -45,6 +45,8 @@ func (s stubSourceAdapter) Fetch(_ context.Context, spec query.QuerySpec) (query
 }
 
 func TestSourceRegistryResolvesAdapterByCapability(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	registry := query.NewSourceRegistry()
 	registry.Register(stubSourceAdapter{
 		name:         "core-metrics",
@@ -61,6 +63,8 @@ func TestSourceRegistryResolvesAdapterByCapability(t *testing.T) {
 }
 
 func TestOrchestratorExecutesPlannedAdaptersInOrder(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("2026年3月收入是多少？", now)
 
@@ -100,6 +104,8 @@ func TestOrchestratorExecutesPlannedAdaptersInOrder(t *testing.T) {
 }
 
 func TestOrchestratorReturnsStructuredErrorWhenCapabilityMissing(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	now := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
 	spec := query.BuildQuerySpec("2026年3月应收账款多少？", now)
 
@@ -118,6 +124,8 @@ func TestOrchestratorReturnsStructuredErrorWhenCapabilityMissing(t *testing.T) {
 }
 
 func TestDefaultSourceRegistryRegistersMigratedAdapters(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildProfitBridgeQueryDB(t)
 	engine, err := query.NewEngine(dbPath, "模拟财务")
 	if err != nil {

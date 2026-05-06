@@ -13,6 +13,8 @@ import (
 )
 
 func TestHostPayloadBalanceDetailShouldRespectPeriodRange(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "host-payload.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -79,6 +81,8 @@ func TestHostPayloadBalanceDetailShouldRespectPeriodRange(t *testing.T) {
 }
 
 func TestHostPayloadReturnsFailureWhenExtractionIsIncomplete(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "host-payload-incomplete.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -120,6 +124,8 @@ func TestHostPayloadReturnsFailureWhenExtractionIsIncomplete(t *testing.T) {
 }
 
 func TestHostPayloadIncludesContractDetailsAndSourceNote(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "host-payload-contracts.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {

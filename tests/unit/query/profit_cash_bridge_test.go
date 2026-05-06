@@ -13,6 +13,8 @@ import (
 )
 
 func TestProfitQueryExposesProfitCashBridge(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildProfitBridgeQueryDB(t)
 
 	engine, err := query.NewEngine(dbPath, "模拟财务")
@@ -78,6 +80,8 @@ func TestProfitQueryExposesProfitCashBridge(t *testing.T) {
 }
 
 func TestCoreMetricsSourceAdapterReturnsRevenueFacts(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildProfitBridgeQueryDB(t)
 	engine, err := query.NewEngine(dbPath, "模拟财务")
 	if err != nil {
@@ -101,6 +105,8 @@ func TestCoreMetricsSourceAdapterReturnsRevenueFacts(t *testing.T) {
 }
 
 func TestCoreMetricsSourceAdapterReturnsProfitAndBridgeFacts(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildProfitBridgeQueryDB(t)
 	engine, err := query.NewEngine(dbPath, "模拟财务")
 	if err != nil {
@@ -122,6 +128,8 @@ func TestCoreMetricsSourceAdapterReturnsProfitAndBridgeFacts(t *testing.T) {
 }
 
 func TestCoreMetricsSourceAdapterAggregatesQuarterRangeFacts(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildProfitBridgeRangeDB(t)
 	engine, err := query.NewEngine(dbPath, "模拟财务")
 	if err != nil {

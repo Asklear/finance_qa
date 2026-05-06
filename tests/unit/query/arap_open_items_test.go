@@ -14,6 +14,8 @@ import (
 )
 
 func TestARAPUsesCrossMonthFIFOSettlement(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "arap-open-items.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -100,6 +102,8 @@ func TestARAPUsesCrossMonthFIFOSettlement(t *testing.T) {
 }
 
 func TestARAPNormalizesSummaryDerivedCounterpartyBeforeSettlement(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "arap-summary-normalize.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -164,6 +168,8 @@ func TestARAPNormalizesSummaryDerivedCounterpartyBeforeSettlement(t *testing.T) 
 }
 
 func TestARAPSummaryDerivedSettlementStaysProbableUntilDirectEvidenceExists(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "arap-probable-summary-match.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -224,6 +230,8 @@ func TestARAPSummaryDerivedSettlementStaysProbableUntilDirectEvidenceExists(t *t
 }
 
 func TestTaxQuestionsRenderCombinedAndNetMessages(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "tax-query.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -281,6 +289,8 @@ func TestTaxQuestionsRenderCombinedAndNetMessages(t *testing.T) {
 }
 
 func TestTaxQuestionsAccumulate222101And222102InputTax(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "tax-input-prefixes.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -335,6 +345,8 @@ func TestTaxQuestionsAccumulate222101And222102InputTax(t *testing.T) {
 }
 
 func TestPayableOpenItemsTreatNegativeCreditAsReduction(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "ap-negative-credit.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -387,6 +399,8 @@ func TestPayableOpenItemsTreatNegativeCreditAsReduction(t *testing.T) {
 }
 
 func TestGeneralARAPUsesBalanceSheetAsOfficialTotal(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "arap-official-priority.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -474,6 +488,8 @@ func TestGeneralARAPUsesBalanceSheetAsOfficialTotal(t *testing.T) {
 }
 
 func TestARAPSourceAdapterReturnsOfficialAndOpenItemFacts(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildARAPOfficialPriorityDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -496,6 +512,8 @@ func TestARAPSourceAdapterReturnsOfficialAndOpenItemFacts(t *testing.T) {
 }
 
 func TestARAPQueryExposesSourceBackedFactSets(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildARAPOfficialPriorityDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {

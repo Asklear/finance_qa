@@ -2,7 +2,6 @@ package query_test
 
 import (
 	"database/sql"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1221,7 +1220,14 @@ func TestLargeOutflowQuestionUsesDedicatedBankFlowQuery(t *testing.T) {
 func buildEntityRoutingTestDB(t *testing.T) string {
 	t.Helper()
 
-	dbPath := filepath.Join(t.TempDir(), "entity-routing.db")
+	return cloneSQLiteFixture(t, "entity-routing", func(dbPath string) {
+		buildEntityRoutingTestDBAt(t, dbPath)
+	})
+}
+
+func buildEntityRoutingTestDBAt(t *testing.T, dbPath string) {
+	t.Helper()
+
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -1354,6 +1360,4 @@ func buildEntityRoutingTestDB(t *testing.T) string {
 			t.Fatalf("insert seed data failed: %v", err)
 		}
 	}
-
-	return dbPath
 }

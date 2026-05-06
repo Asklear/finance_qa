@@ -13,74 +13,47 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestCustomerContractQuestionUsesContractBookAndCashViews(t *testing.T) {
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("辽宁金程信息科技有限公司2025年合同结算多少？其中10月到账多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	if !strings.Contains(res.Message, "现金口径") || !strings.Contains(res.Message, "财务口径") {
-		t.Fatalf("message should mention cash and financial views, got: %s", res.Message)
-	}
-	if strings.Index(res.Message, "现金口径") > strings.Index(res.Message, "财务口径") {
-		t.Fatalf("contract answer should present cash view before financial view, got: %s", res.Message)
-	}
-	if got := res.Data["role"]; got != "customer_contract" {
-		t.Fatalf("role = %v, want customer_contract", got)
-	}
-	if got := res.Data["sub_period_receipts"]; got != float64(1234) {
-		t.Fatalf("sub_period_receipts = %v, want 1234", got)
-	}
-	if _, ok := res.Data["money_view"]; !ok {
-		t.Fatalf("missing money_view alias: %+v", res.Data)
-	}
-	if _, ok := res.Data["account_view"]; !ok {
-		t.Fatalf("missing account_view alias: %+v", res.Data)
-	}
-	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
-		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
-	}
-}
-
-func TestSupplierContractQuestionUsesContractCostAndBankPayments(t *testing.T) {
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("南京林悦智能科技有限公司2025年合同成本多少？实际付款多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	if !strings.Contains(res.Message, "现金口径") || !strings.Contains(res.Message, "财务口径") {
-		t.Fatalf("message should mention cash and financial views, got: %s", res.Message)
-	}
-	if strings.Index(res.Message, "现金口径") > strings.Index(res.Message, "财务口径") {
-		t.Fatalf("contract answer should present cash view before financial view, got: %s", res.Message)
-	}
-	if got := res.Data["role"]; got != "supplier_contract" {
-		t.Fatalf("role = %v, want supplier_contract", got)
-	}
-	if got := res.Data["cash_paid_amount"]; got != float64(666) {
-		t.Fatalf("cash_paid_amount = %v, want 666", got)
-	}
-	if _, ok := res.Data["money_view"]; !ok {
-		t.Fatalf("missing money_view alias: %+v", res.Data)
-	}
-	if _, ok := res.Data["account_view"]; !ok {
-		t.Fatalf("missing account_view alias: %+v", res.Data)
-	}
+func TestContractQuestionDualViewScenarios(t *testing.T) {
+	runParallelQueryScenarios(t, []queryScenario{
+		{
+			Name:     "customer_contract_book_and_cash_views",
+			Question: "辽宁金程信息科技有限公司2025年合同结算多少？其中10月到账多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				assertCashBeforeFinancialView(t, res.Message)
+				if got := res.Data["role"]; got != "customer_contract" {
+					t.Fatalf("role = %v, want customer_contract", got)
+				}
+				if got := res.Data["sub_period_receipts"]; got != float64(1234) {
+					t.Fatalf("sub_period_receipts = %v, want 1234", got)
+				}
+				assertViewAliases(t, res)
+				if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+					t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
+				}
+			},
+		},
+		{
+			Name:     "supplier_contract_cost_and_bank_payments",
+			Question: "南京林悦智能科技有限公司2025年合同成本多少？实际付款多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				assertCashBeforeFinancialView(t, res.Message)
+				if got := res.Data["role"]; got != "supplier_contract" {
+					t.Fatalf("role = %v, want supplier_contract", got)
+				}
+				if got := res.Data["cash_paid_amount"]; got != float64(666) {
+					t.Fatalf("cash_paid_amount = %v, want 666", got)
+				}
+				assertViewAliases(t, res)
+			},
+		},
+	})
 }
 
 func TestSupplierContractQuestionUsesMergedCostSettlementGroups(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -115,6 +88,8 @@ func TestSupplierContractQuestionUsesMergedCostSettlementGroups(t *testing.T) {
 }
 
 func TestMixedContractQuestionUsesCashFirstDualAnswer(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -144,6 +119,8 @@ func TestMixedContractQuestionUsesCashFirstDualAnswer(t *testing.T) {
 }
 
 func TestContractProfitQuestionWithoutContractKeywordStillUsesContractDimension(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -180,6 +157,8 @@ func TestContractProfitQuestionWithoutContractKeywordStillUsesContractDimension(
 }
 
 func TestContractContentQuestionUsesContractDimension(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -204,6 +183,8 @@ func TestContractContentQuestionUsesContractDimension(t *testing.T) {
 }
 
 func TestContractRevenueQuestionWithoutContractKeywordStillUsesContractDimension(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -235,6 +216,8 @@ func TestContractRevenueQuestionWithoutContractKeywordStillUsesContractDimension
 }
 
 func TestContractAliasRevenueQuestionUsesContractDimension(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -262,6 +245,8 @@ func TestContractAliasRevenueQuestionUsesContractDimension(t *testing.T) {
 }
 
 func TestCustomerContractQuestionUsesMergedFundIncomeGroups(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -309,6 +294,8 @@ func TestCustomerContractQuestionUsesMergedFundIncomeGroups(t *testing.T) {
 }
 
 func TestContractMemberQuestionDoesNotAttributeWholeMergedFundIncomeGroup(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -330,6 +317,8 @@ func TestContractMemberQuestionDoesNotAttributeWholeMergedFundIncomeGroup(t *tes
 }
 
 func TestContractMemberQuestionDoesNotAttributeWholeMergedCostSettlementGroup(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -351,6 +340,8 @@ func TestContractMemberQuestionDoesNotAttributeWholeMergedCostSettlementGroup(t 
 }
 
 func TestContractHalfWidthParenthesesEntityStillUsesContractDimension(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -375,6 +366,8 @@ func TestContractHalfWidthParenthesesEntityStillUsesContractDimension(t *testing
 }
 
 func TestCompanyAggregateMetricIncludesMergedFundIncomeGroups(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -399,6 +392,8 @@ func TestCompanyAggregateMetricIncludesMergedFundIncomeGroups(t *testing.T) {
 }
 
 func TestCompanyAggregateMetricIncludesMergedCostSettlementGroups(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -426,6 +421,8 @@ func TestCompanyAggregateMetricIncludesMergedCostSettlementGroups(t *testing.T) 
 }
 
 func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -483,6 +480,8 @@ func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 }
 
 func TestCompanyAggregateInvoiceOpenDetailDoesNotExposeMergedGroupLabel(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -506,6 +505,8 @@ func TestCompanyAggregateInvoiceOpenDetailDoesNotExposeMergedGroupLabel(t *testi
 }
 
 func TestCompanyAggregateGMVPrefersContractAggregateFirst(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -533,6 +534,8 @@ func TestCompanyAggregateGMVPrefersContractAggregateFirst(t *testing.T) {
 }
 
 func TestCompanyAggregateMetricIncludesSourceNoteFromTableComment(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -557,6 +560,8 @@ func TestCompanyAggregateMetricIncludesSourceNoteFromTableComment(t *testing.T) 
 }
 
 func TestCompanyAggregateMetricFallsBackWhenContractSummaryMissingCoverage(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -603,6 +608,8 @@ func TestCompanyAggregateMetricFallsBackWhenContractSummaryMissingCoverage(t *te
 }
 
 func TestProjectMetricQuestionUsesContractDimensionRouting(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -627,6 +634,8 @@ func TestProjectMetricQuestionUsesContractDimensionRouting(t *testing.T) {
 }
 
 func TestContractSourceAdapterReturnsCustomerContractFacts(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -653,6 +662,8 @@ func TestContractSourceAdapterReturnsCustomerContractFacts(t *testing.T) {
 }
 
 func TestContractSourceAdapterHonorsSpecResolvedRelativePeriod(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractRelativeAnchorTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -676,6 +687,8 @@ func TestContractSourceAdapterHonorsSpecResolvedRelativePeriod(t *testing.T) {
 }
 
 func TestContractSourceAdapterFallsBackToContractRelativeAnchorWhenSpecPeriodMissing(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractRelativeAnchorWithNewerJournalTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -702,6 +715,8 @@ func TestContractSourceAdapterFallsBackToContractRelativeAnchorWhenSpecPeriodMis
 }
 
 func TestContractQueryExposesSourceBackedFactSets(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildContractQueryTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -728,7 +743,14 @@ func TestContractQueryExposesSourceBackedFactSets(t *testing.T) {
 func buildContractQueryTestDB(t *testing.T) string {
 	t.Helper()
 
-	dbPath := filepath.Join(t.TempDir(), "contract-query.db")
+	return cloneSQLiteFixture(t, "contract-query", func(dbPath string) {
+		buildContractQueryTestDBAt(t, dbPath)
+	})
+}
+
+func buildContractQueryTestDBAt(t *testing.T, dbPath string) {
+	t.Helper()
+
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -922,8 +944,6 @@ func buildContractQueryTestDB(t *testing.T) string {
 			t.Fatalf("insert seed data failed: %v", err)
 		}
 	}
-
-	return dbPath
 }
 
 func contractAnchor() time.Time {

@@ -11,6 +11,8 @@ import (
 )
 
 func TestTaxQueryAnnotatesSourceSummary(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := filepath.Join(t.TempDir(), "tax-source-attribution.db")
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -60,6 +62,8 @@ func TestTaxQueryAnnotatesSourceSummary(t *testing.T) {
 }
 
 func TestLargeBankTransactionAnnotatesSourceSummary(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -79,6 +83,8 @@ func TestLargeBankTransactionAnnotatesSourceSummary(t *testing.T) {
 }
 
 func TestPreciseBalanceQueryAnnotatesSourceSummary(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -98,6 +104,8 @@ func TestPreciseBalanceQueryAnnotatesSourceSummary(t *testing.T) {
 }
 
 func TestReadinessQueryAnnotatesSourceSummary(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildReadinessFactDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -117,6 +125,8 @@ func TestReadinessQueryAnnotatesSourceSummary(t *testing.T) {
 }
 
 func TestCounterpartyClassificationAnnotatesSourceSummary(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildEntityRoutingTestDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
@@ -139,6 +149,8 @@ func TestCounterpartyClassificationAnnotatesSourceSummary(t *testing.T) {
 }
 
 func TestReconciliationQueryAnnotatesSourceSummary(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
 	dbPath := buildReconciliationSourceAttributionDB(t)
 	engine, err := query.NewEngine(dbPath, testCompany)
 	if err != nil {
