@@ -275,7 +275,7 @@ metadata:
    - 其中客户合同的结算/开票/回款统一归到 `fin_fund_income`
    - `fin_contracts` 保存合同主信息：`customer_name`、`contract_content`，以及可归一化的 `contract_start_date`、`contract_end_date`、`settlement_cycle`
    - `fin_cost_settlements` 保存供应商/成本侧行项目字段：`quantity`、`settlement_amount`、`invoice_amount`、`paid_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
-   - `fin_fund_income` 保存客户/收入侧行项目字段：`quantity`、`settlement_amount`、`received_amount`、`invoice_amount`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
+   - `fin_fund_income` 保存客户/收入侧行项目字段：`quantity`、`settlement_amount`、`received_amount`、`invoice_amount`、`remarks`、`contract_start_date`、`contract_end_date`、`settlement_cycle`、`settlement_unit_price`
    - 两张行项目表都会附带 `source_report_type`、`source_sheet_name`，用于按来源分区做全量覆盖，避免一个合同 Excel 的重传把另一来源的数据整表冲掉
    - `source_report_type`、`source_sheet_name`、`contract_id`、`account_code` 等是数据库治理/溯源辅助字段；对老板回答时必须翻译成“来源 Excel / sheet / 合同或项目 / 会计科目含义”，不要原样展示字段名或编码
    - 除 `year_month` 会按规则推断外，其他合同扩展字段默认以源 Excel 原值为准；源单元格为空时，库中也保持为空，不做人为硬补

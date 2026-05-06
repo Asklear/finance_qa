@@ -161,7 +161,7 @@ GOOS=linux GOARCH=amd64 go build -o financeqa ./cmd/financeqa
 
 1. `feishu scan` 主动调用飞书 API，扫描 `feishu_sync_sources` 中已配置的财务表格和 PDF 文件夹；来源由 `FEISHU_SYNC_SOURCES_FILE` 或 `FEISHU_SYNC_SOURCES_JSON` 通过 `feishu seed-sources` 写入，不在代码里固化租户 token。
 2. PDF 下载到本地 snapshot 后计算 SHA256；hash 已存在时直接复用已有 `storage_key`，不重复上传。合同 PDF 写入 `contract_main`，发票 PDF 写入 `contract_invoices`，发票只按去掉 `发票/开票/invoice` 目录后的关系 key 关联到同目录合同，不按文件名猜测。hash 新增或同业务位置内容变化时，才上传到 `boss-agent` 的历史合同前缀，默认 `tenant/uhub/contract`，可用 `feishu_sync_sources.metadata_json.oss_prefix` 精确到 `tenant/uhub/contract/优集客户合同` 等子目录。
-3. 财务表格下载或导出为 `.xlsx`，hash 未变则跳过上传和导入；hash 变化则先写入 `tenant/uhub/finance` 或显式配置的 `tenant/uhub/finance/2025`、`tenant/uhub/finance/2026` 历史前缀，再复用现有导入链路刷新 `fin_contracts`、`fin_fund_income`、`fin_cost_settlements` 及合并组表；导出文件中的 Excel 批注/单元格备注会按单元格坐标保存到各财务事实表的 `source_cell_notes`；OSS 快照 key 写入 `feishu_sync_sources.metadata_json.storage_key`。
+3. 财务表格下载或导出为 `.xlsx`，hash 未变则跳过上传和导入；hash 变化则先写入 `tenant/uhub/finance` 或显式配置的 `tenant/uhub/finance/2025`、`tenant/uhub/finance/2026` 历史前缀，再复用现有导入链路刷新 `fin_contracts`、`fin_fund_income`、`fin_cost_settlements` 及合并组表；导出文件中的 Excel 批注/单元格备注会按单元格坐标保存到各财务事实表的 `source_cell_notes`，收入明细可见“备注”列单独保存到收入表的 `remarks`；OSS 快照 key 写入 `feishu_sync_sources.metadata_json.storage_key`。
 4. `ocr process-pending` 消费 `contract_main.ocr_status='pending'` 和 `contract_invoices.ocr_status='pending'` 的 PDF；如果 `storage_key` 是 OSS object key 相对路径，例如 `tenant/uhub/contract/...pdf`，先从 `OSS_BUCKET` 下载临时文件，再调用 Gemini。旧的 `s3://bucket/...` 值仍兼容读取，但新写入统一保存相对路径。
 5. OCR 结果写回对应表：合同写回 `contract_main` 并保存 `contract_pages` 全文；发票更新同一条 `contract_invoices`。未匹配到合同的发票不会落库，等待后续合同出现后再扫描。
 

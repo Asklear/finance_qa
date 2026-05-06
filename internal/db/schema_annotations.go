@@ -141,6 +141,7 @@ var commonColumnComments = map[string]string{
 	"settlement_amount":     "结算金额",
 	"is_invoiced":           "是否已开票",
 	"invoice_amount":        "开票金额",
+	"remarks":               "来源表可见备注列内容",
 	"paid_amount":           "实际付款金额",
 	"received_amount":       "实际到账金额",
 	"source_report_type":    "导入来源的逻辑报表类型",
