@@ -3,6 +3,7 @@ archive/
 
 # Go
 /financeqa
+bin/
 *.exe
 
 # Database
@@ -12,6 +13,7 @@ archive/
 *.bak.db
 *.bak.sqlite
 *.sqlite.bak*
+*.sqlite
 
 # OS
 .DS_Store
