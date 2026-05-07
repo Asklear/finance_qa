@@ -38,5 +38,6 @@ tests/scripts/verification_v2.go
 .env
 .env.*
 !.env.example
+secrets/
 .tmp*/
 dist/
