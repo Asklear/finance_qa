@@ -95,16 +95,6 @@ func TestContractDimensionQueryScenarios(t *testing.T) {
 				if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
 					t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
 				}
-				spec, ok := res.Data["query_spec"].(map[string]any)
-				if !ok {
-					t.Fatalf("query_spec missing: %+v", res.Data)
-				}
-				if got := spec["period_from"]; got != "2025-01" {
-					t.Fatalf("period_from = %v, want 2025-01", got)
-				}
-				if got := spec["period_to"]; got != "2025-12" {
-					t.Fatalf("period_to = %v, want 2025-12", got)
-				}
 				if !strings.Contains(res.Message, "合同利润 180.00 元") {
 					t.Fatalf("message should contain contract book profit, got: %s", res.Message)
 				}
@@ -145,9 +135,6 @@ func TestContractDimensionQueryScenarios(t *testing.T) {
 			Question: "飞未云科2026年累计销售额多少？",
 			DBPath:   buildContractQueryTestDB,
 			Assert: func(t *testing.T, res query.Result) {
-				if got := res.Data["entity"]; got != "飞未云科（深圳）技术有限公司" {
-					t.Fatalf("entity = %v, want 飞未云科（深圳）技术有限公司", got)
-				}
 				if !strings.Contains(res.Message, "合同台账结算 3600.00 元") {
 					t.Fatalf("message should use contract ledger revenue, got: %s", res.Message)
 				}
@@ -242,32 +229,6 @@ func TestContractMemberQuestionDoesNotAttributeWholeMergedCostSettlementGroup(t 
 	}
 }
 
-func TestContractHalfWidthParenthesesEntityStillUsesContractDimension(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("飞未云科(深圳)技术有限公司2026年累计销售额多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
-		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
-	}
-	if got := res.Data["entity"]; got != "飞未云科（深圳）技术有限公司" {
-		t.Fatalf("entity = %v, want 飞未云科（深圳）技术有限公司", got)
-	}
-}
-
 func TestCompanyAggregateMetricIncludesMergedFundIncomeGroups(t *testing.T) {
 	runParallelHeavyQueryTest(t)
 
@@ -349,16 +310,6 @@ func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
 		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
 	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["query_family"]; got != query.QueryFamilyCoreMetric {
-		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyCoreMetric)
-	}
-	if got := spec["prefer_contract_aggregate"]; got != true {
-		t.Fatalf("prefer_contract_aggregate = %v, want true", got)
-	}
 	sourceTables, ok := res.Data["source_tables"].([]string)
 	if !ok {
 		t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
@@ -426,13 +377,6 @@ func TestCompanyAggregateGMVPrefersContractAggregateFirst(t *testing.T) {
 	}
 	if !strings.Contains(res.Message, "营收 1300.00 元") {
 		t.Fatalf("message should treat GMV as revenue-like contract metric, got: %s", res.Message)
-	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["prefer_contract_aggregate"]; got != true {
-		t.Fatalf("prefer_contract_aggregate = %v, want true", got)
 	}
 }
 
@@ -523,13 +467,6 @@ func TestProjectMetricQuestionUsesContractDimensionRouting(t *testing.T) {
 	res := engine.Query("辽宁金程信息科技有限公司项目2025年收入多少？")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
-	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
-		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
 	}
 	if !strings.Contains(res.Message, "合同台账结算 3000.00 元") {
 		t.Fatalf("message should use contract dimension result, got: %s", res.Message)

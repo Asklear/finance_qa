@@ -224,3 +224,58 @@ func TestBuildQuerySpecRoutesQ1AggregateToCoreMetricWithContractPreference(t *te
 		t.Fatalf("BuildQuerySpec(Q1 revenue).PreferContractAggregate = false, want true")
 	}
 }
+
+func TestPrepareQueryExecutionContextRoutesContractAliasRevenueQuestionToContractDimension(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	ctx := engine.prepareQueryExecutionContext("飞未云科2026年累计销售额多少？")
+	if ctx.spec.QueryFamily != QueryFamilyContractDimension {
+		t.Fatalf("prepareQueryExecutionContext(%q).spec.QueryFamily = %s, want %s", "飞未云科2026年累计销售额多少？", ctx.spec.QueryFamily, QueryFamilyContractDimension)
+	}
+	if ctx.spec.Entity != "飞未云科（深圳）技术有限公司" {
+		t.Fatalf("prepareQueryExecutionContext(%q).spec.Entity = %q, want %q", "飞未云科2026年累计销售额多少？", ctx.spec.Entity, "飞未云科（深圳）技术有限公司")
+	}
+	if ctx.spec.PeriodFrom != "2026-01" || ctx.spec.PeriodTo != "2026-03" {
+		t.Fatalf("prepareQueryExecutionContext(%q) period=%s~%s, want 2026-01~2026-03", "飞未云科2026年累计销售额多少？", ctx.spec.PeriodFrom, ctx.spec.PeriodTo)
+	}
+}
+
+func TestPrepareQueryExecutionContextNormalizesHalfWidthParenthesesContractEntity(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	ctx := engine.prepareQueryExecutionContext("飞未云科(深圳)技术有限公司2026年累计销售额多少？")
+	if ctx.spec.QueryFamily != QueryFamilyContractDimension {
+		t.Fatalf("query_family = %s, want %s", ctx.spec.QueryFamily, QueryFamilyContractDimension)
+	}
+	if ctx.spec.Entity != "飞未云科（深圳）技术有限公司" {
+		t.Fatalf("entity = %q, want 飞未云科（深圳）技术有限公司", ctx.spec.Entity)
+	}
+}
+
+func TestBuildQuerySpecPrefersContractAggregateForCompanySummaryQuestions(t *testing.T) {
+	anchor := time.Date(2026, time.April, 10, 0, 0, 0, 0, time.UTC)
+
+	cases := []string{
+		"2025年10月收入、成本、利润分别是多少？",
+		"2025年10月GMV多少？",
+	}
+	for _, question := range cases {
+		spec := BuildQuerySpec(question, anchor)
+		if spec.QueryFamily != QueryFamilyCoreMetric {
+			t.Fatalf("BuildQuerySpec(%q).QueryFamily = %s, want %s", question, spec.QueryFamily, QueryFamilyCoreMetric)
+		}
+		if !spec.PreferContractAggregate {
+			t.Fatalf("BuildQuerySpec(%q).PreferContractAggregate = false, want true", question)
+		}
+	}
+}
