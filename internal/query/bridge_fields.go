@@ -2,6 +2,7 @@ package query
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -22,13 +23,16 @@ func buildHostSummaryContract(data map[string]any, query string) map[string]any 
 	askedTopic := getString(data, "asked_topic")
 	sourcePriority := getString(data, "source_priority")
 
+	// 调试：打印关键值
+	_ = fmt.Sprintf("%s%s%s", queryFamily, askedTopic, sourcePriority)
+
 	// contract_dimension 且满足条件
 	if queryFamily == "contract_dimension" && (askedTopic != "" || sourcePriority == "contract_first" || sourcePriority == "contract_strict") {
 		return buildContractDimensionSummary(data, querySpec)
 	}
 
-	// contract_aggregate 且满足条件
-	if queryFamily == "core_metric" && sourcePriority == "contract_first" && data["contract_summary"] != nil {
+	// contract_aggregate 且满足条件 - 支持 core_metric 和 arap_dimension
+	if (queryFamily == "core_metric" || queryFamily == "arap_dimension") && sourcePriority == "contract_first" && data["contract_summary"] != nil {
 		return buildContractAggregateSummary(data, querySpec)
 	}
 
@@ -285,6 +289,14 @@ func getString(data map[string]any, key string) string {
 	v, ok := data[key].(string)
 	if ok {
 		return v
+	}
+	// 处理 fmt.Stringer 接口类型（如 QueryFamily, MetricKind 等自定义类型）
+	if s, ok := data[key].(interface{ String() string }); ok {
+		return s.String()
+	}
+	// 兜底：使用 fmt.Sprint 转换
+	if data[key] != nil {
+		return fmt.Sprint(data[key])
 	}
 	return ""
 }

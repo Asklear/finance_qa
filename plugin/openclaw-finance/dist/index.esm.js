@@ -1,8 +1,25 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 
 const PLUGIN_ID = "openclaw-finance";
-const BRIDGE_PATH = process.env.FINANCE_BRIDGE_PATH || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../server/finance_bridge.py");
+
+// Path to financeqa binary (auto-detect or from env)
+const FINANCEQA_BIN = process.env.FINANCEQA_BIN || findFinanceQABinary();
+
+function findFinanceQABinary() {
+  // Try common paths
+  const candidates = [
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/financeqa"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin/financeqa"),
+    "/usr/local/bin/financeqa",
+    "/usr/bin/financeqa",
+    "./financeqa",
+    "financeqa"
+  ];
+  // Return first candidate - actual existence checked at runtime
+  return candidates[0];
+}
 
 const FINANCE_KEYWORDS = [
   "财务",
@@ -35,6 +52,144 @@ const FINANCE_KEYWORDS = [
   "客户",
   "货币资金"
 ];
+
+// MCP Client for communicating with financeqa serve
+class MCPClient {
+  constructor(binaryPath) {
+    this.binaryPath = binaryPath;
+    this.process = null;
+    this.requestId = 0;
+    this.pendingRequests = new Map();
+    this.initialized = false;
+  }
+
+  async start() {
+    if (this.process) return;
+
+    return new Promise((resolve, reject) => {
+      this.process = spawn(this.binaryPath, ["serve"], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env }
+      });
+
+      let buffer = "";
+      this.process.stdout.on("data", (chunk) => {
+        buffer += chunk.toString("utf8");
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (line.trim()) {
+            this.handleMessage(line.trim());
+          }
+        }
+      });
+
+      this.process.stderr.on("data", (chunk) => {
+        console.error("[financeqa]", chunk.toString("utf8"));
+      });
+
+      this.process.on("error", (err) => {
+        reject(new Error(`Failed to start financeqa: ${err.message}`));
+      });
+
+      this.process.on("close", (code) => {
+        this.process = null;
+        this.initialized = false;
+        if (code !== 0 && code !== null) {
+          console.error(`financeqa process exited with code ${code}`);
+        }
+      });
+
+      // Wait a bit for process to start, then send initialize
+      setTimeout(async () => {
+        try {
+          await this.sendRequest("initialize", {});
+          this.initialized = true;
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      }, 500);
+    });
+  }
+
+  stop() {
+    if (this.process) {
+      this.process.kill();
+      this.process = null;
+    }
+    this.initialized = false;
+  }
+
+  handleMessage(line) {
+    try {
+      const msg = JSON.parse(line);
+      if (msg.id !== undefined && this.pendingRequests.has(msg.id)) {
+        const { resolve, reject } = this.pendingRequests.get(msg.id);
+        this.pendingRequests.delete(msg.id);
+        if (msg.error) {
+          reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+        } else {
+          resolve(msg.result);
+        }
+      }
+    } catch (err) {
+      console.error("[mcp] Failed to parse message:", line.slice(0, 200));
+    }
+  }
+
+  sendRequest(method, params) {
+    return new Promise((resolve, reject) => {
+      if (!this.process) {
+        reject(new Error("MCP client not started"));
+        return;
+      }
+
+      this.requestId++;
+      const id = this.requestId;
+      const request = {
+        jsonrpc: "2.0",
+        id,
+        method,
+        params
+      };
+
+      this.pendingRequests.set(id, { resolve, reject });
+
+      // Timeout after 60 seconds
+      setTimeout(() => {
+        if (this.pendingRequests.has(id)) {
+          this.pendingRequests.delete(id);
+          reject(new Error(`Request timeout: ${method}`));
+        }
+      }, 60000);
+
+      this.process.stdin.write(JSON.stringify(request) + "\n");
+    });
+  }
+
+  async callTool(name, args) {
+    if (!this.initialized) {
+      await this.start();
+    }
+    return this.sendRequest("tools/call", {
+      name,
+      arguments: args
+    });
+  }
+}
+
+// Global MCP client instance (lazy init)
+let mcpClient = null;
+
+async function getMCPClient() {
+  if (!mcpClient) {
+    mcpClient = new MCPClient(FINANCEQA_BIN);
+    await mcpClient.start();
+  }
+  return mcpClient;
+}
 
 function textResult(payload) {
   return {
@@ -76,32 +231,26 @@ function mustCallFinanceQuerySystemContext() {
   ].join("\n");
 }
 
-async function callBridge(name, rawParams) {
-  const { spawn } = await import("node:child_process");
-  const payload = {
-    action: "call",
-    name,
-    arguments: rawParams || {}
-  };
-  const child = spawn("python3", [BRIDGE_PATH], {
-    stdio: ["pipe", "pipe", "pipe"]
-  });
-  const stdout = [];
-  const stderr = [];
-  child.stdout.on("data", (chunk) => stdout.push(chunk));
-  child.stderr.on("data", (chunk) => stderr.push(chunk));
-  child.stdin.write(JSON.stringify(payload));
-  child.stdin.end();
-  const code = await new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", resolve);
-  });
-  if (code !== 0) {
-    const message = Buffer.concat(stderr).toString("utf8") || `bridge exited with code ${code}`;
-    throw new Error(message);
+async function callFinanceTool(name, rawParams) {
+  try {
+    const client = await getMCPClient();
+    const result = await client.callTool(name, rawParams || {});
+
+    // Convert MCP tool result to OpenClaw format
+    if (result.content && result.content[0] && result.content[0].type === "text") {
+      try {
+        // Parse the JSON result from the text
+        const parsed = JSON.parse(result.content[0].text);
+        return textResult(parsed);
+      } catch {
+        // Return as-is if not JSON
+        return result;
+      }
+    }
+    return result;
+  } catch (error) {
+    return errorResult(error);
   }
-  const raw = Buffer.concat(stdout).toString("utf8").trim();
-  return raw ? JSON.parse(raw) : errorResult("empty bridge response");
 }
 
 function createFinanceTool(name, description, parameters) {
@@ -111,11 +260,7 @@ function createFinanceTool(name, description, parameters) {
     description,
     parameters,
     async execute(_toolCallId, rawParams) {
-      try {
-        return await callBridge(name, rawParams);
-      } catch (error) {
-        return errorResult(error);
-      }
+      return callFinanceTool(name, rawParams);
     }
   };
 }
@@ -123,8 +268,16 @@ function createFinanceTool(name, description, parameters) {
 const plugin = {
   id: PLUGIN_ID,
   name: "Finance",
-  description: "Finance bridge plugin",
-  register(api) {
+  description: "Finance MCP plugin (native, no Python bridge)",
+  async register(api) {
+    // Try to pre-start MCP client
+    try {
+      await getMCPClient();
+    } catch (err) {
+      console.error("[finance] Failed to pre-start MCP client:", err.message);
+      // Continue anyway, will retry on first tool call
+    }
+
     api.registerTool(createFinanceTool(
       "finance-query",
       "Boss finance QA. Call this first for finance questions. When the returned JSON has final_answer or boss_reply_text, preserve key amounts, uncertainty wording, and source notes. When it has contract_continuity_candidates, describe them as same-project candidates/references, not a confirmed counterparty mapping.",
@@ -146,19 +299,46 @@ const plugin = {
       {
         type: "object",
         properties: {
-          filePath: {
+          file: {
             type: "string",
             description: "Path to the Excel file to upload"
           }
         },
-        required: ["filePath"]
+        required: ["file"]
       }
     ), { name: "finance-upload" });
+
+    api.registerTool(createFinanceTool(
+      "finance-sync",
+      "Synchronize a directory of financial Excel files",
+      {
+        type: "object",
+        properties: {
+          directory: {
+            type: "string",
+            description: "Directory path containing Excel files"
+          },
+          incremental: {
+            type: "boolean",
+            description: "Incremental sync (don't clear existing data)"
+          }
+        },
+        required: ["directory"]
+      }
+    ), { name: "finance-sync" });
 
     api.on("before_prompt_build", (event) => {
       const prompt = userVisibleText(event?.prompt || "");
       if (!isFinanceQuestion(prompt)) return undefined;
       return { prependSystemContext: mustCallFinanceQuerySystemContext() };
+    });
+
+    // Cleanup on exit
+    api.on("cleanup", () => {
+      if (mcpClient) {
+        mcpClient.stop();
+        mcpClient = null;
+      }
     });
   }
 };

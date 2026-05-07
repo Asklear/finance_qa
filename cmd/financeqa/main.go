@@ -15,6 +15,7 @@ import (
 	"financeqa/internal/db"
 	"financeqa/internal/dimensions"
 	"financeqa/internal/ingest"
+	"financeqa/internal/mcp"
 	"financeqa/internal/query"
 	"financeqa/internal/support"
 )
@@ -57,6 +58,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runOCR(args[1:], stdout, stderr)
 	case "audit-accuracy":
 		return runAuditAccuracy(args[1:], stdout, stderr)
+	case "serve":
+		return runServe(args[1:], stdout, stderr)
 	default:
 		return runQuery(args, stdout, stderr)
 	}
@@ -327,6 +330,45 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 	return writeJSON(stdout, stderr, summary)
 }
 
+func runServe(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
+	skillPath := fs.String("skill", "", "path to SKILL.md (auto-detected if not set)")
+	appendixPath := fs.String("appendix", "", "path to SKILL_APPENDIX_FULL.md (auto-detected if not set)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	// Auto-detect paths if not provided
+	skill := *skillPath
+	appendix := *appendixPath
+	if skill == "" || appendix == "" {
+		autoSkill, autoAppendix := mcp.AutoDetectPaths()
+		if skill == "" {
+			skill = autoSkill
+		}
+		if appendix == "" {
+			appendix = autoAppendix
+		}
+	}
+
+	server := mcp.NewServer(
+		mcp.WithDBPath(*dbPath),
+		mcp.WithCompany(*company),
+		mcp.WithSkillPath(skill),
+		mcp.WithAppendixPath(appendix),
+		mcp.WithIO(os.Stdin, stdout, stderr),
+	)
+
+	if err := server.Run(context.Background()); err != nil {
+		fmt.Fprintf(stderr, "server error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "financeqa - PostgreSQL CLI")
 	fmt.Fprintln(out, "")
@@ -355,4 +397,5 @@ func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "  financeqa ocr process-file [--db <dsn>] --file <pdf> [--contract-id <id>]")
 	fmt.Fprintln(out, "  financeqa ocr retry-failed [--db <dsn>] [--limit <n>]")
 	fmt.Fprintln(out, "  financeqa audit-accuracy [--db <dsn>] [--workbook <xlsx>] [--out <json>]")
+	fmt.Fprintln(out, "  financeqa serve [--db <dsn>] [--company <name>] [--skill <path>] [--appendix <path>]")
 }

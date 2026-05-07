@@ -25,11 +25,11 @@ metadata:
    - `FINANCEQA_PG_DSN`
    - `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/FINANCEQA_PG_SCHEMA`
 3. 未配置数据库时，CLI/桥接层会明确报错，不再回退本地 `finance.db`
-4. 桥接默认二进制：`~/finance_qa/financeqa`
-5. 桥接层会自动加载：
+4. MCP 服务器默认二进制：`~/finance_qa/financeqa`（通过 `financeqa serve` 启动）
+5. MCP 服务器会自动加载：
    - 当前目录 `.env`
    - `FINANCEQA_ENV_FILE` 指定的文件（如 `~/finance_qa/.env`）
-6. OpenClaw 桥接返回的是 `content[0].text`，宿主必须先把这段文本再解析成 JSON
+6. OpenClaw MCP 返回的是 `content[0].text`，宿主必须先把这段文本再解析成 JSON
 
 ## 2. 宿主优先使用的工具
 
