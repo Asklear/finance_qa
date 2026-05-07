@@ -1,6 +1,7 @@
 package query
 
 import (
+	"encoding/json"
 	"strings"
 )
 
@@ -227,10 +228,22 @@ func getMap(data map[string]any, key string) map[string]any {
 		return nil
 	}
 	v, ok := data[key].(map[string]any)
-	if !ok {
+	if ok {
+		return v
+	}
+	// 兼容 struct 类型：通过 JSON 序列化/反序列化转换
+	if data[key] == nil {
 		return nil
 	}
-	return v
+	b, err := json.Marshal(data[key])
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 func getMapSlice(data map[string]any, key string) []map[string]any {
