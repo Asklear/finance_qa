@@ -111,6 +111,9 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 	if !strings.Contains(scriptText, "REMOTE_OPENCLAW_EXT_SKILL_DIR=\"${REMOTE_OPENCLAW_EXT_SKILL_DIR:-$REMOTE_HOME/.openclaw/extensions/openclaw-finance/skills/finance}\"") {
 		t.Fatalf("sync script should target OpenClaw extension skill directory")
 	}
+	if !strings.Contains(scriptText, "REMOTE_CLAUDE_SKILL_DIR=\"${REMOTE_CLAUDE_SKILL_DIR:-$REMOTE_HOME/.claude/skills/finance}\"") {
+		t.Fatalf("sync script should target Claude Code skill directory")
+	}
 	if !strings.Contains(scriptText, "$SERVER:$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md") {
 		t.Fatalf("sync script should upload appendix into remote repo docs path")
 	}
@@ -120,8 +123,11 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 	if !strings.Contains(scriptText, "mkdir -p '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs';") {
 		t.Fatalf("sync script should provision docs directory inside OpenClaw extension skill dir")
 	}
-	if !strings.Contains(scriptText, "rm -rf '$REMOTE_OPENCLAW_SKILL_DIR' '$REMOTE_OPENCLAW_EXT_SKILL_DIR';") {
-		t.Fatalf("sync script should remove stale skill symlinks before writing real OpenClaw skill directories")
+	if !strings.Contains(scriptText, "mkdir -p '$REMOTE_CLAUDE_SKILL_DIR/docs';") {
+		t.Fatalf("sync script should provision docs directory inside Claude Code skill dir")
+	}
+	if !strings.Contains(scriptText, "rm -rf '$REMOTE_OPENCLAW_SKILL_DIR' '$REMOTE_OPENCLAW_EXT_SKILL_DIR' '$REMOTE_CLAUDE_SKILL_DIR';") {
+		t.Fatalf("sync script should remove stale skill symlinks before writing real skill directories")
 	}
 	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md';") {
 		t.Fatalf("sync script should copy root skill into OpenClaw skill path")
@@ -134,6 +140,12 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 	}
 	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
 		t.Fatalf("sync script should copy appendix into OpenClaw extension skill docs path")
+	}
+	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_CLAUDE_SKILL_DIR/SKILL.md';") {
+		t.Fatalf("sync script should copy root skill into Claude Code skill path")
+	}
+	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_CLAUDE_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
+		t.Fatalf("sync script should copy appendix into Claude Code skill docs path")
 	}
 	if !strings.Contains(scriptText, "skills.load.extraDirs") {
 		t.Fatalf("sync script should register finance skill under skills.load.extraDirs so runtime prompt ordering includes it")
