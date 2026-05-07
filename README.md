@@ -568,7 +568,102 @@ go test ./tests/integration/... -count=1
 6. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`
 7. 旧路径 `~/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标
 
-## 七、Agent 对接能力矩阵
+## 七、MCP 模式部署（推荐）
+
+系统已支持 **MCP (Model Context Protocol)** 模式，OpenClaw 可直接通过 stdio 调用 `financeqa serve`，无需 Python bridge 脚本。
+
+### 1. MCP 架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      OpenClaw Agent                        │
+│                  ┌──────────────────┐                      │
+│                  │ MCP Client (JS)  │                      │
+│                  │ (index.esm.js)   │                      │
+│                  └────────┬─────────┘                      │
+└───────────────────────────┼─────────────────────────────────┘
+                            │ stdio (JSON-RPC)
+┌───────────────────────────┼─────────────────────────────────┐
+│                      ┌────▼─────┐                            │
+│                      │ MCP      │                            │
+│                      │ Server   │                            │
+│                      │ (Go)     │                            │
+│                      └────┬─────┘                            │
+│                           │                                  │
+│  ┌────────────────────────┼──────────────────────────────┐  │
+│  │        financeqa       │                              │  │
+│  │  ┌─────────┬───────────┼───────────┬───────────────┐  │  │
+│  │  │ ingest  │ dimensions│  query    │  accounting   │  │  │
+│  │  └─────────┴───────────┴───────────┴───────────────┘  │  │
+│  └────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 2. OpenClaw 部署步骤
+
+```bash
+# 1. 构建带符号剥离的二进制（减小体积 30-50%）
+GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
+
+# 2. 上传到服务器
+scp bin/financeqa lzh:/root/finance_qa/bin/
+
+# 3. 使用软链接部署插件（本地更新自动同步到线上）
+# 先删除旧插件（如有）
+ssh lzh "rm -rf ~/.openclaw/extensions/openclaw-finance"
+# 创建软链接，指向代码仓库的插件目录
+ssh lzh "ln -s /root/finance_qa/plugin/openclaw-finance ~/.openclaw/extensions/openclaw-finance"
+
+# 4. 更新 openclaw.json 配置（版本 >= 2.0.0）
+#    确保 skills 包含 finance，extensions 包含 openclaw-finance
+```
+
+线上 `~/.openclaw/openclaw.json` 关键配置：
+
+```json
+{
+  "version": "2.0.0",
+  "skills": ["finance"],
+  "extensions": ["openclaw-finance"]
+}
+```
+
+### 3. 构建优化
+
+**开发构建**（本地调试，含符号表）：
+```bash
+go build -o financeqa ./cmd/financeqa
+# 约 28MB（含 DWARF 调试信息）
+```
+
+**生产构建**（推荐，体积更小）：
+```bash
+go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
+# 约 19MB（-30% 体积）
+```
+
+- `-s`：删除符号表
+- `-w`：删除 DWARF 调试信息
+
+### 4. MCP 暴露的工具
+
+| 工具名 | 对应 CLI | 说明 |
+|--------|----------|------|
+| `finance-query` | `financeqa query` | 自然语言查询财务数据 |
+| `finance-host-data` | `financeqa host-data` | 输出全量数据供 LLM 兜底 |
+| `finance-upload` | `financeqa import` | 单文件导入 |
+| `finance-sync` | `financeqa sync` | 目录批量导入 |
+| `finance-dimensions` | `financeqa dimensions` | 维度管理 |
+
+### 5. 版本兼容性
+
+- MCP Server: `financeqa --version` (v1.0.0+)
+- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`
+- OpenClaw Config: `~/.openclaw/openclaw.json` (v2.0.0+)
+
+三处版本号独立，但建议保持同步以避免混淆。
+
+## 八、Agent 对接能力矩阵
 
 为保证 OpenClaw / Claude Code 全面调用代码库功能，建议按下表接入：
 

@@ -204,7 +204,7 @@ func runFeishuOAuthLogin(args []string, stdout, stderr io.Writer) int {
 func runFeishuSources(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("feishu sources", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	sourceType := fs.String("source-type", "", "optional source type filter")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -214,7 +214,7 @@ func runFeishuSources(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	repo, closeFn, ok := openFeishuRepository(context.Background(), *dbPath, stderr)
+	repo, closeFn, ok := openFeishuRepository(context.Background(), resolveDBPath(*dbPath), stderr)
 	if !ok {
 		return 1
 	}
@@ -282,7 +282,7 @@ func randomState() string {
 func runFeishuSeedSources(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("feishu seed-sources", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -291,7 +291,7 @@ func runFeishuSeedSources(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	repo, closeFn, ok := openFeishuRepository(context.Background(), *dbPath, stderr)
+	repo, closeFn, ok := openFeishuRepository(context.Background(), resolveDBPath(*dbPath), stderr)
 	if !ok {
 		return 1
 	}
@@ -318,7 +318,7 @@ func runFeishuSeedSources(args []string, stdout, stderr io.Writer) int {
 func runFeishuScan(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("feishu scan", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", support.DefaultCompanyName(), "company override for workbook import")
 	snapshotDir := fs.String("snapshot-dir", defaultFeishuSnapshotDir(), "directory for downloaded Feishu snapshots")
 	sourceType := fs.String("source-type", "all", "source type: all, pdf_folder, finance_workbook, finance_workbook_folder")
@@ -330,7 +330,7 @@ func runFeishuScan(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	runner, closeFn, ok := openFeishuRunner(context.Background(), *dbPath, *snapshotDir, *company, stderr)
+	runner, closeFn, ok := openFeishuRunner(context.Background(), resolveDBPath(*dbPath), *snapshotDir, *company, stderr)
 	if !ok {
 		return 1
 	}
@@ -366,7 +366,7 @@ func runFeishuScan(args []string, stdout, stderr io.Writer) int {
 func runFeishuSyncOnce(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("feishu sync-once", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", support.DefaultCompanyName(), "company override for workbook import")
 	snapshotDir := fs.String("snapshot-dir", defaultFeishuSnapshotDir(), "directory for downloaded Feishu snapshots")
 	sourceToken := fs.String("source-token", "", "Feishu source token to scan once")
@@ -382,7 +382,7 @@ func runFeishuSyncOnce(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	runner, closeFn, ok := openFeishuRunner(context.Background(), *dbPath, *snapshotDir, *company, stderr)
+	runner, closeFn, ok := openFeishuRunner(context.Background(), resolveDBPath(*dbPath), *snapshotDir, *company, stderr)
 	if !ok {
 		return 1
 	}

@@ -14,6 +14,7 @@ import (
 	"financeqa/internal/feishu"
 	"financeqa/internal/feishusync"
 	"financeqa/internal/ingest"
+	"financeqa/internal/support"
 
 	_ "modernc.org/sqlite"
 )
@@ -51,11 +52,11 @@ func TestRunInitDBCreatesSQLiteSchema(t *testing.T) {
 }
 
 func TestRunInitDBRedactsDatabasePasswordInOutput(t *testing.T) {
-	got := redactDBTargetForCLI("host=pg.example.com port=5432 user=finance password=super-secret dbname=bossagent search_path=tenant_uhub,public")
+	got := support.SanitizeDSN("host=pg.example.com port=5432 user=finance password=super-secret dbname=bossagent search_path=tenant_uhub,public")
 	if strings.Contains(got, "super-secret") {
 		t.Fatalf("redacted db target should not contain password: %q", got)
 	}
-	if !strings.Contains(got, "password=<redacted>") {
+	if !strings.Contains(got, "password=***") {
 		t.Fatalf("redacted db target should preserve password marker, got %q", got)
 	}
 }

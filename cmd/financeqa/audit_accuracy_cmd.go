@@ -55,13 +55,10 @@ func runAuditAccuracy(args []string, stdout, stderr interface {
 		return 2
 	}
 	ctx := context.Background()
-	dbTarget := strings.TrimSpace(*dbPath)
-	if dbTarget == "" {
-		dbTarget = support.DefaultDBPath("")
-	}
+	dbTarget := resolveDBPath(*dbPath)
 	db, err := dbpkg.Open(ctx, dbTarget)
 	if err != nil {
-		fmt.Fprintf(stderr, "open db failed: %v\n", err)
+		fmt.Fprintf(stderr, "open db failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 	defer func() { _ = db.Close() }()

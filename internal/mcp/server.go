@@ -14,6 +14,7 @@ import (
 	"financeqa/internal/dimensions"
 	"financeqa/internal/ingest"
 	"financeqa/internal/query"
+	"financeqa/internal/support"
 )
 
 // Server implements an MCP server over stdio.
@@ -500,8 +501,8 @@ func (s *Server) sendErrorResponse(id interface{}, code int, message, data strin
 		ID:      id,
 		Error: &ErrorObject{
 			Code:    code,
-			Message: message,
-			Data:    data,
+			Message: support.SanitizeDSN(message),
+			Data:    support.SanitizeDSN(data),
 		},
 	}
 	return s.writeResponse(resp)
@@ -546,7 +547,8 @@ func (s *Server) writeResponse(v any) error {
 }
 
 func (s *Server) logError(format string, args ...any) {
-	fmt.Fprintf(s.stderr, "[financeqa-mcp] "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(s.stderr, "[financeqa-mcp] %s\n", support.SanitizeDSN(msg))
 }
 
 func (s *Server) loadVersion() string {
@@ -554,7 +556,7 @@ func (s *Server) loadVersion() string {
 	if v := os.Getenv("FINANCEQA_VERSION"); v != "" {
 		return v
 	}
-	return "1.0.0"
+	return "2.0.0"
 }
 
 // Helpers

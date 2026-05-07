@@ -3,8 +3,29 @@ package support
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// SanitizeDSN 从 DSN 字符串中移除敏感信息（密码）
+func SanitizeDSN(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	// 脱敏 password=xxx
+	dsn = regexp.MustCompile(`(?i)password=[^\s]+`).ReplaceAllString(dsn, "password=***")
+	// 脱敏 passwd=xxx
+	dsn = regexp.MustCompile(`(?i)passwd=[^\s]+`).ReplaceAllString(dsn, "passwd=***")
+	return dsn
+}
+
+// SanitizeError 从错误消息中移除敏感信息
+func SanitizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return SanitizeDSN(err.Error())
+}
 
 func DefaultCompanyName() string {
 	return strings.TrimSpace(os.Getenv("FINANCEQA_DEFAULT_COMPANY"))

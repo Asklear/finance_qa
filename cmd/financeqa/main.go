@@ -36,6 +36,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
+	case "version", "--version", "-v":
+		fmt.Fprintln(stdout, "financeqa version 2.0.0")
+		return 0
 	case "init-db":
 		return runInitDB(args[1:], stdout, stderr)
 	case "config":
@@ -65,11 +68,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func resolveDBPath(v string) string {
+	if v != "" {
+		return v
+	}
+	return support.DefaultDBPath("")
+}
+
 func runInitDB(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("init-db", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -78,31 +88,14 @@ func runInitDB(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if err := db.Bootstrap(context.Background(), *dbPath); err != nil {
-		fmt.Fprintf(stderr, "init-db failed: %v\n", err)
+	dsn := resolveDBPath(*dbPath)
+	if err := db.Bootstrap(context.Background(), dsn); err != nil {
+		fmt.Fprintf(stderr, "init-db failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "database initialized at %s\n", redactDBTargetForCLI(*dbPath))
+	fmt.Fprintf(stdout, "database initialized at %s\n", support.SanitizeDSN(dsn))
 	return 0
-}
-
-func redactDBTargetForCLI(target string) string {
-	parts := strings.Fields(strings.TrimSpace(target))
-	if len(parts) == 0 {
-		return target
-	}
-	changed := false
-	for i, part := range parts {
-		if strings.HasPrefix(strings.ToLower(part), "password=") {
-			parts[i] = "password=<redacted>"
-			changed = true
-		}
-	}
-	if changed {
-		return strings.Join(parts, " ")
-	}
-	return target
 }
 
 func runConfig(args []string, stdout, stderr io.Writer) int {
@@ -186,7 +179,7 @@ func isProductionMode() bool {
 func runQuery(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -197,9 +190,9 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	engine, err := query.NewEngine(*dbPath, *company)
+	engine, err := query.NewEngine(resolveDBPath(*dbPath), *company)
 	if err != nil {
-		fmt.Fprintf(stderr, "create query engine failed: %v\n", err)
+		fmt.Fprintf(stderr, "create query engine failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 	defer func() { _ = engine.Close() }()
@@ -223,7 +216,7 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 func runHostData(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("host-data", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
 	from := fs.String("from", "", "period start in YYYY-MM")
 	to := fs.String("to", "", "period end in YYYY-MM")
@@ -236,9 +229,9 @@ func runHostData(args []string, stdout, stderr io.Writer) int {
 		question = "输出全量财报原始数据给宿主LLM"
 	}
 
-	engine, err := query.NewEngine(*dbPath, *company)
+	engine, err := query.NewEngine(resolveDBPath(*dbPath), *company)
 	if err != nil {
-		fmt.Fprintf(stderr, "create query engine failed: %v\n", err)
+		fmt.Fprintf(stderr, "create query engine failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 	defer func() { _ = engine.Close() }()
@@ -256,7 +249,7 @@ func runHostData(args []string, stdout, stderr io.Writer) int {
 func runImport(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	incremental := fs.Bool("incremental", false, "incremental import (don't clear existing data)")
 	company := fs.String("company", "", "override company name for imported file")
 	if err := fs.Parse(args); err != nil {
@@ -268,21 +261,22 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	db, err := db.Open(context.Background(), *dbPath)
+	dsn := resolveDBPath(*dbPath)
+	db, err := db.Open(context.Background(), dsn)
 	if err != nil {
-		fmt.Fprintf(stderr, "open db failed: %v\n", err)
+		fmt.Fprintf(stderr, "open db failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 	defer db.Close()
 	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(db))
 
 	importer := ingest.NewImporter(manager)
-	summary, err := importer.ImportFileWithOptions(context.Background(), *dbPath, filePath, ingest.ImportOptions{
+	summary, err := importer.ImportFileWithOptions(context.Background(), dsn, filePath, ingest.ImportOptions{
 		Incremental:     *incremental,
 		CompanyOverride: strings.TrimSpace(*company),
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "import failed: %v\n", err)
+		fmt.Fprintf(stderr, "import failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 
@@ -298,7 +292,7 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 func runSync(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	incremental := fs.Bool("incremental", false, "incremental sync (don't clear existing data)")
 	company := fs.String("company", "", "override company name for all imported files in this sync")
 	if err := fs.Parse(args); err != nil {
@@ -310,21 +304,22 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	db, err := db.Open(context.Background(), *dbPath)
+	dsn := resolveDBPath(*dbPath)
+	db, err := db.Open(context.Background(), dsn)
 	if err != nil {
-		fmt.Fprintf(stderr, "open db failed: %v\n", err)
+		fmt.Fprintf(stderr, "open db failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 	defer db.Close()
 	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(db))
 
 	importer := ingest.NewImporter(manager)
-	summary, err := importer.SyncDirectoryWithOptions(context.Background(), *dbPath, dirPath, ingest.ImportOptions{
+	summary, err := importer.SyncDirectoryWithOptions(context.Background(), dsn, dirPath, ingest.ImportOptions{
 		Incremental:     *incremental,
 		CompanyOverride: strings.TrimSpace(*company),
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "sync failed: %v\n", err)
+		fmt.Fprintf(stderr, "sync failed: %s\n", support.SanitizeError(err))
 		return 1
 	}
 	return writeJSON(stdout, stderr, summary)
@@ -333,7 +328,7 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 func runServe(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
 	skillPath := fs.String("skill", "", "path to SKILL.md (auto-detected if not set)")
 	appendixPath := fs.String("appendix", "", "path to SKILL_APPENDIX_FULL.md (auto-detected if not set)")
@@ -355,7 +350,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 
 	server := mcp.NewServer(
-		mcp.WithDBPath(*dbPath),
+		mcp.WithDBPath(resolveDBPath(*dbPath)),
 		mcp.WithCompany(*company),
 		mcp.WithSkillPath(skill),
 		mcp.WithAppendixPath(appendix),
@@ -363,7 +358,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	)
 
 	if err := server.Run(context.Background()); err != nil {
-		fmt.Fprintf(stderr, "server error: %v\n", err)
+		fmt.Fprintf(stderr, "server error: %s\n", support.SanitizeError(err))
 		return 1
 	}
 	return 0
@@ -373,6 +368,7 @@ func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "financeqa - PostgreSQL CLI")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  financeqa version")
 	fmt.Fprintln(out, "  financeqa init-db [--db <dsn>]")
 	fmt.Fprintln(out, "  financeqa config show [--config <path>]")
 	fmt.Fprintln(out, "  financeqa keywords intents [--keywords <path>]")

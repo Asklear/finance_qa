@@ -13,7 +13,6 @@ import (
 	"financeqa/internal/db"
 	"financeqa/internal/ocr"
 	objectstorage "financeqa/internal/storage"
-	"financeqa/internal/support"
 )
 
 func runOCR(args []string, stdout, stderr io.Writer) int {
@@ -38,7 +37,7 @@ func runOCR(args []string, stdout, stderr io.Writer) int {
 func runOCRProcessPending(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ocr process-pending", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	limit := fs.Int("limit", envInt("OCR_WORKER_LIMIT", 10), "maximum pending PDFs to process")
 	concurrency := fs.Int("concurrency", defaultOCRWorkerConcurrency(), "maximum concurrent Gemini OCR calls")
 	if err := fs.Parse(args); err != nil {
@@ -59,7 +58,7 @@ func runOCRProcessPending(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	config.FileResolver = resolver
-	repo, closeFn, ok := openOCRRepository(context.Background(), *dbPath, stderr)
+	repo, closeFn, ok := openOCRRepository(context.Background(), resolveDBPath(*dbPath), stderr)
 	if !ok {
 		return 1
 	}
@@ -77,7 +76,7 @@ func runOCRProcessPending(args []string, stdout, stderr io.Writer) int {
 func runOCRProcessFile(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ocr process-file", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	file := fs.String("file", "", "PDF file to process")
 	contractID := fs.Int64("contract-id", 0, "optional contract_main id to update")
 	if err := fs.Parse(args); err != nil {
@@ -110,7 +109,7 @@ func runOCRProcessFile(args []string, stdout, stderr io.Writer) int {
 	}
 	quality := ocr.Validate(result)
 	if *contractID > 0 {
-		repo, closeFn, ok := openOCRRepository(context.Background(), *dbPath, stderr)
+		repo, closeFn, ok := openOCRRepository(context.Background(), resolveDBPath(*dbPath), stderr)
 		if !ok {
 			return 1
 		}
@@ -127,7 +126,7 @@ func runOCRProcessFile(args []string, stdout, stderr io.Writer) int {
 func runOCRRetryFailed(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ocr retry-failed", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", support.DefaultDBPath(""), "postgres dsn (or FINANCEQA_PG_DSN env)")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	limit := fs.Int("limit", 10, "maximum failed rows to mark pending")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -136,7 +135,7 @@ func runOCRRetryFailed(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
 		return 2
 	}
-	repo, closeFn, ok := openOCRRepository(context.Background(), *dbPath, stderr)
+	repo, closeFn, ok := openOCRRepository(context.Background(), resolveDBPath(*dbPath), stderr)
 	if !ok {
 		return 1
 	}
