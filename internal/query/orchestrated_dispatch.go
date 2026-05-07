@@ -36,22 +36,39 @@ func (e *Engine) tryOrchestratedQuery(spec QuerySpec) (Result, bool) {
 }
 
 func composeResultFromAnswerFrame(frame AnswerFrame) (Result, error) {
+	var result Result
+	var err error
+
 	switch frame.Spec.QueryFamily {
 	case QueryFamilyContractDimension:
-		return composeContractResult(frame)
+		result, err = composeContractResult(frame)
 	case QueryFamilyContractDetail:
-		return composeContractDetailResult(frame)
+		result, err = composeContractDetailResult(frame)
 	case QueryFamilySupplierPayments:
-		return composeSupplierPaymentResult(frame)
+		result, err = composeSupplierPaymentResult(frame)
 	case QueryFamilyReadiness:
-		return composeReadinessResult(frame)
+		result, err = composeReadinessResult(frame)
 	case QueryFamilyCoreMetric:
-		return composeCoreMetricResult(frame)
+		result, err = composeCoreMetricResult(frame)
 	case QueryFamilyARAP:
-		return composeARAPResult(frame)
+		result, err = composeARAPResult(frame)
 	default:
 		return Result{}, fmt.Errorf("unsupported orchestrated query family %s", frame.Spec.QueryFamily)
 	}
+
+	if err != nil {
+		return result, err
+	}
+
+	// 统一添加 bridge 兼容字段（和 finalizeQueryResult 保持一致）
+	if result.Data != nil {
+		result.Data["final_answer"] = buildFinalAnswer(result)
+		if hostSummary := buildHostSummaryContract(result.Data, frame.Spec.NormalizedQuestion); hostSummary != nil {
+			result.Data["host_summary_contract"] = hostSummary
+		}
+	}
+
+	return result, nil
 }
 
 func shouldUseOrchestratorARAP(spec QuerySpec) bool {
