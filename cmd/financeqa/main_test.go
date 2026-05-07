@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"financeqa/internal/buildinfo"
 	"financeqa/internal/feishu"
 	"financeqa/internal/feishusync"
 	"financeqa/internal/ingest"
@@ -25,6 +26,16 @@ func TestRunHelpShowsUsage(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %s", code, stderr)
 	}
 	if !strings.Contains(stdout, "financeqa - PostgreSQL CLI") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+}
+
+func TestRunVersionReportsCurrentMajorVersion(t *testing.T) {
+	code, stdout, stderr := runCLIForTest(t, "version")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr)
+	}
+	if strings.TrimSpace(stdout) != "financeqa version "+buildinfo.Version {
 		t.Fatalf("stdout = %q", stdout)
 	}
 }

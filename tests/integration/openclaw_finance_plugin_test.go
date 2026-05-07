@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,27 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 	}
 }
 
+func TestOpenClawFinancePluginMetadataUsesCurrentMajorVersion(t *testing.T) {
+	t.Parallel()
+
+	for _, path := range []string{
+		filepath.Join("..", "..", "plugin", "openclaw-finance", "package.json"),
+		filepath.Join("..", "..", "plugin", "openclaw-finance", "openclaw.plugin.json"),
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read plugin metadata %s: %v", path, err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("parse plugin metadata %s: %v", path, err)
+		}
+		if got := doc["version"]; got != "2.0.0" {
+			t.Fatalf("%s version = %v, want 2.0.0", path, got)
+		}
+	}
+}
+
 func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -70,15 +92,17 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 
 	for _, want := range []string{
 		`LOCAL_PLUGIN_DIST="$ROOT_DIR/plugin/openclaw-finance/dist/index.esm.js"`,
-		`LOCAL_PLUGIN_INDEX="$ROOT_DIR/plugin/openclaw-finance/index.ts"`,
 		`LOCAL_PLUGIN_MANIFEST="$ROOT_DIR/plugin/openclaw-finance/openclaw.plugin.json"`,
 		`LOCAL_CLAUDE_WRAPPER="$ROOT_DIR/tests/scripts/claude_finance_final_answer.sh"`,
 		`LOCAL_ONLINE_CHECKER="$ROOT_DIR/tests/scripts/run_online_agent_final_answer_check.py"`,
-		`scp -i "$KEY_PATH" "$LOCAL_PLUGIN_DIST" "$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js"`,
-		`scp -i "$KEY_PATH" "$LOCAL_PLUGIN_INDEX" "$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/index.ts"`,
-		`scp -i "$KEY_PATH" "$LOCAL_PLUGIN_MANIFEST" "$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json"`,
+		`scp -i "$KEY_PATH" "$LOCAL_PLUGIN_DIST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js"`,
+		`scp -i "$KEY_PATH" "$LOCAL_PLUGIN_MANIFEST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json"`,
 		`scp -i "$KEY_PATH" "$LOCAL_CLAUDE_WRAPPER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh"`,
 		`scp -i "$KEY_PATH" "$LOCAL_ONLINE_CHECKER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py"`,
+		`if [ -L '$REMOTE_OPENCLAW_PLUGIN_DIR' ]; then rm -f '$REMOTE_OPENCLAW_PLUGIN_DIR'; fi;`,
+		`ln -sfn '$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js'`,
+		`ln -sfn '$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json'`,
+		`ln -sfn '$REMOTE_REPO_DIR/plugin/openclaw-finance/package.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/package.json'`,
 		`go build -o '$REMOTE_REPO_DIR/financeqa' ./cmd/financeqa/...`,
 		`'$REMOTE_REPO_DIR/financeqa' serve`,
 		`plugins.entries['openclaw-finance'].hooks.allowPromptInjection = true`,
@@ -86,6 +110,15 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 		if !strings.Contains(scriptText, want) {
 			t.Fatalf("sync script should publish OpenClaw plugin runtime and prompt hook config; missing %q", want)
 		}
+	}
+	if strings.Contains(scriptText, `$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js`) ||
+		strings.Contains(scriptText, `$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/index.ts`) ||
+		strings.Contains(scriptText, `$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json`) {
+		t.Fatalf("sync script should not copy plugin runtime directly into OpenClaw extension; use repo-backed symlinks")
+	}
+	if strings.Contains(scriptText, "LOCAL_PLUGIN_INDEX") ||
+		strings.Contains(scriptText, "plugin/openclaw-finance/index.ts' '$REMOTE_OPENCLAW_PLUGIN_DIR/index.ts") {
+		t.Fatalf("sync script should not publish plugin source entrypoint into the OpenClaw extension")
 	}
 	if strings.Contains(scriptText, "finance_bridge.py") || strings.Contains(scriptText, "LOCAL_BRIDGE") {
 		t.Fatalf("sync script should publish Go MCP only, got Python bridge references")

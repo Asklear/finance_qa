@@ -49,9 +49,9 @@
 8. 只有当 Go MCP 未封装相应维护能力，或用户明确要求本地维护命令时，才直接使用 CLI（如 `financeqa config show`、`financeqa keywords intents`）。
 9. 不依赖 Go MCP 注入 skill 内容；skill 由宿主 skills 机制统一加载。
 10. 注入策略使用“核心版 SKILL + 按需附录”：优先遵循仓库根目录 `SKILL.md`，仅在需要细粒度规则时再参考 `docs/SKILL_APPENDIX_FULL.md`。
-11. 线上 OpenClaw 当前路径：`~/.openclaw/skills/finance/SKILL.md` 与 `~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`。
-12. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`。
-13. 旧路径 `~/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标。
+11. 线上 OpenClaw 当前路径：`~/.openclaw/skills/finance/SKILL.md` 与 `~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`，均应软链接到仓库内同名文件。
+12. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`，均应软链接到仓库内同名文件。
+13. OpenClaw extension 只保留 runtime 文件；`~/.openclaw/extensions/openclaw-finance/skills/finance` 与旧路径 `~/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标。
 14. 若桥接结果里存在 `boss_reply`，优先直接引用，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里重算金额。
 15. 若存在 `host_summary_contract`，摘要必须受它约束，尤其不能把子期间到账改写成累计回款，也不能把累计回款压成单月到账。
 16. 若存在 `host_summary_supplier_payments`，供应商付款类问题必须按它的结构化字段总结，不要把员工、内部往来、税费、手续费等剔除对象加回去。

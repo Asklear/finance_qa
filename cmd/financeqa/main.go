@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"financeqa/internal/buildinfo"
 	"financeqa/internal/config"
 	"financeqa/internal/db"
 	"financeqa/internal/dimensions"
@@ -37,7 +38,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stdout)
 		return 0
 	case "version", "--version", "-v":
-		fmt.Fprintln(stdout, "financeqa version 2.0.0")
+		fmt.Fprintf(stdout, "financeqa version %s\n", buildinfo.Version)
 		return 0
 	case "init-db":
 		return runInitDB(args[1:], stdout, stderr)

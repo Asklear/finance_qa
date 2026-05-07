@@ -563,9 +563,9 @@ Go MCP 层（`financeqa serve`）会额外补充：
 1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）
 2. 详细规则：`docs/SKILL_APPENDIX_FULL.md`（按需查阅）
 3. 发布到 Claude Code / OpenClaw 时，需保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 这条相对路径
-4. 线上 OpenClaw 全局 skill 兼容路径：`~/.openclaw/skills/finance/SKILL.md` 与 `~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`
-5. 线上 OpenClaw 扩展 skill 注册路径：`~/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md` 与 `~/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md`
-6. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`
+4. 线上 OpenClaw 全局 skill 路径：`~/.openclaw/skills/finance/SKILL.md` 与 `~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`，均软链接到 `~/finance_qa`
+5. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`，均软链接到 `~/finance_qa`
+6. OpenClaw extension 只保留 runtime 文件，`~/.openclaw/extensions/openclaw-finance/skills/finance` 不再发布
 7. 旧路径 `~/.openclaw/workspace/skills/finance-orchestrator` 已废弃，不再作为发布或验证目标
 
 ## 七、MCP 模式部署（推荐）
@@ -608,14 +608,13 @@ GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/financeqa ./cmd/finance
 # 2. 上传到服务器
 scp bin/financeqa lzh:/root/finance_qa/bin/
 
-# 3. 使用软链接部署插件（本地更新自动同步到线上）
-# 先删除旧插件（如有）
-ssh lzh "rm -rf ~/.openclaw/extensions/openclaw-finance"
-# 创建软链接，指向代码仓库的插件目录
-ssh lzh "ln -s /root/finance_qa/plugin/openclaw-finance ~/.openclaw/extensions/openclaw-finance"
+# 3. 使用仓库源文件软链接部署插件 runtime 与 skill
+# OpenClaw extension 只放 runtime 文件；skill 走 ~/.openclaw/skills/finance
+SERVER=root@8.129.14.124 KEY_PATH="$HOME/Downloads/未命名文件夹 2/lzh-key.pem" \
+  tests/scripts/sync_openclaw_bridge_and_skill.sh
 
 # 4. 更新 openclaw.json 配置（版本 >= 2.0.0）
-#    确保 skills 包含 finance，extensions 包含 openclaw-finance
+#    确保 skills.load.extraDirs 包含 ~/.openclaw/skills/finance，plugins.entries.openclaw-finance.enabled=true
 ```
 
 线上 `~/.openclaw/openclaw.json` 关键配置：
@@ -657,11 +656,11 @@ go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
 
 ### 5. 版本兼容性
 
-- MCP Server: `financeqa --version` (v1.0.0+)
-- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`
-- OpenClaw Config: `~/.openclaw/openclaw.json` (v2.0.0+)
+- finance_qa / Go MCP: `financeqa --version`（当前 `2.0.0`）
+- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`（当前 `2.0.0`）
+- OpenClaw Config: `~/.openclaw/openclaw.json`（当前 `2.0.0+`）
 
-三处版本号独立，但建议保持同步以避免混淆。
+三处主版本号需要保持同步以避免混淆。
 
 ## 八、Agent 对接能力矩阵
 

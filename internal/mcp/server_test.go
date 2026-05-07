@@ -70,6 +70,25 @@ func TestFinanceQueryToolAddsBridgeEnvelope(t *testing.T) {
 	}
 }
 
+func TestInitializeReportsCurrentMCPServerVersion(t *testing.T) {
+	t.Parallel()
+
+	input := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n"
+	var stdout, stderr bytes.Buffer
+	server := NewServer(WithIO(strings.NewReader(input), &stdout, &stderr))
+
+	if err := server.Run(context.Background()); err != nil {
+		t.Fatalf("run server: %v; stderr=%s", err, stderr.String())
+	}
+
+	response := responseByID(t, stdout.String(), float64(1))
+	result := response["result"].(map[string]any)
+	serverInfo := result["serverInfo"].(map[string]any)
+	if got := serverInfo["version"]; got != "2.0.0" {
+		t.Fatalf("MCP server version = %v, want 2.0.0", got)
+	}
+}
+
 func TestBridgeEnvelopeHidesInternalFieldsDeeply(t *testing.T) {
 	t.Parallel()
 

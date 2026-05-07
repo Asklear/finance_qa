@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"financeqa/internal/buildinfo"
 	"financeqa/internal/db"
 	"financeqa/internal/dimensions"
 	"financeqa/internal/ingest"
@@ -321,7 +322,7 @@ func (s *Server) loadVersion() string {
 	if v := os.Getenv("FINANCEQA_VERSION"); v != "" {
 		return v
 	}
-	return "2.0.0"
+	return buildinfo.Version
 }
 
 // Helpers

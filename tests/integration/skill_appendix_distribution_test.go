@@ -73,26 +73,20 @@ func TestBuildScriptPackagesAppendixAlongsideSkill(t *testing.T) {
 	if !strings.Contains(scriptText, "cp docs/SKILL_APPENDIX_FULL.md \"$OUTPUT_DIR/docs/\"") {
 		t.Fatalf("build script should package skill appendix under docs/")
 	}
-	if !strings.Contains(scriptText, "mkdir -p \"$OUTPUT_DIR/skills/finance/docs\"") {
-		t.Fatalf("build script should create OpenClaw extension skill docs directory")
-	}
-	if !strings.Contains(scriptText, "cp SKILL.md \"$OUTPUT_DIR/skills/finance/SKILL.md\"") {
-		t.Fatalf("build script should package SKILL.md under skills/finance/")
-	}
-	if !strings.Contains(scriptText, "cp docs/SKILL_APPENDIX_FULL.md \"$OUTPUT_DIR/skills/finance/docs/\"") {
-		t.Fatalf("build script should package appendix under skills/finance/docs/")
-	}
 	if !strings.Contains(scriptText, "mkdir -p \"$OUTPUT_DIR/plugin/openclaw-finance/dist\"") {
 		t.Fatalf("build script should create OpenClaw finance plugin runtime directory")
 	}
 	if !strings.Contains(scriptText, "cp plugin/openclaw-finance/dist/index.esm.js \"$OUTPUT_DIR/plugin/openclaw-finance/dist/\"") {
 		t.Fatalf("build script should package OpenClaw finance plugin runtime")
 	}
-	if !strings.Contains(scriptText, "cp plugin/openclaw-finance/index.ts \"$OUTPUT_DIR/plugin/openclaw-finance/\"") {
-		t.Fatalf("build script should package OpenClaw finance plugin entrypoint")
-	}
 	if !strings.Contains(scriptText, "cp plugin/openclaw-finance/openclaw.plugin.json \"$OUTPUT_DIR/plugin/openclaw-finance/\"") {
 		t.Fatalf("build script should package OpenClaw finance plugin manifest")
+	}
+	if strings.Contains(scriptText, "cp plugin/openclaw-finance/index.ts") {
+		t.Fatalf("build script should not package plugin source entrypoint")
+	}
+	if strings.Contains(scriptText, "skills/finance") {
+		t.Fatalf("build script should not package a redundant skill inside the OpenClaw extension")
 	}
 }
 
@@ -109,7 +103,7 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 		t.Fatalf("sync script should define local appendix path")
 	}
 	if !strings.Contains(scriptText, "REMOTE_OPENCLAW_EXT_SKILL_DIR=\"${REMOTE_OPENCLAW_EXT_SKILL_DIR:-$REMOTE_HOME/.openclaw/extensions/openclaw-finance/skills/finance}\"") {
-		t.Fatalf("sync script should target OpenClaw extension skill directory")
+		t.Fatalf("sync script should track stale OpenClaw extension skill directory for cleanup")
 	}
 	if !strings.Contains(scriptText, "REMOTE_CLAUDE_SKILL_DIR=\"${REMOTE_CLAUDE_SKILL_DIR:-$REMOTE_HOME/.claude/skills/finance}\"") {
 		t.Fatalf("sync script should target Claude Code skill directory")
@@ -120,32 +114,29 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 	if !strings.Contains(scriptText, "mkdir -p '$REMOTE_OPENCLAW_SKILL_DIR/docs';") {
 		t.Fatalf("sync script should provision docs directory inside OpenClaw skill dir")
 	}
-	if !strings.Contains(scriptText, "mkdir -p '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs';") {
-		t.Fatalf("sync script should provision docs directory inside OpenClaw extension skill dir")
-	}
 	if !strings.Contains(scriptText, "mkdir -p '$REMOTE_CLAUDE_SKILL_DIR/docs';") {
 		t.Fatalf("sync script should provision docs directory inside Claude Code skill dir")
 	}
-	if !strings.Contains(scriptText, "rm -rf '$REMOTE_OPENCLAW_SKILL_DIR' '$REMOTE_OPENCLAW_EXT_SKILL_DIR' '$REMOTE_CLAUDE_SKILL_DIR';") {
-		t.Fatalf("sync script should remove stale skill symlinks before writing real skill directories")
+	if !strings.Contains(scriptText, "rm -f '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
+		t.Fatalf("sync script should remove stale OpenClaw skill files before relinking")
 	}
-	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md';") {
-		t.Fatalf("sync script should copy root skill into OpenClaw skill path")
+	if !strings.Contains(scriptText, "rm -rf '$REMOTE_OPENCLAW_EXT_SKILL_DIR';") {
+		t.Fatalf("sync script should remove stale OpenClaw extension skill directory")
 	}
-	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
-		t.Fatalf("sync script should copy appendix into OpenClaw skill docs path")
+	if !strings.Contains(scriptText, "rm -f '$REMOTE_CLAUDE_SKILL_DIR/SKILL.md' '$REMOTE_CLAUDE_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
+		t.Fatalf("sync script should remove stale Claude skill files before relinking")
 	}
-	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/SKILL.md';") {
-		t.Fatalf("sync script should copy root skill into OpenClaw extension skill path")
+	if !strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md';") {
+		t.Fatalf("sync script should symlink root skill into OpenClaw skill path")
 	}
-	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
-		t.Fatalf("sync script should copy appendix into OpenClaw extension skill docs path")
+	if !strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
+		t.Fatalf("sync script should symlink appendix into OpenClaw skill docs path")
 	}
-	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_CLAUDE_SKILL_DIR/SKILL.md';") {
-		t.Fatalf("sync script should copy root skill into Claude Code skill path")
+	if !strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_CLAUDE_SKILL_DIR/SKILL.md';") {
+		t.Fatalf("sync script should symlink root skill into Claude Code skill path")
 	}
-	if !strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_CLAUDE_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
-		t.Fatalf("sync script should copy appendix into Claude Code skill docs path")
+	if !strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_CLAUDE_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") {
+		t.Fatalf("sync script should symlink appendix into Claude Code skill docs path")
 	}
 	if !strings.Contains(scriptText, "skills.load.extraDirs") {
 		t.Fatalf("sync script should register finance skill under skills.load.extraDirs so runtime prompt ordering includes it")
@@ -159,9 +150,15 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 	if !strings.Contains(scriptText, "delete entry.skillsSnapshot;") {
 		t.Fatalf("sync script should clear stale OpenClaw session skillsSnapshot caches after publishing finance skill")
 	}
-	if strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md';") ||
-		strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/SKILL.md';") {
-		t.Fatalf("sync script should not publish OpenClaw skill files as symlinks outside configured roots")
+	if strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md';") ||
+		strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/SKILL.md';") ||
+		strings.Contains(scriptText, "cp '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_CLAUDE_SKILL_DIR/SKILL.md';") {
+		t.Fatalf("sync script should not copy published skill files; use repo-backed symlinks")
+	}
+	if strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/SKILL.md';") ||
+		strings.Contains(scriptText, "ln -sfn '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md';") ||
+		strings.Contains(scriptText, "mkdir -p '$REMOTE_OPENCLAW_EXT_SKILL_DIR/docs';") {
+		t.Fatalf("sync script should not publish a redundant skill inside the OpenClaw extension")
 	}
 	if strings.Contains(scriptText, "DEFAULT_SKILL_CANDIDATES") {
 		t.Fatalf("sync script should not rely on removed DEFAULT_SKILL_CANDIDATES marker")
