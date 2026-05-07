@@ -139,6 +139,13 @@ func finalizeQueryResult(ctx queryExecutionContext, r Result) Result {
 			}
 		}
 	}
+
+	// 新增 bridge 兼容字段：final_answer 和 host_summary_contract
+	r.Data["final_answer"] = buildFinalAnswer(r)
+	if hostSummary := buildHostSummaryContract(r.Data, ctx.spec.NormalizedQuestion); hostSummary != nil {
+		r.Data["host_summary_contract"] = hostSummary
+	}
+
 	if ctx.engine != nil {
 		r = ctx.engine.annotateSourceAttribution(ctx.spec, r)
 	}
