@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestContractQuestionDualViewScenarios(t *testing.T) {
+func TestContractDimensionQueryScenarios(t *testing.T) {
 	runParallelQueryScenarios(t, []queryScenario{
 		{
 			Name:     "customer_contract_book_and_cash_views",
@@ -48,249 +48,152 @@ func TestContractQuestionDualViewScenarios(t *testing.T) {
 				assertViewAliases(t, res)
 			},
 		},
+		{
+			Name:     "supplier_contract_uses_merged_cost_settlement_groups",
+			Question: "上海合并供应商科技有限公司2026年Q1合同成本多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				if got := res.Data["role"]; got != "supplier_contract" {
+					t.Fatalf("role = %v, want supplier_contract", got)
+				}
+				bookView, ok := res.Data["book_view"].(map[string]any)
+				if !ok {
+					t.Fatalf("book_view missing: %+v", res.Data)
+				}
+				if got := bookView["contract_cost"]; got != float64(600) {
+					t.Fatalf("contract_cost = %v, want 600", got)
+				}
+				contracts, ok := res.Data["contracts"].([]map[string]any)
+				if !ok {
+					t.Fatalf("contracts missing: %+v", res.Data["contracts"])
+				}
+				if len(contracts) != 4 {
+					t.Fatalf("contract count = %d, want 4: %#v", len(contracts), contracts)
+				}
+				if !strings.Contains(res.Message, "合同成本 600.00 元") {
+					t.Fatalf("message should include merged cost group total, got: %s", res.Message)
+				}
+			},
+		},
+		{
+			Name:     "mixed_contract_uses_cash_first_dual_answer",
+			Question: "南京众信数通智能科技有限公司2025年合同收入结算、合同成本、到账、付款分别是多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				assertCashBeforeFinancialView(t, res.Message)
+				if got := res.Data["role"]; got != "mixed_contract" {
+					t.Fatalf("role = %v, want mixed_contract", got)
+				}
+				assertViewAliases(t, res)
+			},
+		},
+		{
+			Name:     "profit_without_contract_keyword_still_uses_contract_dimension",
+			Question: "南京众信数通智能科技有限公司2025年利润多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
+					t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
+				}
+				spec, ok := res.Data["query_spec"].(map[string]any)
+				if !ok {
+					t.Fatalf("query_spec missing: %+v", res.Data)
+				}
+				if got := spec["period_from"]; got != "2025-01" {
+					t.Fatalf("period_from = %v, want 2025-01", got)
+				}
+				if got := spec["period_to"]; got != "2025-12" {
+					t.Fatalf("period_to = %v, want 2025-12", got)
+				}
+				if !strings.Contains(res.Message, "合同利润 180.00 元") {
+					t.Fatalf("message should contain contract book profit, got: %s", res.Message)
+				}
+				if !strings.Contains(res.Message, "净回款 192.00 元") {
+					t.Fatalf("message should contain cash net receipts, got: %s", res.Message)
+				}
+			},
+		},
+		{
+			Name:     "contract_content_question_uses_contract_dimension",
+			Question: "行业商品数据采购合同A01内容是什么？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				if !strings.Contains(res.Message, "行业商品数据采购合同-A01") {
+					t.Fatalf("message should contain contract content, got: %s", res.Message)
+				}
+			},
+		},
+		{
+			Name:     "revenue_without_contract_keyword_uses_contract_dimension",
+			Question: "辽宁金程信息科技有限公司2025年营收多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				if !strings.Contains(res.Message, "合同台账结算 3000.00 元") {
+					t.Fatalf("message should contain contract settlement revenue, got: %s", res.Message)
+				}
+				sourceTables, ok := res.Data["source_tables"].([]string)
+				if !ok {
+					t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
+				}
+				if len(sourceTables) == 0 || sourceTables[0] != "tenant_uhub.fin_contracts" {
+					t.Fatalf("source_tables should start with tenant_uhub.fin_contracts, got %#v", sourceTables)
+				}
+			},
+		},
+		{
+			Name:     "alias_revenue_uses_contract_dimension",
+			Question: "飞未云科2026年累计销售额多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				if got := res.Data["entity"]; got != "飞未云科（深圳）技术有限公司" {
+					t.Fatalf("entity = %v, want 飞未云科（深圳）技术有限公司", got)
+				}
+				if !strings.Contains(res.Message, "合同台账结算 3600.00 元") {
+					t.Fatalf("message should use contract ledger revenue, got: %s", res.Message)
+				}
+			},
+		},
+		{
+			Name:     "customer_contract_uses_merged_fund_income_groups",
+			Question: "Yipit data 2026年Q1回款和结算金额是多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				if got := res.Data["role"]; got != "customer_contract" {
+					t.Fatalf("role = %v, want customer_contract", got)
+				}
+				bookView, ok := res.Data["book_view"].(map[string]any)
+				if !ok {
+					t.Fatalf("book_view missing: %+v", res.Data)
+				}
+				cashView, ok := res.Data["cash_view"].(map[string]any)
+				if !ok {
+					t.Fatalf("cash_view missing: %+v", res.Data)
+				}
+				if got := bookView["settlement_amount"]; got != float64(600) {
+					t.Fatalf("settlement_amount = %v, want 600", got)
+				}
+				if got := cashView["received_amount"]; got != float64(570) {
+					t.Fatalf("received_amount = %v, want 570", got)
+				}
+				contracts, ok := res.Data["contracts"].([]map[string]any)
+				if !ok {
+					t.Fatalf("contracts missing: %+v", res.Data["contracts"])
+				}
+				if len(contracts) != 4 {
+					t.Fatalf("contract count = %d, want 4: %#v", len(contracts), contracts)
+				}
+				for _, contract := range contracts {
+					content, _ := contract["contract_content"].(string)
+					if strings.Contains(content, "合并金额组") {
+						t.Fatalf("contracts should not expose merged pseudo contract: %#v", contracts)
+					}
+				}
+				if !strings.Contains(res.Message, "实际到账 570.00 元") || !strings.Contains(res.Message, "合同台账结算 600.00 元") {
+					t.Fatalf("message should include merged group totals, got: %s", res.Message)
+				}
+			},
+		},
 	})
-}
-
-func TestSupplierContractQuestionUsesMergedCostSettlementGroups(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("上海合并供应商科技有限公司2026年Q1合同成本多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	if got := res.Data["role"]; got != "supplier_contract" {
-		t.Fatalf("role = %v, want supplier_contract", got)
-	}
-	bookView, ok := res.Data["book_view"].(map[string]any)
-	if !ok {
-		t.Fatalf("book_view missing: %+v", res.Data)
-	}
-	if got := bookView["contract_cost"]; got != float64(600) {
-		t.Fatalf("contract_cost = %v, want 600", got)
-	}
-	contracts, ok := res.Data["contracts"].([]map[string]any)
-	if !ok {
-		t.Fatalf("contracts missing: %+v", res.Data["contracts"])
-	}
-	if len(contracts) != 4 {
-		t.Fatalf("contract count = %d, want 4: %#v", len(contracts), contracts)
-	}
-	if !strings.Contains(res.Message, "合同成本 600.00 元") {
-		t.Fatalf("message should include merged cost group total, got: %s", res.Message)
-	}
-}
-
-func TestMixedContractQuestionUsesCashFirstDualAnswer(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("南京众信数通智能科技有限公司2025年合同收入结算、合同成本、到账、付款分别是多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	if !strings.Contains(res.Message, "现金口径") || !strings.Contains(res.Message, "财务口径") {
-		t.Fatalf("message should mention cash and financial views, got: %s", res.Message)
-	}
-	if strings.Index(res.Message, "现金口径") > strings.Index(res.Message, "财务口径") {
-		t.Fatalf("contract answer should present cash view before financial view, got: %s", res.Message)
-	}
-	if got := res.Data["role"]; got != "mixed_contract" {
-		t.Fatalf("role = %v, want mixed_contract", got)
-	}
-	if _, ok := res.Data["money_view"]; !ok {
-		t.Fatalf("missing money_view alias: %+v", res.Data)
-	}
-	if _, ok := res.Data["account_view"]; !ok {
-		t.Fatalf("missing account_view alias: %+v", res.Data)
-	}
-}
-
-func TestContractProfitQuestionWithoutContractKeywordStillUsesContractDimension(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("南京众信数通智能科技有限公司2025年利润多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	if got, _ := res.Data["query_pipeline"].(string); got != "orchestrator" {
-		t.Fatalf("query_pipeline = %v, want orchestrator", res.Data["query_pipeline"])
-	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
-		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
-	}
-	if got := spec["period_from"]; got != "2025-01" {
-		t.Fatalf("period_from = %v, want 2025-01", got)
-	}
-	if got := spec["period_to"]; got != "2025-12" {
-		t.Fatalf("period_to = %v, want 2025-12", got)
-	}
-	if !strings.Contains(res.Message, "合同利润 180.00 元") {
-		t.Fatalf("message should contain contract book profit, got: %s", res.Message)
-	}
-	if !strings.Contains(res.Message, "净回款 192.00 元") {
-		t.Fatalf("message should contain cash net receipts, got: %s", res.Message)
-	}
-}
-
-func TestContractContentQuestionUsesContractDimension(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("行业商品数据采购合同A01内容是什么？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
-		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
-	}
-	if !strings.Contains(res.Message, "行业商品数据采购合同-A01") {
-		t.Fatalf("message should contain contract content, got: %s", res.Message)
-	}
-}
-
-func TestContractRevenueQuestionWithoutContractKeywordStillUsesContractDimension(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("辽宁金程信息科技有限公司2025年营收多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
-		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
-	}
-	if !strings.Contains(res.Message, "合同台账结算 3000.00 元") {
-		t.Fatalf("message should contain contract settlement revenue, got: %s", res.Message)
-	}
-	sourceTables, ok := res.Data["source_tables"].([]string)
-	if !ok {
-		t.Fatalf("source_tables missing or wrong type: %#v", res.Data["source_tables"])
-	}
-	if len(sourceTables) == 0 || sourceTables[0] != "tenant_uhub.fin_contracts" {
-		t.Fatalf("source_tables should start with tenant_uhub.fin_contracts, got %#v", sourceTables)
-	}
-}
-
-func TestContractAliasRevenueQuestionUsesContractDimension(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("飞未云科2026年累计销售额多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	spec, ok := res.Data["query_spec"].(map[string]any)
-	if !ok {
-		t.Fatalf("query_spec missing: %+v", res.Data)
-	}
-	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
-		t.Fatalf("query_family = %v, want %v", got, query.QueryFamilyContractDimension)
-	}
-	if got := res.Data["entity"]; got != "飞未云科（深圳）技术有限公司" {
-		t.Fatalf("entity = %v, want 飞未云科（深圳）技术有限公司", got)
-	}
-	if !strings.Contains(res.Message, "合同台账结算 3600.00 元") {
-		t.Fatalf("message should use contract ledger revenue, got: %s", res.Message)
-	}
-}
-
-func TestCustomerContractQuestionUsesMergedFundIncomeGroups(t *testing.T) {
-	runParallelHeavyQueryTest(t)
-
-	dbPath := buildContractQueryTestDB(t)
-	engine, err := query.NewEngine(dbPath, testCompany)
-	if err != nil {
-		t.Fatalf("new engine: %v", err)
-	}
-	defer engine.Close()
-
-	res := engine.Query("Yipit data 2026年Q1回款和结算金额是多少？")
-	if !res.Success {
-		t.Fatalf("query failed: %+v", res)
-	}
-	if got := res.Data["role"]; got != "customer_contract" {
-		t.Fatalf("role = %v, want customer_contract", got)
-	}
-	bookView, ok := res.Data["book_view"].(map[string]any)
-	if !ok {
-		t.Fatalf("book_view missing: %+v", res.Data)
-	}
-	cashView, ok := res.Data["cash_view"].(map[string]any)
-	if !ok {
-		t.Fatalf("cash_view missing: %+v", res.Data)
-	}
-	if got := bookView["settlement_amount"]; got != float64(600) {
-		t.Fatalf("settlement_amount = %v, want 600", got)
-	}
-	if got := cashView["received_amount"]; got != float64(570) {
-		t.Fatalf("received_amount = %v, want 570", got)
-	}
-	contracts, ok := res.Data["contracts"].([]map[string]any)
-	if !ok {
-		t.Fatalf("contracts missing: %+v", res.Data["contracts"])
-	}
-	if len(contracts) != 4 {
-		t.Fatalf("contract count = %d, want 4: %#v", len(contracts), contracts)
-	}
-	for _, contract := range contracts {
-		content, _ := contract["contract_content"].(string)
-		if strings.Contains(content, "合并金额组") {
-			t.Fatalf("contracts should not expose merged pseudo contract: %#v", contracts)
-		}
-	}
-	if !strings.Contains(res.Message, "实际到账 570.00 元") || !strings.Contains(res.Message, "合同台账结算 600.00 元") {
-		t.Fatalf("message should include merged group totals, got: %s", res.Message)
-	}
 }
 
 func TestContractMemberQuestionDoesNotAttributeWholeMergedFundIncomeGroup(t *testing.T) {

@@ -11,6 +11,7 @@ type queryScenario struct {
 	Name     string
 	Question string
 	DBPath   func(*testing.T) string
+	Seed     func(*testing.T, string)
 	Company  string
 	Assert   func(*testing.T, query.Result)
 }
@@ -27,7 +28,11 @@ func runParallelQueryScenarios(t *testing.T, scenarios []queryScenario) {
 			if company == "" {
 				company = testCompany
 			}
-			engine, err := query.NewEngine(scenario.DBPath(t), company)
+			dbPath := scenario.DBPath(t)
+			if scenario.Seed != nil {
+				scenario.Seed(t, dbPath)
+			}
+			engine, err := query.NewEngine(dbPath, company)
 			if err != nil {
 				t.Fatalf("new engine: %v", err)
 			}

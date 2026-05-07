@@ -175,6 +175,38 @@ func TestResolveQueryRoutingDoesNotTreatOverallExpenseAsEntity(t *testing.T) {
 	}
 }
 
+func TestResolveQueryRoutingCoreMetricQuestionsStayEntityless(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	cases := []struct {
+		name     string
+		question string
+		from     string
+		to       string
+	}{
+		{name: "slash revenue cost", question: "2026年1月收入/成本多少", from: "2026-01", to: "2026-01"},
+		{name: "multi metric", question: "2026年2月账上收入、成本、利润分别是多少？", from: "2026-02", to: "2026-02"},
+	}
+
+	for _, tc := range cases {
+		route := engine.resolveQueryRouting(tc.question)
+		if route.entity != "" || route.hasRealEntity {
+			t.Fatalf("%s: entity = %q hasRealEntity=%t, want company-level metric route", tc.name, route.entity, route.hasRealEntity)
+		}
+		if route.spec.QueryFamily != QueryFamilyCoreMetric {
+			t.Fatalf("%s: query_family = %s, want %s", tc.name, route.spec.QueryFamily, QueryFamilyCoreMetric)
+		}
+		if route.spec.PeriodFrom != tc.from || route.spec.PeriodTo != tc.to {
+			t.Fatalf("%s: period = %s~%s, want %s~%s", tc.name, route.spec.PeriodFrom, route.spec.PeriodTo, tc.from, tc.to)
+		}
+	}
+}
+
 func TestResolveQueryRoutingDoesNotTreatCurrentModifierAsARAPEntity(t *testing.T) {
 	dbPath := buildQueryContextResolutionDB(t)
 	engine, err := NewEngine(dbPath, "测试公司")
