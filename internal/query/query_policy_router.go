@@ -81,7 +81,7 @@ func shouldUseOfficialARAPQuestion(q string) bool {
 	return containsAny(q, []string{
 		"科目余额", "发生额及余额", "余额表", "资产负债表",
 		"财务账", "会计账", "报表口径", "账上",
-		"期初", "期末", "期初余额", "期末余额", "余额",
+		"序时账", "凭证",
 	})
 }
 
