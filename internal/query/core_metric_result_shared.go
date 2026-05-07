@@ -4,13 +4,13 @@ import "fmt"
 
 func buildCoreMetricSharedResultFields(bookSource string, book monthlyBookView, displayedBookProfit float64, cashFlowSummary, bridgeMap map[string]any) map[string]any {
 	return map[string]any{
-		"source_tables":          sourceTablesForCoreMetric(bookSource, true),
-		"profit_cash_bridge":     bridgeMap,
-		"现金流入":                 cashFlowSummary["现金流入"],
-		"现金流出":                 cashFlowSummary["现金流出"],
-		"净现金流":                 cashFlowSummary["净现金流"],
-		"财务做账口径(看利润)":          buildCoreMetricBookView(book, displayedBookProfit),
-		"cash_flow":             cashFlowSummary,
+		"source_tables":      sourceTablesForCoreMetric(bookSource, true),
+		"profit_cash_bridge": bridgeMap,
+		"现金流入":               cashFlowSummary["现金流入"],
+		"现金流出":               cashFlowSummary["现金流出"],
+		"净现金流":               cashFlowSummary["净现金流"],
+		"财务做账口径(看利润)":        buildCoreMetricBookView(book, displayedBookProfit),
+		"cash_flow":          cashFlowSummary,
 	}
 }
 

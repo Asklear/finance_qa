@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"financeqa/internal/mcp"
 )
 
 func TestFinanceBridgeListToolsAndV2Response(t *testing.T) {
@@ -117,7 +120,7 @@ exit 2
 		t.Fatalf("bridge_meta.capabilities.contract_summary should be true, got %v", capabilities["contract_summary"])
 	}
 	if exposedTools, ok := capabilities["exposed_tools"].([]any); !ok || len(exposedTools) != 5 {
-		t.Fatalf("bridge_meta.capabilities.exposed_tools should list 5 bridge tools, got %v", capabilities["exposed_tools"])
+		t.Fatalf("bridge_meta.capabilities.exposed_tools should list 5 Go MCP tools, got %v", capabilities["exposed_tools"])
 	}
 	exposedFieldNames, ok := capabilities["exposed_fields"].([]any)
 	if !ok {
@@ -1520,40 +1523,198 @@ func TestRepositorySkillDocumentPublishesContractVersions(t *testing.T) {
 
 func runBridge(t *testing.T, binPath, dbPath, skillPath, reqJSON string) string {
 	t.Helper()
-	bridgePath := filepath.Join("..", "..", "plugin", "openclaw-finance", "server", "finance_bridge.py")
-	cmd := exec.Command("python3", bridgePath)
-	cmd.Env = append(os.Environ(),
-		"FINANCEQA_BIN="+binPath,
-		"FINANCEQA_DB="+dbPath,
-		"FINANCEQA_SKILL_PATH="+skillPath,
-	)
-	cmd.Stdin = strings.NewReader(reqJSON)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("run bridge failed: %v, stderr=%s, stdout=%s", err, stderr.String(), stdout.String())
-	}
-	return stdout.String()
+	return runMCPAction(t, binPath, dbPath, skillPath, reqJSON)
 }
 
 func runBridgeWithDBTarget(t *testing.T, binPath, dbTarget, skillPath, reqJSON string) string {
 	t.Helper()
-	bridgePath := filepath.Join("..", "..", "plugin", "openclaw-finance", "server", "finance_bridge.py")
-	cmd := exec.Command("python3", bridgePath)
-	cmd.Env = append(os.Environ(),
-		"FINANCEQA_BIN="+binPath,
-		"FINANCEQA_DB="+dbTarget,
-		"FINANCEQA_SKILL_PATH="+skillPath,
+	return runMCPAction(t, binPath, dbTarget, skillPath, reqJSON)
+}
+
+func runMCPAction(t *testing.T, binPath, dbTarget, skillPath, reqJSON string) string {
+	t.Helper()
+
+	var legacy struct {
+		Action    string         `json:"action"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(reqJSON), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy MCP request: %v", err)
+	}
+
+	method := "tools/list"
+	params := map[string]any{}
+	id := float64(1)
+	if legacy.Action == "call" {
+		method = "tools/call"
+		params = map[string]any{"name": legacy.Name, "arguments": legacy.Arguments}
+		id = 2
+	}
+	request := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	}
+	rawRequest, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal MCP request: %v", err)
+	}
+
+	appendixPath := filepath.Join(filepath.Dir(skillPath), "docs", "SKILL_APPENDIX_FULL.md")
+	var stdout, stderr bytes.Buffer
+	server := mcp.NewServer(
+		mcp.WithDBPath(dbTarget),
+		mcp.WithSkillPath(skillPath),
+		mcp.WithAppendixPath(appendixPath),
+		mcp.WithToolRunner(bridgeStubToolRunner{binPath: binPath, dbTarget: dbTarget, skillPath: skillPath}),
+		mcp.WithIO(strings.NewReader(string(rawRequest)+"\n"), &stdout, &stderr),
 	)
-	cmd.Stdin = strings.NewReader(reqJSON)
+	if err := server.Run(context.Background()); err != nil {
+		t.Fatalf("run Go MCP server: %v, stderr=%s", err, stderr.String())
+	}
+	response := mcpResponseByID(t, stdout.String(), id)
+	if response["error"] != nil {
+		t.Fatalf("MCP response error: %v; stderr=%s", response["error"], stderr.String())
+	}
+	result, ok := response["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("MCP result should be object, got %#v", response)
+	}
+	rawResult, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal MCP result: %v", err)
+	}
+	return string(rawResult)
+}
+
+type bridgeStubToolRunner struct {
+	binPath   string
+	dbTarget  string
+	skillPath string
+}
+
+func (r bridgeStubToolRunner) RunTool(ctx context.Context, name string, args map[string]any) (mcp.ToolRunResult, error) {
+	switch name {
+	case "finance-query":
+		payload, err := r.runJSONTool(ctx, "query", stringArg(args, "query"))
+		if err != nil {
+			fallback, fallbackErr := r.runJSONTool(ctx, "host-data")
+			if fallbackErr != nil {
+				return mcp.ToolRunResult{}, err
+			}
+			fallback["success"] = false
+			fallback["fallback_attempted"] = true
+			fallback["query"] = stringArg(args, "query")
+			return mcp.ToolRunResult{Operation: "query", Payload: fallback}, nil
+		}
+		payload["query"] = stringArg(args, "query")
+		return mcp.ToolRunResult{Operation: "query", Payload: payload}, nil
+	case "finance-host-data":
+		payload, err := r.runJSONTool(ctx, "host-data")
+		if err != nil {
+			return mcp.ToolRunResult{}, err
+		}
+		return mcp.ToolRunResult{Operation: "host-data", Payload: payload}, nil
+	case "finance-upload":
+		payload, err := r.runJSONTool(ctx, "import", stringArg(args, "file"))
+		if err != nil {
+			return mcp.ToolRunResult{}, err
+		}
+		ensureMCPAnswerMethod(payload)
+		return mcp.ToolRunResult{Operation: "upload", Payload: payload}, nil
+	case "finance-sync":
+		payload, err := r.runJSONTool(ctx, "sync", firstStringArg(args, "directory", "directoryPath"))
+		if err != nil {
+			return mcp.ToolRunResult{}, err
+		}
+		ensureMCPAnswerMethod(payload)
+		return mcp.ToolRunResult{Operation: "sync", Payload: payload}, nil
+	case "finance-dimensions":
+		subcommand := firstStringArg(args, "action", "subcommand")
+		payload, err := r.runMaybeTextTool(ctx, "dimensions", subcommand)
+		if err != nil {
+			return mcp.ToolRunResult{}, err
+		}
+		return mcp.ToolRunResult{Operation: "dimensions:" + subcommand, Payload: payload}, nil
+	default:
+		return mcp.ToolRunResult{}, &mcp.ToolError{Code: -32602, Message: "Unknown tool", Data: name}
+	}
+}
+
+func (r bridgeStubToolRunner) runJSONTool(ctx context.Context, args ...string) (map[string]any, error) {
+	payload, err := r.runMaybeTextTool(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func (r bridgeStubToolRunner) runMaybeTextTool(ctx context.Context, args ...string) (map[string]any, error) {
+	cmd := exec.CommandContext(ctx, r.binPath, args...)
+	cmd.Env = append(os.Environ(), "FINANCEQA_DB="+r.dbTarget, "FINANCEQA_SKILL_PATH="+r.skillPath)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("run bridge failed: %v, stderr=%s, stdout=%s", err, stderr.String(), stdout.String())
+		return nil, &mcp.ToolError{Code: -32603, Message: "stub tool failed", Data: strings.TrimSpace(stderr.String())}
 	}
-	return stdout.String()
+	text := strings.TrimSpace(stdout.String())
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(text), &payload); err == nil {
+		return payload, nil
+	}
+	return map[string]any{
+		"success":       true,
+		"answer_method": "mcp_text",
+		"message":       text,
+	}, nil
+}
+
+func ensureMCPAnswerMethod(payload map[string]any) {
+	if _, ok := payload["answer_method"]; !ok {
+		payload["answer_method"] = "mcp_json"
+	}
+	if _, ok := payload["success"]; !ok {
+		payload["success"] = true
+	}
+}
+
+func mcpResponseByID(t *testing.T, output string, id float64) map[string]any {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var message map[string]any
+		if err := json.Unmarshal([]byte(line), &message); err != nil {
+			t.Fatalf("unmarshal MCP line: %v; line=%s", err, line)
+		}
+		if message["id"] == id {
+			return message
+		}
+	}
+	t.Fatalf("MCP response id %v not found in output:\n%s", id, output)
+	return nil
+}
+
+func firstStringArg(args map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := stringArg(args, key); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringArg(args map[string]any, key string) string {
+	if args == nil {
+		return ""
+	}
+	value, _ := args[key].(string)
+	return value
 }
 
 func parseBridgeContentPayload(t *testing.T, raw string) map[string]any {

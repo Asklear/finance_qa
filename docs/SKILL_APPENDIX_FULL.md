@@ -3,9 +3,9 @@ name: "finance"
 description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务问题、读取结构化财务结果，或在不能直接精算时切到宿主LLM兜底。"
 ---
 
-# finance_qa Agent 调用手册（桥接暴露 + 仓库功能全景）
+# finance_qa Agent 调用手册（Go MCP 暴露 + 仓库功能全景）
 
-本文档目标：把“当前已通过 bridge 暴露给 OpenClaw / Claude 的能力”和“仓库内已实现但默认不桥接暴露的能力边界”同时说清，避免宿主误判可调用范围。
+本文档目标：把“当前已通过 Go MCP 暴露给 OpenClaw / Claude 的能力”和“仓库内已实现但默认不暴露给宿主的能力边界”同时说清，避免宿主误判可调用范围。
 
 ## 0. 附录状态
 
@@ -19,7 +19,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 `finance_qa` 是老板财务助理引擎，能力分为五层：
 
-1. Bridge 暴露层：当前 bridge 注册 5 个工具：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
+1. Go MCP 暴露层：当前 `financeqa serve` 注册 5 个工具：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 2. 数据层：初始化库、导入报表、目录同步。
 3. 规则层：自然语言意图识别、实体识别、账期识别。
 4. 计算层：现金收付、经营确认、合同维度台账、税额、应收应付、项目收支等。
@@ -32,7 +32,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 ## 2. 过程暴露要求
 
-查询响应必须暴露足够的业务结构，不可只返回结果值。注意：CLI 内部可能产生 SQL/trace；bridge 面向 OpenClaw / Claude 的结果会做字段净化，隐藏数据库 id、科目代码、SQL 和内部来源分区字段。
+查询响应必须暴露足够的业务结构，不可只返回结果值。注意：CLI 内部可能产生 SQL/trace；Go MCP 面向 OpenClaw / Claude 的结果会做字段净化，隐藏数据库 id、科目代码、SQL 和内部来源分区字段。
 
 1. `success`
 2. `message`
@@ -78,14 +78,14 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 42. `bridge_meta.skill_appendix_path`
 43. `bridge_meta.skill_appendix_exists`
 
-说明：即使结果无法直接回答，也要尽量保留完整业务过程。若底层已经产出更完整的 trace、证据等级或规则链路，bridge 可保留脱敏摘要；SQL、数据库 id、科目代码和内部字段名不得默认透出给宿主老板问答。
+说明：即使结果无法直接回答，也要尽量保留完整业务过程。若底层已经产出更完整的 trace、证据等级或规则链路，Go MCP 可保留脱敏摘要；SQL、数据库 id、科目代码和内部字段名不得默认透出给宿主老板问答。
 重要边界：过程暴露是给宿主、前端和审计链路使用，不等于对老板展示。老板可见回复必须经过字段净化，只输出业务概念、金额、期间、口径和来源，不原样暴露数据库辅助字段。
 补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序；如果同时存在 `data.source_update_note`，也要保留来源更新时间。
 补充：`source_cell_notes` 是 Excel 批注/单元格备注，`remarks` 是收入明细可见“备注”列。它们给宿主 LLM 和审计链路解释谈判状态、备注金额、异常说明、单元格依据；老板普通金额答案不默认展开这些字段，只有用户问备注、批注、谈判中、异常原因或来源细节时才转成业务语言展示。
 
 ## 3. 宿主运行接口（按需）
 
-宿主当前可调用的 bridge 入口如下：
+宿主当前可调用的 Go MCP 入口如下：
 
 1. `finance-query`
    - 老板财务问答主入口
@@ -98,9 +98,9 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 5. `finance-dimensions`
    - 维度管理入口，承载 `dimensions` 子命令
 
-这里的“只需要”是 bridge 当前暴露范围，不代表仓库 CLI 只有这三项能力。
+这里的“只需要”是 Go MCP 当前暴露范围，不代表仓库 CLI 只有这三项能力。
 
-仓库内已实现、但默认不通过 bridge 暴露给宿主上下文的 CLI 能力包括：
+仓库内已实现、但默认不通过 Go MCP 暴露给宿主上下文的 CLI 能力包括：
 
 1. `init-db`
 2. `config show`
@@ -392,14 +392,14 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
 ## 11. 宿主封装注意事项
 
-1. 当前 `finance_bridge.py` 注册 5 个桥接工具：
+1. 当前 Go MCP server（`financeqa serve`）注册 5 个桥接工具：
    - `finance-query`
    - `finance-host-data`
    - `finance-upload`
    - `finance-sync`
    - `finance-dimensions`
-   - 宿主应以 `bridge_meta.capabilities.exposed_tools` 为准，不要把仓库内其他 CLI 子命令误判成可直接调用的 bridge tool
-2. 桥接层不会读取或注入 `SKILL.md` / appendix 正文，只会：
+   - 宿主应以 `bridge_meta.capabilities.exposed_tools` 为准，不要把仓库内其他 CLI 子命令误判成可直接调用的 Go MCP tool
+2. Go MCP 层不会读取或注入 `SKILL.md` / appendix 正文，只会：
    - 读取 `SKILL.md` 顶部契约版本
    - 校验 appendix 相对路径存在
    - 把这些元信息写回 `bridge_meta`
@@ -426,7 +426,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
    - 宿主摘要时必须保留这条税口径提示
    - 不得把序时账汇总金额擅自改写成“不含税”“税后利润”或“已剔税”
    - 如果要对老板做一段自然语言总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
-10. `bridge_meta.capabilities.tax_disclosure=true` 时，表示 bridge 已显式暴露税口径提示；宿主应优先消费结构化字段，不要回退到正则抽取自然语言。
+10. `bridge_meta.capabilities.tax_disclosure=true` 时，表示 Go MCP 已显式暴露税口径提示；宿主应优先消费结构化字段，不要回退到正则抽取自然语言。
 11. `bridge_meta.capabilities.final_answer=true` 时，优先原样输出 `final_answer` 或 `boss_reply_text`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
 12. `bridge_meta.capabilities.boss_reply=true` 时，在没有 `final_answer` / `boss_reply_text` 时再消费 `boss_reply`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
 13. `bridge_meta.capabilities.contract_summary=true` 时，合同类和合同汇总类问题优先消费 `host_summary_contract`。
@@ -660,7 +660,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 7. 不能因 CLI exit code 非 0 直接判失败并丢弃 stdout JSON，必须先解析 stdout。
 8. 不能在老板可见回复中输出 `id`、`contract_id`、`account_code`、`source_report_type`、`source_sheet_name`、SQL、trace 字段名等数据库辅助字段；必须翻译成来源 Excel、合同/项目、会计科目含义等财务概念。
 9. 不能把 `route_decision` / `probe_results` 原样贴给老板；它们只用于宿主判断口径优先级和回退原因。
-10. 不能在桥接层重复注入 `SKILL.md`，避免上下文膨胀；skill 由宿主 skill 机制统一加载。
+10. 不能在 Go MCP 层重复注入 `SKILL.md`，避免上下文膨胀；skill 由宿主 skill 机制统一加载。
 
 ---
 

@@ -113,3 +113,14 @@ type ResourceContent struct {
 	Text     string `json:"text,omitempty"`
 	Blob     string `json:"blob,omitempty"`
 }
+
+// ToolCallParams is the JSON-RPC params object for tools/call.
+type ToolCallParams struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+// ResourceReadParams is the JSON-RPC params object for resources/read.
+type ResourceReadParams struct {
+	URI string `json:"uri"`
+}

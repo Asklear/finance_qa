@@ -60,7 +60,7 @@ type ContractInvoiceSummaryDetail struct {
 }
 
 type ContractInvoiceDetail struct {
-	ContractID             string
+	ContractID            string
 	InvoiceNumber         string
 	IssueDate             string
 	BuyerName             string

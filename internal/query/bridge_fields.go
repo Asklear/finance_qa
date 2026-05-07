@@ -48,6 +48,12 @@ func buildHostSummaryContract(data map[string]any, query string) map[string]any 
 	return nil
 }
 
+// BuildHostSummaryContract exposes the host-summary compatibility envelope for
+// the Go MCP server.
+func BuildHostSummaryContract(data map[string]any, query string) map[string]any {
+	return buildHostSummaryContract(data, query)
+}
+
 // buildFinalAnswer 构建 final_answer 字段
 // 优先使用 message，如有 boss_reply_text 则使用
 func buildFinalAnswer(r Result) string {
@@ -101,16 +107,16 @@ func buildContractStrictMissingSummary(data map[string]any) map[string]any {
 	}
 
 	return map[string]any{
-		"kind":                   "contract_strict_missing",
-		"period":                 data["period"],
-		"entity":                 getString(data, "entity"),
-		"reason":                 reason,
-		"source_note":            sourceNote,
-		"source_documents":       sourceDocuments,
-		"continuity_candidates":  getMapSlice(data, "contract_continuity_candidates"),
-		"continuity_note":        getString(data, "contract_continuity_note"),
-		"source_tables":          sourceTables,
-		"safe_to_quote_message":  true,
+		"kind":                  "contract_strict_missing",
+		"period":                data["period"],
+		"entity":                getString(data, "entity"),
+		"reason":                reason,
+		"source_note":           sourceNote,
+		"source_documents":      sourceDocuments,
+		"continuity_candidates": getMapSlice(data, "contract_continuity_candidates"),
+		"continuity_note":       getString(data, "contract_continuity_note"),
+		"source_tables":         sourceTables,
+		"safe_to_quote_message": true,
 	}
 }
 
@@ -130,21 +136,21 @@ func buildContractDimensionSummary(data map[string]any, querySpec map[string]any
 	}
 
 	contract := map[string]any{
-		"kind":                    "contract_dimension",
-		"entity":                  strings.TrimSpace(entity),
-		"role":                    data["role"],
-		"period":                  data["period"],
-		"asked_topic":             getString(data, "asked_topic"),
-		"contracts":               getSlice(data, "contracts"),
-		"cash_view":               firstNonNil(data["cash_view"], data["money_view"]),
-		"book_view":               firstNonNil(data["book_view"], data["account_view"]),
-		"source_tables":           getStringSlice(data, "source_tables"),
-		"source_summary":          cleanSourceNote(getString(data, "source_summary")),
-		"source_note":             cleanSourceNote(getString(data, "source_note")),
-		"source_documents":        cleanSourceDocuments(getStringSlice(data, "source_documents")),
-		"route_decision":          routeDecision,
+		"kind":                     "contract_dimension",
+		"entity":                   strings.TrimSpace(entity),
+		"role":                     data["role"],
+		"period":                   data["period"],
+		"asked_topic":              getString(data, "asked_topic"),
+		"contracts":                getSlice(data, "contracts"),
+		"cash_view":                firstNonNil(data["cash_view"], data["money_view"]),
+		"book_view":                firstNonNil(data["book_view"], data["account_view"]),
+		"source_tables":            getStringSlice(data, "source_tables"),
+		"source_summary":           cleanSourceNote(getString(data, "source_summary")),
+		"source_note":              cleanSourceNote(getString(data, "source_note")),
+		"source_documents":         cleanSourceDocuments(getStringSlice(data, "source_documents")),
+		"route_decision":           routeDecision,
 		"contract_fallback_reason": getString(data, "contract_fallback_reason"),
-		"safe_to_quote_message":   true,
+		"safe_to_quote_message":    true,
 	}
 
 	// 可选字段
@@ -205,11 +211,11 @@ func buildCounterpartyReceiptsSummary(data map[string]any, totalAmount *float64,
 	}
 
 	contract := map[string]any{
-		"kind":                    "counterparty_receipts_with_subperiod",
-		"total_amount":            *totalAmount,
-		"sub_period":              subPeriod,
-		"sub_period_amount":       *subPeriodAmount,
-		"safe_to_quote_message":   true,
+		"kind":                  "counterparty_receipts_with_subperiod",
+		"total_amount":          *totalAmount,
+		"sub_period":            subPeriod,
+		"sub_period_amount":     *subPeriodAmount,
+		"safe_to_quote_message": true,
 	}
 
 	if entity := strings.TrimSpace(entity); entity != "" {

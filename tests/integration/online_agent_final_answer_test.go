@@ -140,35 +140,43 @@ func TestOnlineAgentFinalAnswerCheckScriptUsesClaudeFinanceWrapper(t *testing.T)
 	}
 }
 
-func TestClaudeFinanceFinalAnswerWrapperPrintsBridgeFinalAnswer(t *testing.T) {
+func TestClaudeFinanceFinalAnswerWrapperPrintsMCPFinalAnswer(t *testing.T) {
 	t.Parallel()
 
 	tmp := t.TempDir()
-	bridgePath := filepath.Join(tmp, "finance_bridge_stub.py")
-	if err := os.WriteFile(bridgePath, []byte(`#!/usr/bin/env python3
+	financeqaBin := filepath.Join(tmp, "financeqa_stub.py")
+	if err := os.WriteFile(financeqaBin, []byte(`#!/usr/bin/env python3
 import json
 import sys
 
-request = json.load(sys.stdin)
-query = request["arguments"]["query"]
-payload = {
-    "success": True,
-    "final_answer": "FINAL:" + query + "\n来源：《测试来源表》",
-    "boss_reply_text": "SHOULD_NOT_USE",
-}
-print(json.dumps({"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}, ensure_ascii=False))
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    request = json.loads(line)
+    if request.get("method") == "initialize":
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": {"protocolVersion": "2024-11-05"}}), flush=True)
+        continue
+    if request.get("method") == "tools/call":
+        query = request["params"]["arguments"]["query"]
+        payload = {
+            "success": True,
+            "final_answer": "FINAL:" + query + "\n来源：《测试来源表》",
+            "boss_reply_text": "SHOULD_NOT_USE",
+        }
+        result = {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}]}
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}, ensure_ascii=False), flush=True)
 `), 0o755); err != nil {
-		t.Fatalf("write bridge stub: %v", err)
+		t.Fatalf("write MCP stub: %v", err)
 	}
 
 	wrapperPath := filepath.Join("..", "..", "tests", "scripts", "claude_finance_final_answer.sh")
 	cmd := exec.Command(wrapperPath, "2026年3月收入多少？")
-	cmd.Env = append(os.Environ(), "FINANCE_BRIDGE_PATH="+bridgePath)
+	cmd.Env = append(os.Environ(), "FINANCEQA_BIN="+financeqaBin)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("wrapper should print bridge final_answer: %v\n%s", err, out.String())
+		t.Fatalf("wrapper should print MCP final_answer: %v\n%s", err, out.String())
 	}
 	got := strings.TrimSpace(out.String())
 	want := "FINAL:2026年3月收入多少？\n来源：《测试来源表》"

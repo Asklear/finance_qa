@@ -36,6 +36,7 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 		`api.on("before_message_write"`,
 		`FINANCE_QUERY_FINAL_ANSWER_START`,
 		`FINANCE_QUERY_PAYLOAD_START`,
+		`FINANCE_BRIDGE_PATH`,
 		`/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py`,
 		`forcedAnswersBySessionKey`,
 		`isBridgeFallbackPayload`,
@@ -49,8 +50,11 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 	if !strings.Contains(pluginText, "Do not answer from prior conversation history") {
 		t.Fatalf("prompt hook should forbid stale repeated answers from conversation history")
 	}
-	if !strings.Contains(pluginText, "process.env.FINANCE_BRIDGE_PATH") {
-		t.Fatalf("OpenClaw finance plugin should resolve the bridge path from FINANCE_BRIDGE_PATH")
+	if !strings.Contains(pluginText, "process.env.FINANCEQA_BIN") {
+		t.Fatalf("OpenClaw finance plugin should resolve the Go MCP binary path from FINANCEQA_BIN")
+	}
+	if !strings.Contains(pluginText, `spawn(this.binaryPath, ["serve"]`) {
+		t.Fatalf("OpenClaw finance plugin should start financeqa serve as the Go MCP server")
 	}
 }
 
@@ -76,11 +80,15 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 		`scp -i "$KEY_PATH" "$LOCAL_CLAUDE_WRAPPER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh"`,
 		`scp -i "$KEY_PATH" "$LOCAL_ONLINE_CHECKER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py"`,
 		`go build -o '$REMOTE_REPO_DIR/financeqa' ./cmd/financeqa/...`,
+		`'$REMOTE_REPO_DIR/financeqa' serve`,
 		`plugins.entries['openclaw-finance'].hooks.allowPromptInjection = true`,
 	} {
 		if !strings.Contains(scriptText, want) {
 			t.Fatalf("sync script should publish OpenClaw plugin runtime and prompt hook config; missing %q", want)
 		}
+	}
+	if strings.Contains(scriptText, "finance_bridge.py") || strings.Contains(scriptText, "LOCAL_BRIDGE") {
+		t.Fatalf("sync script should publish Go MCP only, got Python bridge references")
 	}
 }
 
@@ -96,7 +104,13 @@ func TestFinanceFinalAnswerWrapperDoesNotHardcodeServerBridgePath(t *testing.T) 
 	if strings.Contains(wrapperText, "/root/.openclaw/extensions/openclaw-finance/server/finance_bridge.py") {
 		t.Fatalf("final answer wrapper should not hardcode the server bridge path")
 	}
-	if !strings.Contains(wrapperText, `BRIDGE_PATH="$ROOT_DIR/plugin/openclaw-finance/server/finance_bridge.py"`) {
-		t.Fatalf("final answer wrapper should default to the repo-local bridge path")
+	if strings.Contains(wrapperText, "FINANCE_BRIDGE_PATH") || strings.Contains(wrapperText, "BRIDGE_PATH") || strings.Contains(wrapperText, "finance_bridge.py") {
+		t.Fatalf("final answer wrapper should not call the Python bridge")
+	}
+	if !strings.Contains(wrapperText, `FINANCEQA_BIN="${FINANCEQA_BIN:-$ROOT_DIR/financeqa}"`) {
+		t.Fatalf("final answer wrapper should default to the repo-local Go financeqa binary")
+	}
+	if !strings.Contains(wrapperText, `financeqa_bin, "serve"`) {
+		t.Fatalf("final answer wrapper should call financeqa serve")
 	}
 }

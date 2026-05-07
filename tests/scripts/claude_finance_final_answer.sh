@@ -2,10 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-BRIDGE_PATH="${FINANCE_BRIDGE_PATH:-}"
-if [[ -z "$BRIDGE_PATH" ]]; then
-  BRIDGE_PATH="$ROOT_DIR/plugin/openclaw-finance/server/finance_bridge.py"
-fi
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <question>" >&2
@@ -16,23 +12,30 @@ QUESTION="$*"
 
 FINANCEQA_BIN="${FINANCEQA_BIN:-$ROOT_DIR/financeqa}" \
 FINANCEQA_SKILL_PATH="${FINANCEQA_SKILL_PATH:-$ROOT_DIR/SKILL.md}" \
-QUESTION="$QUESTION" BRIDGE_PATH="$BRIDGE_PATH" python3 - <<'PY'
+FINANCEQA_APPENDIX_PATH="${FINANCEQA_APPENDIX_PATH:-$ROOT_DIR/docs/SKILL_APPENDIX_FULL.md}" \
+QUESTION="$QUESTION" python3 - <<'PY'
 import json
 import os
 import subprocess
 import sys
 
 question = os.environ["QUESTION"]
-bridge_path = os.environ["BRIDGE_PATH"]
-request = {
-    "action": "call",
-    "name": "finance-query",
-    "arguments": {"query": question},
-}
+financeqa_bin = os.environ["FINANCEQA_BIN"]
+skill_path = os.environ["FINANCEQA_SKILL_PATH"]
+appendix_path = os.environ["FINANCEQA_APPENDIX_PATH"]
+requests = [
+    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+    {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "finance-query", "arguments": {"query": question}},
+    },
+]
 
 proc = subprocess.run(
-    ["python3", bridge_path],
-    input=json.dumps(request, ensure_ascii=False),
+    [financeqa_bin, "serve", "--skill", skill_path, "--appendix", appendix_path],
+    input="\n".join(json.dumps(request, ensure_ascii=False) for request in requests) + "\n",
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
     universal_newlines=True,
@@ -41,9 +44,21 @@ if proc.returncode != 0:
     sys.stderr.write(proc.stderr or proc.stdout)
     sys.exit(proc.returncode)
 
-outer = json.loads(proc.stdout)
-payload = outer
-content = outer.get("content") if isinstance(outer, dict) else None
+tool_result = None
+for line in proc.stdout.splitlines():
+    if not line.strip():
+        continue
+    message = json.loads(line)
+    if message.get("id") == 2:
+        tool_result = message.get("result")
+        break
+
+if not isinstance(tool_result, dict):
+    sys.stderr.write("MCP response did not contain tools/call result\n")
+    sys.exit(1)
+
+payload = tool_result
+content = tool_result.get("content")
 if isinstance(content, list):
     for item in content:
         if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
@@ -65,7 +80,7 @@ if isinstance(payload, dict):
         )
 
 if not answer:
-    sys.stderr.write("bridge response did not contain final_answer/boss_reply_text/message\n")
+    sys.stderr.write("MCP response did not contain final_answer/boss_reply_text/message\n")
     sys.exit(1)
 
 sys.stdout.write(answer)

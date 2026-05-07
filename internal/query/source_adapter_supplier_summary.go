@@ -97,16 +97,16 @@ ORDER BY out_amt DESC, counterparty_name
 		)
 		if preReason, ok := prefiltered[name]; ok {
 			include, reason = false, preReason
-			} else {
-				evidence = groupedEvidence[name]
+		} else {
+			evidence = groupedEvidence[name]
+			classification = ClassifyCounterparty(name, evidence)
+			include, reason = e.shouldIncludeSupplierPaymentCounterparty(name, classification)
+			if !include && !hasCompleteStructuredCounterpartyEvidence(evidence) {
+				evidence = e.collectCounterpartyEvidence(name, from, to)
 				classification = ClassifyCounterparty(name, evidence)
 				include, reason = e.shouldIncludeSupplierPaymentCounterparty(name, classification)
-				if !include && !hasCompleteStructuredCounterpartyEvidence(evidence) {
-					evidence = e.collectCounterpartyEvidence(name, from, to)
-					classification = ClassifyCounterparty(name, evidence)
-					include, reason = e.shouldIncludeSupplierPaymentCounterparty(name, classification)
-				}
 			}
+		}
 		row := map[string]any{
 			"name":       name,
 			"out_amount": round2(aggregate.OutAmt),

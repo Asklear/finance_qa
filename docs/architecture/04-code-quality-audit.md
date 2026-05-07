@@ -32,6 +32,14 @@
 3. `internal/dimensions` 补充内存仓库、SQLite 仓库、标准规则初始化和 mapper 优先级测试。
 4. `internal/accounting` 补充月度利润、利润表、现金流、双口径和余额试算测试。
 5. `internal/analysis` 补充账龄、预警、周转天数、利润现金桥和日期/分桶 helper 测试。
+6. `internal/ingest` 补充导入清洗 helper、来源元信息 helper 和利润表落库断言测试。
+
+已完成的 Go MCP 正交性整理：
+
+1. `internal/mcp/server.go` 只保留 MCP 主循环、初始化和具体工具执行入口。
+2. 抽出 `internal/mcp/tools.go`、`resources.go`、`jsonrpc.go`，分别承载工具定义/调用分发、资源读写和 JSON-RPC 响应封装。
+3. 抽出 `bridge_envelope.go`、`bridge_meta.go`、`bridge_reply.go`、`bridge_sanitize.go`、`bridge_helpers.go`，把老板可见回复、元信息和脱敏逻辑从服务器主流程中分离。
+4. 收敛 upload/sync 的 importer 构造与 `ImportOptions` 解析，避免 MCP 工具处理函数间重复。
 
 当前 `dupl -t 150` 的生产代码重复热点已缩减到：
 
@@ -51,6 +59,8 @@
 - `financeqa/internal/dimensions`：`53.2%`
 - `financeqa/internal/accounting`：`75.4%`
 - `financeqa/internal/analysis`：`65.1%`
+- `financeqa/internal/ingest`：`36.2%`
+- `financeqa/internal/mcp`：`61.4%`
 
 整改前 `go test ./... -cover -count=1` 的包级覆盖结果：
 
@@ -124,12 +134,14 @@
 1. 拆分 `source_probe_contracts.go`、`contract_aggregate_collect.go`、`query_execution` 的交叉逻辑。
 2. 把“探测是否覆盖”“决定走哪条路径”“真正执行 SQL”分开。
 3. 把合同/发票/财务表口径统一成更少的共享接口。
+4. 已完成 Go MCP 层的职责拆分；`internal/query` 仍是下一轮最主要的正交性整理对象。
 
 ### P2：补测试短板
 
 1. 已完成：给 `internal/config`、`internal/support`、`internal/dimensions` 补最小单测。
 2. 已完成：给 `internal/accounting`、`internal/analysis` 补核心口径测试。
-3. 后续可继续：给 `internal/ingest` 增补字段清洗、空值、重复行、边界值测试。
+3. 已完成：给 `internal/ingest` 增补导入清洗、空值、重复行相关 helper 和落库断言测试。
+4. 后续可继续：给 `internal/query` 的 source probe / route decision / SQL execution 分层补更细的单元测试，降低对大集成测试的依赖。
 
 ## 验收口径
 

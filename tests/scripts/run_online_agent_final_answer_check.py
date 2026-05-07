@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate OpenClaw/Claude final answers against bridge-produced final_answer.
+"""Validate OpenClaw/Claude final answers against Go MCP-produced final_answer.
 
 Default mode is offline validation of JSONL files already captured from online
 agents. Live agent execution is opt-in via FINANCEQA_RUN_ONLINE_AGENT_TESTS=1.
@@ -415,7 +415,7 @@ def validate(expected_rows, answer_rows, host, strict_final_answer):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--expected-jsonl", required=True, help="bridge expected JSONL; each row has question and expected payload")
+    parser.add_argument("--expected-jsonl", required=True, help="Go MCP expected JSONL; each row has question and expected payload")
     parser.add_argument("--answers-jsonl", help="agent final answer JSONL to validate")
     parser.add_argument("--host", default="agent", help="host label for validation output")
     parser.add_argument("--summary-json", required=True, help="write validation summary JSON")

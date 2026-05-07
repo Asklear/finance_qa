@@ -4,7 +4,7 @@
 sequenceDiagram
     participant Boss as 老板/调用方
     participant Host as OpenClaw/Claude
-    participant Bridge as finance_bridge / financeqa CLI
+    participant Bridge as financeqa serve / Go MCP
     participant RT as engine_runtime
     participant Rewrite as query_rewrite
     participant Entity as DB candidate entity resolver
@@ -25,7 +25,7 @@ sequenceDiagram
     end
     Host->>Bridge: finance-query({query})
     Bridge->>Bridge: 校验 skill_contract_version / appendix 存在性
-    Bridge->>RT: financeqa query / Engine.Query
+    Bridge->>RT: Engine.Query
     RT->>Rewrite: 改写老板问题为意图槽位
     Rewrite-->>RT: 指标 / 实体片段 / 主期间 / 子期间 / 现金语义 / 合同优先标记
     RT->>Entity: 用数据库候选实体打分确认

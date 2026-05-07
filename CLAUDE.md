@@ -21,30 +21,33 @@
 
 1. 即使底层 skill/工具提供了中间过程（SQL、计算日志、trace），默认也不要在对老板的主回复中展示。
 2. 仅在用户明确要求“展示过程/SQL/计算细节”时，再补充中间过程。
-3. 如果接口层能返回完整的中间过程、证据等级、SQL 或规则链路，优先完整保留给宿主或前端，不要在桥接层自行裁剪。
+3. 如果接口层能返回完整的中间过程、证据等级、SQL 或规则链路，优先完整保留给宿主或前端，不要在 Go MCP 层自行裁剪。
 4. `route_decision` / `probe_results` 用于判断主口径和回退原因，必须保留给宿主或审计链路，但不能把字段名原样贴给老板。
 5. 老板可见回复禁止原样展示数据库 id、合同编号、科目代码、表名字段名、SQL、trace、bridge_meta 等辅助字段；必须翻译成合同/项目、会计科目含义和来源 Excel。
-6. 老板可见回复必须保留 bridge 返回的 `source_note` 和 `source_update_note`。财务来源文件名和更新时间只认 `fin_file_mappings`，没有映射就不要用表注释、历史文件名或记忆兜底；合同和发票来源分别来自 `contract_main`、`contract_invoices`。
+6. 老板可见回复必须保留 Go MCP 返回的 `source_note` 和 `source_update_note`。财务来源文件名和更新时间只认 `fin_file_mappings`，没有映射就不要用表注释、历史文件名或记忆兜底；合同和发票来源分别来自 `contract_main`、`contract_invoices`。
 7. 合同/发票 PDF 内容问题不能用 `fin_*` 经营台账推断。问合同条款、合同全文、正文、页码、服务范围、付款条款时看 `contract_main + contract_pages`；问发票内容、发票号、票面项目、购买方/销售方、税额、备注时看 `contract_invoices`，必要时关联 `contract_main`。
 8. 财务表里的 Excel 批注/单元格备注保存在 `source_cell_notes`，收入明细独立“备注”列保存在 `remarks`。这两个字段可用于解释谈判状态、备注金额、异常说明和来源依据；普通金额答案不要默认展开，问备注/批注/谈判状态时再转成业务语言。
 9. 实体识别必须以数据库候选实体为准：银行流水、序时账、序时账摘要、合同客户和合同内容召回候选后打分确认；“当前、汇总、整体、收入、成本、3月、Q1”等修饰词、指标词、时间词不能被当作实体。低置信度或候选接近时保留后端拒答/澄清，不要自行猜。
 
 ## 工具调用策略
 
-0. 对任何财务、经营、合同、回款、开票、收入、成本、利润、现金、银行、税额、应收/应付、客户、供应商或来源表问题，必须先调用 bridge，再回答。推荐命令：
+0. 对任何财务、经营、合同、回款、开票、收入、成本、利润、现金、银行、税额、应收/应付、客户、供应商或来源表问题，必须先调用 Go MCP，再回答。推荐命令：
    ```bash
-   printf '%s' '{"action":"call","name":"finance-query","arguments":{"query":"用户原问题"}}' | python3 ~/.openclaw/extensions/openclaw-finance/server/finance_bridge.py
+   printf '%s\n%s\n' \
+     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+     '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"用户原问题"}}}' \
+     | financeqa serve
    ```
-   若当前环境没有线上 OpenClaw bridge，则使用仓库内 `plugin/openclaw-finance/server/finance_bridge.py`。解析返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源和来源更新时间，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 bridge 的最终答案。
+   若当前环境没有全局 `financeqa`，先在仓库内执行 `go build -o financeqa ./cmd/financeqa/...`，再用 `./financeqa serve`。解析 `tools/call` 返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源和来源更新时间，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 Go MCP 的最终答案。
 1. 优先调用 `finance-query` 获取结构化回答。
 2. 若 `success=false` 或 `answer_method=llm_payload`，立即调用 `finance-host-data` 做兜底推理。
 3. 涉及报表导入，使用 `finance-upload`（单文件）。
-4. 若要批量同步目录，优先使用 bridge 工具 `finance-sync`；若要维度维护，优先使用 bridge 工具 `finance-dimensions`。
-5. 当前 bridge 暴露的工具共有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
-6. OpenClaw / Claude 调 MCP bridge 时，`finance-query` 推荐格式为：`{"action":"call","name":"finance-query","arguments":{"query":"..."}}`。
+4. 若要批量同步目录，优先使用 Go MCP 工具 `finance-sync`；若要维度维护，优先使用 Go MCP 工具 `finance-dimensions`。
+5. 当前 Go MCP 暴露的工具共有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
+6. OpenClaw / Claude 调 Go MCP 时，`finance-query` 推荐 JSON-RPC 格式为：`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"..."}}}`。
 7. `finance-query` 返回的是 `content[0].text` 里的 JSON 文本，必须先解析 JSON，再总结给老板。
-8. 只有当 bridge 未封装相应维护能力，或用户明确要求本地维护命令时，才直接使用 CLI（如 `financeqa config show`、`financeqa keywords intents`）。
-9. 不依赖桥接层注入 skill 内容；skill 由宿主 skills 机制统一加载。
+8. 只有当 Go MCP 未封装相应维护能力，或用户明确要求本地维护命令时，才直接使用 CLI（如 `financeqa config show`、`financeqa keywords intents`）。
+9. 不依赖 Go MCP 注入 skill 内容；skill 由宿主 skills 机制统一加载。
 10. 注入策略使用“核心版 SKILL + 按需附录”：优先遵循仓库根目录 `SKILL.md`，仅在需要细粒度规则时再参考 `docs/SKILL_APPENDIX_FULL.md`。
 11. 线上 OpenClaw 当前路径：`~/.openclaw/skills/finance/SKILL.md` 与 `~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md`。
 12. 线上 Claude Code 当前路径：`~/.claude/skills/finance/SKILL.md` 与 `~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md`。

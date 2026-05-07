@@ -529,7 +529,7 @@ go test ./tests/integration/... -count=1
 8. 财务来源文件名和更新时间只从 `tenant_uhub.fin_file_mappings` 获取；没有映射就不展示该财务来源，不用表注释或硬编码文件名兜底。合同来源来自 `tenant_uhub.contract_main`，发票来源来自 `tenant_uhub.contract_invoices`。
 9. 财务表中的 Excel 批注/单元格备注保存到 `source_cell_notes`，收入明细的独立“备注”列保存到 `remarks`；这些字段主要给宿主 LLM 解释谈判状态、备注金额、异常说明和数据来源，不作为默认老板可见字段。只有用户问备注、批注、谈判状态或来源依据时，才把它们翻译成业务语言展示。
 
-桥接层（`plugin/openclaw-finance/server/finance_bridge.py`）会额外补充：
+Go MCP 层（`financeqa serve`）会额外补充：
 
 1. `data.exposed_fields.dual_perspective`
 2. `data.exposed_fields.hr_breakdown`
@@ -557,7 +557,7 @@ go test ./tests/integration/... -count=1
 
 来源规则：财务类来源文件名和更新时间统一来自 `fin_file_mappings`。如果某个财务来源没有映射，查询层不会再用表注释、旧文件名或硬编码文案兜底；这代表当前库里没有可对老板展示的来源文件。合同和发票文件分别从 `contract_main`、`contract_invoices` 取文件名、更新时间和 OSS 路径。财务事实行里的 `source_cell_notes` 和 `remarks` 是补充解释材料，宿主应保留给 LLM 兜底和审计，不要用它们替代 `source_note/source_update_note`。
 
-说明：桥接层不再读取/注入 `SKILL.md` 或 appendix 的正文规则，skill 仍由宿主（OpenClaw/Claude Code）skills 机制加载；但桥接层会读取 `SKILL.md` 顶部的契约版本标记，校验 appendix 相对路径是否存在，并把这些元数据写回响应。
+说明：Go MCP 层不再读取/注入 `SKILL.md` 或 appendix 的正文规则，skill 仍由宿主（OpenClaw/Claude Code）skills 机制加载；但 Go MCP 层会读取 `SKILL.md` 顶部的契约版本标记，校验 appendix 相对路径是否存在，并把这些元数据写回响应。
 当前推荐使用“核心版 SKILL + 附录”：
 
 1. 核心注入：仓库根目录 `SKILL.md`（短上下文高准确）
@@ -667,7 +667,7 @@ go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
 
 为保证 OpenClaw / Claude Code 全面调用代码库功能，建议按下表接入：
 
-1. 桥接工具（开箱即用）：
+1. Go MCP 工具（开箱即用）：
    - `finance-query` → `financeqa query`
    - `finance-host-data` → `financeqa host-data`
    - `finance-upload` → `financeqa import`（单文件）
@@ -677,10 +677,10 @@ go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
    - `financeqa config show`
    - `financeqa keywords intents`
    - Go SDK：`query.NewEngine / Engine.Query / Engine.HostLLMPayload`
-3. OpenClaw/Claude 调 MCP bridge 时，`finance-query` 的推荐调用格式是：
+3. OpenClaw/Claude 调 Go MCP 时，`finance-query` 的推荐调用格式是：
 
 ```json
-{"action":"call","name":"finance-query","arguments":{"query":"2026年Q1利润多少？"}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"2026年Q1利润多少？"}}}
 ```
 
 ## 八、回答红线（不能犯）

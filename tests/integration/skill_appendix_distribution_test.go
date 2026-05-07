@@ -44,14 +44,17 @@ func TestClaudeInstructionsForceBridgeFinalAnswer(t *testing.T) {
 	}
 	text := string(claude)
 	for _, want := range []string{
-		"必须先调用 bridge",
-		"finance_bridge.py",
+		"必须先调用 Go MCP",
+		"financeqa serve",
 		"`final_answer` 原样返回",
 		"不能摘要、改写、换算或省略来源",
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("CLAUDE.md should force bridge final_answer usage; missing %q", want)
+			t.Fatalf("CLAUDE.md should force Go MCP final_answer usage; missing %q", want)
 		}
+	}
+	if strings.Contains(text, "finance_bridge.py") {
+		t.Fatalf("CLAUDE.md should not point users at the retired Python bridge")
 	}
 }
 

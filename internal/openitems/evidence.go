@@ -38,4 +38,3 @@ func (s SettlementConfidence) merge(other SettlementConfidence) SettlementConfid
 		UnmatchedDecrease:             round2(s.UnmatchedDecrease + other.UnmatchedDecrease),
 	}
 }
-

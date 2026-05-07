@@ -56,8 +56,8 @@ exit 2
 	if payload["success"] != true {
 		t.Fatalf("sync payload should mark success=true, got %v", payload["success"])
 	}
-	if payload["answer_method"] != "cli_json" {
-		t.Fatalf("sync answer_method should be cli_json, got %v", payload["answer_method"])
+	if payload["answer_method"] != "mcp_json" {
+		t.Fatalf("sync answer_method should be mcp_json, got %v", payload["answer_method"])
 	}
 	if payload["tool_name"] != "finance-sync" {
 		t.Fatalf("sync tool_name should be finance-sync, got %v", payload["tool_name"])
@@ -133,8 +133,8 @@ exit 2
 	if listPayload["success"] != true {
 		t.Fatalf("dimensions list should mark success=true, got %v", listPayload["success"])
 	}
-	if listPayload["answer_method"] != "cli_json" {
-		t.Fatalf("dimensions list answer_method should be cli_json, got %v", listPayload["answer_method"])
+	if listPayload["answer_method"] != "mcp_json" {
+		t.Fatalf("dimensions list answer_method should be mcp_json, got %v", listPayload["answer_method"])
 	}
 	data, ok := listPayload["data"].([]any)
 	if !ok || len(data) != 1 {
@@ -152,8 +152,8 @@ exit 2
 	seedRaw := runBridge(t, stubBin, dbPath, skillPath, seedReq)
 	seedPayload := parseBridgeContentPayload(t, seedRaw)
 
-	if seedPayload["answer_method"] != "cli_text" {
-		t.Fatalf("dimensions seed-standard answer_method should be cli_text, got %v", seedPayload["answer_method"])
+	if seedPayload["answer_method"] != "mcp_text" {
+		t.Fatalf("dimensions seed-standard answer_method should be mcp_text, got %v", seedPayload["answer_method"])
 	}
 	msg, _ := seedPayload["message"].(string)
 	if !strings.Contains(msg, "successfully seeded standard CAS rules") {

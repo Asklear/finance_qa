@@ -5,8 +5,8 @@ flowchart LR
     subgraph LocalRepo["本地仓库 /Users/.../finance_qa"]
         LR1["SKILL.md"]
         LR2["docs/SKILL_APPENDIX_FULL.md"]
-        LR3["plugin/openclaw-finance/server/finance_bridge.py"]
-        LR4["cmd/financeqa -> financeqa binary"]
+        LR3["plugin/openclaw-finance/dist/index.esm.js"]
+        LR4["cmd/financeqa -> financeqa Go MCP binary"]
         LR5["tests/scripts/build_openclaw_package.sh"]
         LR6["tests/scripts/sync_openclaw_bridge_and_skill.sh"]
         LR1 --> LR2
@@ -16,6 +16,7 @@ flowchart LR
         LR6 --> LR1
         LR6 --> LR2
         LR6 --> LR3
+        LR6 --> LR4
     end
 
     subgraph Package["OpenClaw 安装包 dist/finance_qa_plugin"]
@@ -31,7 +32,7 @@ flowchart LR
     subgraph HostRepo["服务器仓库 ~/finance_qa"]
         HR1["SKILL.md"]
         HR2["docs/SKILL_APPENDIX_FULL.md"]
-        HR3["plugin/openclaw-finance/server/finance_bridge.py"]
+        HR3["plugin/openclaw-finance/dist/index.esm.js"]
         HR4["financeqa"]
         HR5[".env / config/rules.json"]
         HR1 --> HR2
@@ -40,12 +41,12 @@ flowchart LR
     subgraph OpenClaw["OpenClaw 当前 skill/extension 路径"]
         OC1["~/.openclaw/skills/finance/SKILL.md"]
         OC2["~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
-        OC3["~/.openclaw/extensions/openclaw-finance/server/finance_bridge.py"]
+        OC3["~/.openclaw/extensions/openclaw-finance/dist/index.esm.js"]
         OC4["~/.openclaw/extensions/openclaw-finance/skills/finance/SKILL.md"]
         OC5["~/.openclaw/extensions/openclaw-finance/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         OC1 -. symlink or same file .-> HR1
         OC2 -. symlink or same file .-> HR2
-        OC3 -. symlink .-> HR3
+        OC3 -. copied runtime .-> HR3
         OC4 -. symlink or same file .-> HR1
         OC5 -. symlink or same file .-> HR2
         OC1 --> OC2
@@ -62,7 +63,7 @@ flowchart LR
 
     subgraph Runtime["运行时"]
         RT1["宿主 LLM"]
-        RT2["finance_bridge.py"]
+        RT2["financeqa serve<br/>Go MCP"]
         RT3["~/finance_qa/financeqa"]
         RT4["systemd timer: feishu scan"]
         RT5["systemd timer: ocr process-pending"]
@@ -109,27 +110,27 @@ flowchart LR
 2. 服务器仓库根：`~/finance_qa`
 3. OpenClaw 全局 skill 兼容目录：`~/.openclaw/skills/finance`
 4. OpenClaw 扩展 skill 注册目录：`~/.openclaw/extensions/openclaw-finance/skills/finance`
-5. OpenClaw extension server 目录：`~/.openclaw/extensions/openclaw-finance/server`
+5. OpenClaw extension 目录：`~/.openclaw/extensions/openclaw-finance`
 6. Claude Code skill 目录：`~/.claude/skills/finance`
 7. 废弃路径：`~/.openclaw/workspace/skills/finance-orchestrator` 不再作为发布或验证目标。
 
 ## 发布约束
 
 1. 发布到宿主时必须保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 相对路径。
-2. 线上 bridge 默认二进制是 `~/finance_qa/financeqa`，代码变更后需要重新编译。
-3. bridge 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
-4. OpenClaw/Claude 当前可调用 bridge 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
-5. `finance-query` 推荐 MCP 调用格式：`{"action":"call","name":"finance-query","arguments":{"query":"..."}}`。
-6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 `finance_bridge.py`，并同时创建 OpenClaw 全局 skill 兼容路径与扩展 skill 注册路径 symlink。
+2. 线上 Go MCP 默认二进制是 `~/finance_qa/financeqa`，代码变更后需要重新编译。
+3. Go MCP 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
+4. OpenClaw/Claude 当前可调用 Go MCP 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
+5. `finance-query` 推荐 MCP 调用格式：`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"..."}}}`。
+6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时，并在服务器上编译 `financeqa` Go MCP 二进制。
 7. Claude Code skill 路径也要同步或指向服务器仓库同一份 `SKILL.md` 与 appendix。
 
 ## 运行时要点
 
 1. OpenClaw / Claude 负责读取 skill 正文，并在需要时按相对路径读取 appendix。
-2. `finance_bridge.py` 负责工具注册、调用 `financeqa`、补充 `bridge_meta.capabilities`、失败时尝试 `host-data`。
+2. `financeqa serve` 负责 MCP 工具注册、调用 Go 查询/导入/同步实现、补充 `bridge_meta.capabilities`，并在需要时返回可供宿主兜底的 `finance-host-data` payload。
 3. `financeqa` 默认读取 PostgreSQL 配置；只有显式传入 SQLite 路径才使用本地兼容模式。
 4. 查询结果 JSON 会保留 `route_decision/probe_results/trace/executed_sql` 等审计字段，但宿主给老板回复时必须净化成业务语言。
-5. 如果 `finance-query` 无法稳定回答，bridge 会补调 `financeqa host-data`；若 `extraction_errors` 存在，宿主不能把半截 payload 当完整事实回答。
+5. 如果 `finance-query` 无法稳定回答，Go MCP 会返回兜底结构；若 `extraction_errors` 存在，宿主不能把半截 payload 当完整事实回答。
 
 ## 飞书、OSS 与 OCR 部署
 

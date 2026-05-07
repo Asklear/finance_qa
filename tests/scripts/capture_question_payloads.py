@@ -31,9 +31,18 @@ def load_questions(root):
     return questions
 
 
-def bridge_payload(stdout):
-    outer = json.loads(stdout)
-    content = outer.get("content") if isinstance(outer, dict) else None
+def mcp_payload(stdout):
+    outer = None
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        message = json.loads(line)
+        if message.get("id") == 2:
+            outer = message.get("result")
+            break
+    if not isinstance(outer, dict):
+        raise RuntimeError("MCP tools/call response not found")
+    content = outer.get("content")
     if isinstance(content, list):
         for item in content:
             if isinstance(item, dict) and item.get("type") == "text":
@@ -53,22 +62,38 @@ def run_local(root, question, timeout):
     return proc.returncode, json.loads(proc.stdout), proc.stderr
 
 
-def run_bridge(root, question, timeout):
+def run_mcp(root, question, timeout):
     env = os.environ.copy()
     env.setdefault("FINANCEQA_BIN", str(root / "financeqa"))
     env.setdefault("FINANCEQA_SKILL_PATH", str(root / "SKILL.md"))
-    request = {"action": "call", "name": "finance-query", "arguments": {"query": question}}
+    env.setdefault("FINANCEQA_APPENDIX_PATH", str(root / "docs/SKILL_APPENDIX_FULL.md"))
+    requests = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "finance-query", "arguments": {"query": question}},
+        },
+    ]
     proc = subprocess.run(
-        ["python3", str(root / "plugin/openclaw-finance/server/finance_bridge.py")],
+        [
+            env["FINANCEQA_BIN"],
+            "serve",
+            "--skill",
+            env["FINANCEQA_SKILL_PATH"],
+            "--appendix",
+            env["FINANCEQA_APPENDIX_PATH"],
+        ],
         cwd=str(root),
-        input=json.dumps(request, ensure_ascii=False),
+        input="\n".join(json.dumps(request, ensure_ascii=False) for request in requests) + "\n",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
         timeout=timeout,
         env=env,
     )
-    return proc.returncode, bridge_payload(proc.stdout), proc.stderr
+    return proc.returncode, mcp_payload(proc.stdout), proc.stderr
 
 
 def compact(text):
@@ -78,7 +103,7 @@ def compact(text):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=".")
-    parser.add_argument("--mode", choices=["local-cli", "bridge"], required=True)
+    parser.add_argument("--mode", choices=["local-cli", "mcp"], required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--timeout", type=int, default=150)
     args = parser.parse_args()
@@ -95,7 +120,7 @@ def main():
             if args.mode == "local-cli":
                 code, payload, stderr = run_local(root, item["question"], args.timeout)
             else:
-                code, payload, stderr = run_bridge(root, item["question"], args.timeout)
+                code, payload, stderr = run_mcp(root, item["question"], args.timeout)
             row.update(
                 {
                     "exit_code": code,
