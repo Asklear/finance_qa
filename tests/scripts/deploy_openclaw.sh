@@ -7,9 +7,14 @@
 set -euo pipefail
 
 # --- 配置区 ---
-: "${SERVER:?Set SERVER to your SSH target, for example deploy@finance-host}"
-: "${KEY:?Set KEY to your private key path}"
-REMOTE_HOME="$(ssh -i "$KEY" "$SERVER" 'printf %s "$HOME"')"
+SERVER="${SERVER:-lzh}"
+SSH_OPTS=()
+SCP_OPTS=()
+if [[ -n "${KEY:-}" ]]; then
+    SSH_OPTS=(-i "$KEY")
+    SCP_OPTS=(-i "$KEY")
+fi
+REMOTE_HOME="$(ssh "${SSH_OPTS[@]}" "$SERVER" 'printf %s "$HOME"')"
 REMOTE_DIR="${REMOTE_DIR:-$REMOTE_HOME/finance_qa}"
 REMOTE_FINANCEQA_BIN="${REMOTE_FINANCEQA_BIN:-$REMOTE_DIR/bin/financeqa}"
 PACKAGE_NAME="finance_qa_plugin"
@@ -36,10 +41,10 @@ tar --exclude='.git' \
     -czf /tmp/${PACKAGE_NAME}_deploy.tar.gz .
 
 echo "📤 [3/4] 上传包至服务器 ($SERVER)..."
-scp -i "$KEY" /tmp/${PACKAGE_NAME}_deploy.tar.gz $SERVER:/tmp/
+scp "${SCP_OPTS[@]}" /tmp/${PACKAGE_NAME}_deploy.tar.gz "$SERVER:/tmp/"
 
 echo "🛠️ [4/4] 远程服务器接管：解压与环境初始化..."
-ssh -i "$KEY" $SERVER << REMOTE_SCRIPT
+ssh "${SSH_OPTS[@]}" "$SERVER" << REMOTE_SCRIPT
     echo ">> 正在清理远端目录 $REMOTE_DIR..."
     mkdir -p $REMOTE_DIR
     cd $REMOTE_DIR
