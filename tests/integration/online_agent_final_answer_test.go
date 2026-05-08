@@ -17,12 +17,14 @@ func TestOnlineAgentFinalAnswerCheckScriptValidatesBridgeFinalAnswer(t *testing.
 	passAnswersPath := filepath.Join(tmp, "openclaw_pass.jsonl")
 	strictAnswersPath := filepath.Join(tmp, "openclaw_strict.jsonl")
 	failAnswersPath := filepath.Join(tmp, "openclaw_fail.jsonl")
+	leakAnswersPath := filepath.Join(tmp, "openclaw_leak.jsonl")
 	summaryPath := filepath.Join(tmp, "summary.json")
 
 	question := "2026年3月收入、成本、利润分别是多少？"
 	expectedLine := `{"question":"` + question + `","expected":{"success":true,"final_answer":"2026-03先看合同经营口径：营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。\n\n来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》","data":{"period":"2026-03","source_priority":"contract_first","requested_metrics":["收入","成本","利润"],"source_note":"来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》","contract_summary":{"scope":"company","revenue_settlement":5612513.29,"cost_settlement":2024957.12,"profit":3587556.17}}}}` + "\n"
 	passLine := `{"question":"` + question + `","answer":"2026年3月按合同口径看，营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》"}` + "\n"
 	failLine := `{"question":"` + question + `","answer":"2026年3月：收入 310.63 万，成本及费用 281.50 万，利润 29.13 万。来源：《利润表》"}` + "\n"
+	leakLine := `{"question":"` + question + `","answer":"The user is asking again. We have the authoritative finance-query result in the prior user message context. 2026年3月按合同口径看，营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。来源：《优集资金收入计算表-副本.xlsx》"}` + "\n"
 
 	if err := os.WriteFile(expectedPath, []byte(expectedLine), 0o644); err != nil {
 		t.Fatalf("write expected: %v", err)
@@ -35,6 +37,9 @@ func TestOnlineAgentFinalAnswerCheckScriptValidatesBridgeFinalAnswer(t *testing.
 	}
 	if err := os.WriteFile(failAnswersPath, []byte(failLine), 0o644); err != nil {
 		t.Fatalf("write fail answers: %v", err)
+	}
+	if err := os.WriteFile(leakAnswersPath, []byte(leakLine), 0o644); err != nil {
+		t.Fatalf("write leak answers: %v", err)
 	}
 
 	scriptPath := filepath.Join("..", "..", "tests", "scripts", "run_online_agent_final_answer_check.py")
@@ -89,6 +94,22 @@ func TestOnlineAgentFinalAnswerCheckScriptValidatesBridgeFinalAnswer(t *testing.
 	}
 	if !strings.Contains(outText, "used_profit_statement_or_book_instead_of_contract") {
 		t.Fatalf("failure should flag profit statement fallback, got %s", outText)
+	}
+
+	leakCmd := exec.Command("python3", scriptPath,
+		"--expected-jsonl", expectedPath,
+		"--answers-jsonl", leakAnswersPath,
+		"--host", "openclaw",
+		"--summary-json", summaryPath,
+	)
+	var leakOut bytes.Buffer
+	leakCmd.Stdout = &leakOut
+	leakCmd.Stderr = &leakOut
+	if err := leakCmd.Run(); err == nil {
+		t.Fatalf("prompt/reasoning leak fixture should fail validation\n%s", leakOut.String())
+	}
+	if !strings.Contains(leakOut.String(), "leaked_prompt_or_reasoning_context") {
+		t.Fatalf("leak failure should flag prompt/reasoning context, got %s", leakOut.String())
 	}
 }
 

@@ -39,6 +39,19 @@ INTERNAL_PATTERNS = [
     re.compile(r"\bC\d{3,}\b"),
 ]
 
+VISIBLE_PROMPT_LEAK_PATTERNS = [
+    re.compile(r"Current authoritative finance-query result", re.IGNORECASE),
+    re.compile(r"Use these current facts", re.IGNORECASE),
+    re.compile(r"You may rephrase the final wording", re.IGNORECASE),
+    re.compile(r"\bThe user is asking\b", re.IGNORECASE),
+    re.compile(r"\bWe have the authoritative\b", re.IGNORECASE),
+    re.compile(r"\bprior user message context\b", re.IGNORECASE),
+    re.compile(r"\bMust not use\b", re.IGNORECASE),
+    re.compile(r"\bNeed preserve\b", re.IGNORECASE),
+    re.compile(r"```json", re.IGNORECASE),
+    re.compile(r"内部财务事实"),
+]
+
 
 def load_jsonl(path):
     rows = []
@@ -299,6 +312,11 @@ def validate_answer(question, payload, answer, strict_final_answer=False):
     answer = str(answer or "").strip()
     if not answer:
         return ["empty_answer"]
+
+    for pattern in VISIBLE_PROMPT_LEAK_PATTERNS:
+        if pattern.search(answer):
+            fails.append("leaked_prompt_or_reasoning_context:" + pattern.pattern)
+            break
 
     final_answer = str(payload.get("final_answer") or payload.get("boss_reply_text") or "").strip()
     if strict_final_answer and final_answer and not contains_text(answer, final_answer):

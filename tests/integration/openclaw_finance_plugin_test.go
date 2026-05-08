@@ -26,13 +26,14 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 		`finance-query`,
 		`数据(出来|有了|有没有|情况|多少)`,
 		`mustCallFinanceQuerySystemContext`,
+		`financeQuerySystemFacts`,
 		`latestFinanceQuestionFromMessages`,
 		`latestUserTextFromMessages`,
 		`financeQuestionForPromptEvent`,
-		`Latest finance question that MUST be sent to finance-query`,
+		`最新财务问题`,
 		`previous model attempt failed`,
 		`contract_continuity_candidates`,
-		`do not omit the source note`,
+		`来源和来源更新时间必须一致`,
 		`same-project candidates/references`,
 		`isFinanceQuestion`,
 		`findFinanceQACwd`,
@@ -53,12 +54,16 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 		`isBridgeFallbackPayload`,
 		`finance-query has already been executed`,
 		`api.on("cleanup"`,
+		`Latest finance question that MUST be sent to finance-query`,
+		`Current authoritative finance-query result`,
+		`Use these current facts`,
+		`You may rephrase the final wording`,
 	} {
 		if strings.Contains(pluginText, reject) {
 			t.Fatalf("OpenClaw finance plugin should not hard-intercept model answers; found %q", reject)
 		}
 	}
-	if !strings.Contains(pluginText, "Do not answer from prior conversation history") {
+	if !strings.Contains(pluginText, "不要沿用历史对话") {
 		t.Fatalf("prompt hook should forbid stale repeated answers from conversation history")
 	}
 	if !strings.Contains(pluginText, "process.env.FINANCEQA_BIN") {
@@ -113,8 +118,8 @@ func TestOpenClawFinancePluginMetadataUsesCurrentMajorVersion(t *testing.T) {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("parse plugin metadata %s: %v", path, err)
 		}
-		if got := doc["version"]; got != "2.0.9" {
-			t.Fatalf("%s version = %v, want 2.0.9", path, got)
+		if got := doc["version"]; got != "2.0.10" {
+			t.Fatalf("%s version = %v, want 2.0.10", path, got)
 		}
 		if strings.HasSuffix(path, "package.json") {
 			packageDoc = doc
@@ -221,13 +226,23 @@ if (!promptHook) {
   process.exit(1);
 }
 const directHookResult = await promptHook({ prompt: "2026年3月应收账款多少（已开票未收款）？", messages: [] });
-if (!directHookResult?.prependSystemContext?.includes("Latest finance question that MUST be sent to finance-query: 2026年3月应收账款多少（已开票未收款）？")) {
+if (!directHookResult?.prependSystemContext?.includes("最新财务问题：2026年3月应收账款多少（已开票未收款）？")) {
   console.error("direct finance prompt should inject latest finance question context:", JSON.stringify(directHookResult));
   process.exit(1);
 }
-if (!directHookResult?.prependContext?.includes("FINAL:2026年3月应收账款") || !directHookResult?.prependContext?.includes("Current authoritative finance-query result")) {
-  console.error("direct finance prompt should inject current finance-query result context:", JSON.stringify(directHookResult));
+if (Object.prototype.hasOwnProperty.call(directHookResult, "prependContext")) {
+  console.error("direct finance prompt must not inject visible prependContext:", JSON.stringify(directHookResult));
   process.exit(1);
+}
+if (!directHookResult?.prependSystemContext?.includes("FINAL:2026年3月应收账款")) {
+  console.error("direct finance prompt should inject current finance-query facts into hidden system context:", JSON.stringify(directHookResult));
+  process.exit(1);
+}
+for (const forbidden of ["Current authoritative finance-query result", "Use these current facts", "You may rephrase the final wording", "Latest finance question that MUST"]) {
+  if (directHookResult?.prependSystemContext?.includes(forbidden)) {
+    console.error("direct finance prompt should not include leak-prone English context marker:", forbidden, JSON.stringify(directHookResult));
+    process.exit(1);
+  }
 }
 const messageOnlyHookResult = await promptHook({
   prompt: "",

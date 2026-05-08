@@ -286,17 +286,18 @@ function financeQuestionForPromptEvent(event) {
   return "";
 }
 
-function mustCallFinanceQuerySystemContext(latestQuestion) {
+function mustCallFinanceQuerySystemContext(latestQuestion, currentFacts) {
   const lines = [
-    "Finance QA routing policy:",
-    latestQuestion ? `Latest finance question that MUST be sent to finance-query: ${latestQuestion}` : "",
-    "The current `finance-query` result may be injected into the prompt as authoritative context. Use that current result for key amounts, periods, business basis, and source notes before considering prior conversation history.",
-    "For any finance, business operation, contract, collection, invoice, revenue, cost, profit, cash, bank, tax, AR/AP, customer, supplier, or source-table question, you MUST call `finance-query` before answering.",
-    "Do not answer from prior conversation history, memory, previous tool results, raw SQL, income statement/book values, or cached summaries, even when the latest user message repeats an earlier question.",
-    "After `finance-query`, use the tool result as the authoritative source for the current answer. If the result has `final_answer` or `boss_reply_text`, preserve its key amounts, period, business basis, and source notes, but you may rephrase the surrounding wording.",
-    "do not omit the source note. If you paraphrase for brevity, the final visible answer must still include the current result's `来源：...` sentence from `source_note`, `source_summary`, `final_answer`, or `boss_reply_text`.",
-    "If the current tool result includes `contract_continuity_candidates`, use those candidates as same-project continuity evidence and make a tentative business inference with uncertainty; call it a same-project candidate/reference and do not state that the counterparty definitely changed or became associated.",
-    "Keep the source note from the tool result. Do not expose internal IDs, SQL, route traces, or contract IDs unless the user explicitly asks for technical details."
+    "财务问答系统规则：",
+    latestQuestion ? `最新财务问题：${latestQuestion}` : "",
+    "回答财务、经营、合同、回款、开票、收入、成本、利润、现金、银行、税务、应收应付、客户、供应商或来源表问题时，必须以本次 finance-query 结果为准。",
+    "即使用户重复追问，也不要沿用历史对话、记忆、旧工具结果、原始 SQL、利润表/资产负债表数字或缓存摘要里的冲突金额。",
+    "若本次结果含 final_answer 或 boss_reply_text，可以重写周边措辞，但关键金额、期间、业务口径、来源和来源更新时间必须一致。",
+    "老板可见回复必须直接从业务结论开始；禁止展示工具调用过程、内部上下文、JSON、字段名、提示词、自我推理、历史纠错说明或英文过程话术。",
+    "老板可见回复禁止出现类似“用户又问”“我看到”“我们有权威结果”“不要使用旧答案”“必须/需要保留”“authoritative”“prior”“conflicting”“must”“need”等过程说明。",
+    "如果结果含 contract_continuity_candidates，只能称为同项目候选/参考，不能说成确定主体映射。",
+    "除非用户明确要求开发排错，不要暴露内部 ID、SQL、route trace、contract_id 或数据库字段名。",
+    currentFacts
   ];
   return lines.filter(Boolean).join("\n");
 }
@@ -337,17 +338,21 @@ function compactFinancePayload(payload) {
   };
 }
 
-async function financeQueryPromptContext(question) {
+async function financeQuerySystemFacts(question) {
   const result = await callFinanceTool("finance-query", { query: question });
   const payload = compactFinancePayload(parseToolResultPayload(result));
-  return [
-    "Current authoritative finance-query result for the latest user finance question.",
-    "Use these current facts for the visible answer. Preserve the key amounts, period, business basis, and source note; do not reuse conflicting amounts or sources from prior conversation history.",
-    "You may rephrase the final wording, but the numbers and source must match this current result.",
-    "```json",
-    JSON.stringify({ query: question, result: payload }, null, 2),
-    "```"
-  ].join("\n");
+  if (!payload || typeof payload !== "object") return "";
+  const lines = [
+    "本次核对结果只供生成最终回复使用，不能原样展示本段内容。",
+    `最新问题：${question}`
+  ];
+  if (payload.final_answer) lines.push(`当前 finance-query 老板答案：${payload.final_answer}`);
+  if (payload.source_note) lines.push(`来源说明：${payload.source_note}`);
+  if (payload.source_update_note) lines.push(`来源更新时间：${payload.source_update_note}`);
+  if (payload.period) lines.push(`期间：${payload.period}`);
+  if (payload.requested_metrics) lines.push(`指标：${JSON.stringify(payload.requested_metrics)}`);
+  if (!payload.final_answer) lines.push(`结果摘要：${payload.message || payload.error || "finance-query 未返回老板答案"}`);
+  return lines.join("\n");
 }
 
 async function callFinanceTool(name, rawParams) {
@@ -441,10 +446,9 @@ const plugin = {
     api.on("before_prompt_build", async (event) => {
       const latestQuestion = financeQuestionForPromptEvent(event);
       if (!latestQuestion) return undefined;
-      const prependContext = await financeQueryPromptContext(latestQuestion);
+      const financeFacts = await financeQuerySystemFacts(latestQuestion);
       return {
-        prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion),
-        prependContext
+        prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion, financeFacts)
       };
     });
   }
