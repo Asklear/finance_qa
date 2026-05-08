@@ -11,7 +11,7 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 
 	from, to := ExtractPeriodWithNow(q, anchor)
 	isContractDetail := shouldUseContractDetailQuestion(q)
-	needsContractDimension := !isContractDetail && !shouldUseExpenseBreakdown(q) && shouldUseContractDimension(q)
+	needsContractDimension := !isContractDetail && !shouldUseExpenseBreakdownWithConfig(q, cfg) && shouldUseContractDimensionWithConfig(q, cfg)
 	if needsContractDimension {
 		from, to = extractContractQuestionPeriods(q, anchor)
 	}
@@ -20,7 +20,7 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 	if looksLikeBossRewriteNonEntity(entity) {
 		entity = ""
 	}
-	rewrite := RewriteBossQuery(q, anchor)
+	rewrite := RewriteBossQueryWithConfig(q, anchor, cfg)
 
 	spec := QuerySpec{
 		OriginalQuestion:       question,

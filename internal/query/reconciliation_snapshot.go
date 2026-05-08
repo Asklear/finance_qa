@@ -9,8 +9,9 @@ import (
 func (e *Engine) buildCounterpartySnapshot(name, from, to string) counterpartySnapshot {
 	snap := counterpartySnapshot{Name: name, Role: "unknown", EvidenceLevel: evidenceDerived}
 	evidence := e.collectCounterpartyEvidence(name, from, to)
-	classification := ClassifyCounterparty(name, evidence)
-	taxReport := NormalizeTax(name, evidence)
+	cfg := e.currentRuleConfig()
+	classification := ClassifyCounterpartyWithConfig(name, evidence, cfg)
+	taxReport := NormalizeTaxWithConfig(name, evidence, cfg)
 	snap.BankIn, snap.BankOut = summarizeCounterpartyCashEvidence(evidence)
 	support := make([]string, 0, 8)
 	for _, ev := range evidence {

@@ -28,11 +28,14 @@ const (
 )
 
 func shouldUseExpenseBreakdown(q string) bool {
+	return shouldUseExpenseBreakdownWithConfig(q, getRuleConfig())
+}
+
+func shouldUseExpenseBreakdownWithConfig(q string, cfg RuleConfig) bool {
 	q = strings.TrimSpace(q)
 	if q == "" {
 		return false
 	}
-	cfg := getRuleConfig()
 	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) || shouldUseHRBreakdown(q, cfg) {
 		return false
 	}
@@ -77,9 +80,10 @@ func (e *Engine) queryExpenseBreakdown(q, from, to string) Result {
 }
 
 func (e *Engine) queryContractFirstExpenseBreakdown(from, to string) Result {
+	cfg := e.currentRuleConfig()
 	contractRows, contractTotal, contractPaid, contractSQL, contractLogs := e.collectContractProjectExpenseBreakdown(from, to)
 	if len(contractRows) > 0 || contractTotal != 0 || contractPaid != 0 {
-		return buildContractProjectExpenseBreakdownResult(displayPeriod(from, to), from, to, contractRows, contractTotal, contractPaid, contractSQL, contractLogs, "")
+		return buildContractProjectExpenseBreakdownResult(displayPeriod(from, to), from, to, contractRows, contractTotal, contractPaid, contractSQL, contractLogs, "", cfg)
 	}
 
 	accountRows, accountTotal, accountSQL, accountLogs := e.collectAccountCategoryExpenseBreakdown(from, to)
@@ -88,31 +92,31 @@ func (e *Engine) queryContractFirstExpenseBreakdown(from, to string) Result {
 	logs := append([]string{}, contractLogs...)
 	logs = append(logs, accountLogs...)
 	if len(accountRows) > 0 || accountTotal != 0 {
-		return buildAccountExpenseBreakdownResult(displayPeriod(from, to), from, to, accountRows, accountTotal, sqls, logs, "说明：合同/项目口径没有可用记录，已回退到账务科目口径。")
+		return buildAccountExpenseBreakdownResult(displayPeriod(from, to), from, to, accountRows, accountTotal, sqls, logs, "说明：合同/项目口径没有可用记录，已回退到账务科目口径。", cfg)
 	}
 
 	cashRows, cashTotal, cashSQL, cashLogs := e.collectCashCategoryExpenseBreakdown(from, to)
 	sqls = append(sqls, cashSQL...)
 	logs = append(logs, cashLogs...)
 	if len(cashRows) > 0 || cashTotal != 0 {
-		return buildCashExpenseBreakdownResult(displayPeriod(from, to), from, to, cashRows, cashTotal, sqls, logs, "说明：合同/项目和账务科目口径没有可用记录，已回退到现金流水口径。")
+		return buildCashExpenseBreakdownResult(displayPeriod(from, to), from, to, cashRows, cashTotal, sqls, logs, "说明：合同/项目和账务科目口径没有可用记录，已回退到现金流水口径。", cfg)
 	}
-	return buildContractProjectExpenseBreakdownResult(displayPeriod(from, to), from, to, contractRows, contractTotal, contractPaid, sqls, logs, "说明：合同/项目、账务科目和现金流水口径均未找到可用支出记录。")
+	return buildContractProjectExpenseBreakdownResult(displayPeriod(from, to), from, to, contractRows, contractTotal, contractPaid, sqls, logs, "说明：合同/项目、账务科目和现金流水口径均未找到可用支出记录。", cfg)
 }
 
 func (e *Engine) queryCashExpenseBreakdown(from, to, fallbackNote string) Result {
 	rows, total, sqls, logs := e.collectCashCategoryExpenseBreakdown(from, to)
-	return buildCashExpenseBreakdownResult(displayPeriod(from, to), from, to, rows, total, sqls, logs, fallbackNote)
+	return buildCashExpenseBreakdownResult(displayPeriod(from, to), from, to, rows, total, sqls, logs, fallbackNote, e.currentRuleConfig())
 }
 
 func (e *Engine) queryAccountExpenseBreakdown(from, to, fallbackNote string) Result {
 	rows, total, sqls, logs := e.collectAccountCategoryExpenseBreakdown(from, to)
-	return buildAccountExpenseBreakdownResult(displayPeriod(from, to), from, to, rows, total, sqls, logs, fallbackNote)
+	return buildAccountExpenseBreakdownResult(displayPeriod(from, to), from, to, rows, total, sqls, logs, fallbackNote, e.currentRuleConfig())
 }
 
 func (e *Engine) queryExpenseBreakdownAllPerspectives(from, to string) Result {
 	periodLabel := displayPeriod(from, to)
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 	contractView := cfg.ExpenseBreakdownView("contract_project")
 	cashView := cfg.ExpenseBreakdownView("cash_category")
 	accountView := cfg.ExpenseBreakdownView("account_category")
@@ -168,8 +172,7 @@ func (e *Engine) queryExpenseBreakdownAllPerspectives(from, to string) Result {
 	}
 }
 
-func buildContractProjectExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total, paidTotal float64, sqls, logs []string, note string) Result {
-	cfg := getRuleConfig()
+func buildContractProjectExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total, paidTotal float64, sqls, logs []string, note string, cfg RuleConfig) Result {
 	contractView := cfg.ExpenseBreakdownView("contract_project")
 	return Result{
 		Success:      true,
@@ -197,8 +200,7 @@ func buildContractProjectExpenseBreakdownResult(periodLabel, from, to string, ro
 	}
 }
 
-func buildCashExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total float64, sqls, logs []string, note string) Result {
-	cfg := getRuleConfig()
+func buildCashExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total float64, sqls, logs []string, note string, cfg RuleConfig) Result {
 	cashView := cfg.ExpenseBreakdownView("cash_category")
 	return Result{
 		Success:      true,
@@ -224,8 +226,7 @@ func buildCashExpenseBreakdownResult(periodLabel, from, to string, rows []expens
 	}
 }
 
-func buildAccountExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total float64, sqls, logs []string, note string) Result {
-	cfg := getRuleConfig()
+func buildAccountExpenseBreakdownResult(periodLabel, from, to string, rows []expenseBreakdownRow, total float64, sqls, logs []string, note string, cfg RuleConfig) Result {
 	accountView := cfg.ExpenseBreakdownView("account_category")
 	return Result{
 		Success:      true,
@@ -393,6 +394,7 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 
 	byCategory := map[string]*expenseBreakdownRow{}
 	total := 0.0
+	cfg := e.currentRuleConfig()
 	for rows.Next() {
 		var accountCode, accountName, summary string
 		var amount float64
@@ -400,7 +402,7 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 			continue
 		}
 		amount = round2(amount)
-		category := classifyAccountExpenseCategory(accountCode, accountName, summary)
+		category := classifyAccountExpenseCategoryWithConfig(accountCode, accountName, summary, cfg)
 		row := byCategory[category]
 		if row == nil {
 			row = &expenseBreakdownRow{Category: category, AccountName: accountName}
@@ -417,7 +419,7 @@ WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
 }
 
 func (e *Engine) classifyCashExpenseCategory(counterparty, summary string) string {
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 	text := normalizeEntityText(counterparty + " " + summary)
 	for _, rule := range cfg.ExpenseBreakdownCashCategoryRules() {
 		if e.matchesCashExpenseCategory(rule, counterparty, text, cfg) {
@@ -428,8 +430,11 @@ func (e *Engine) classifyCashExpenseCategory(counterparty, summary string) strin
 }
 
 func classifyAccountExpenseCategory(accountCode, accountName, summary string) string {
+	return classifyAccountExpenseCategoryWithConfig(accountCode, accountName, summary, getRuleConfig())
+}
+
+func classifyAccountExpenseCategoryWithConfig(accountCode, accountName, summary string, cfg RuleConfig) string {
 	text := normalizeEntityText(accountCode + " " + accountName + " " + summary)
-	cfg := getRuleConfig()
 	for _, rule := range cfg.ExpenseBreakdownAccountCategoryRules() {
 		if matchesAccountExpenseCategory(rule, accountCode, text, cfg) {
 			return rule.Category

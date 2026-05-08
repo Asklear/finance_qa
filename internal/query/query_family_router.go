@@ -49,9 +49,9 @@ func resolveMetricDrivenQueryFamily(q, entity, from, to string, cfg RuleConfig, 
 	switch {
 	case isBossAggregateSummaryQuestion(q, entity, from, to, cfg):
 		return QueryFamilyCoreMetric, true
-	case isIntervalCoreMetricQuestion(q, entity, hasRealishEntity, from, to):
+	case isIntervalCoreMetricQuestionWithConfig(q, entity, hasRealishEntity, from, to, cfg):
 		return QueryFamilyCoreMetric, true
-	case shouldPreferCoreMetricSummary(q, entity, hasRealishEntity, from, to):
+	case shouldPreferCoreMetricSummaryWithConfig(q, entity, hasRealishEntity, from, to, cfg):
 		return QueryFamilyCoreMetric, true
 	case hasRealishEntity && containsAny(q, counterpartyMetricKeywords(cfg)):
 		return QueryFamilyCounterparty, true

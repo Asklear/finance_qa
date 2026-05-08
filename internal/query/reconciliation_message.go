@@ -24,7 +24,7 @@ func (e *Engine) composeBossReconciliationMessage(period string, book monthlyBoo
 		lines = append(lines, bridgeNarrative)
 		lines = append(lines, fmt.Sprintf("补充看现金分类：过滤后的经营性现金净额 %.2f 元，已识别非经营/混合现金净额 %.2f 元。", bridge.OperatingCashNet, bridge.ExcludedCashNet))
 	}
-	if residualNote := reconciliationResidualMessage(cash, bridge); residualNote != "" {
+	if residualNote := reconciliationResidualMessageWithConfig(cash, bridge, e.currentRuleConfig()); residualNote != "" {
 		lines = append(lines, residualNote)
 	}
 	if shouldAppendReconciliationHighlights(cash, bridge, highlights) {
@@ -72,18 +72,26 @@ func reconciliationResidualGap(cash *accounting.CashPerspective, bridge *analysi
 }
 
 func reconciliationResidualMessage(cash *accounting.CashPerspective, bridge *analysis.ProfitCashBridge) string {
+	return reconciliationResidualMessageWithConfig(cash, bridge, getRuleConfig())
+}
+
+func reconciliationResidualMessageWithConfig(cash *accounting.CashPerspective, bridge *analysis.ProfitCashBridge, cfg RuleConfig) string {
 	unresolved := reconciliationResidualGap(cash, bridge)
 	if unresolved == 0 {
 		return ""
 	}
-	if shouldEscalateReconciliationResidual(unresolved) {
+	if shouldEscalateReconciliationResidualWithConfig(unresolved, cfg) {
 		return fmt.Sprintf("当前这版利润调现金桥和银行卡净额还差 %.2f 元。当前只能先解释已识别部分，剩余 %.2f 元待核对，说明还有未归因的非经营/混合现金或科目口径差，下面的对手方例子只作辅助定位，不能直接当成完整对账结论。", unresolved, math.Abs(unresolved))
 	}
 	return fmt.Sprintf("当前这版利润调现金桥和银行卡净额还差 %.2f 元，说明还有未归因的非经营/混合现金或科目口径差，下面的对手方例子只作辅助定位。", unresolved)
 }
 
 func shouldEscalateReconciliationResidual(residual float64) bool {
-	threshold := getRuleConfig().ReconciliationResidualGapEscalationThreshold()
+	return shouldEscalateReconciliationResidualWithConfig(residual, getRuleConfig())
+}
+
+func shouldEscalateReconciliationResidualWithConfig(residual float64, cfg RuleConfig) bool {
+	threshold := cfg.ReconciliationResidualGapEscalationThreshold()
 	if threshold <= 0 {
 		return false
 	}

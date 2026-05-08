@@ -7,8 +7,18 @@ import (
 )
 
 func buildRuleConfig(rulesPath string, getenv func(string) string) RuleConfig {
+	return buildRuleConfigWithReader(rulesPath, getenv, os.ReadFile)
+}
+
+func buildRuleConfigWithReader(rulesPath string, getenv func(string) string, readFile func(string) ([]byte, error)) RuleConfig {
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
 	cfg := defaultRuleConfig()
-	mergeRuleConfigFromPath(&cfg, rulesPath)
+	mergeRuleConfigFromPathWithReader(&cfg, rulesPath, readFile)
 	mergeRuleConfigFromLookup(&cfg, getenv)
 	cfg.finalize()
 	return cfg
@@ -19,7 +29,11 @@ func mergeRuleConfigFromFile(cfg *RuleConfig) {
 }
 
 func mergeRuleConfigFromPath(cfg *RuleConfig, rulesPath string) {
-	raw, ok := readRuleConfigFile(strings.TrimSpace(rulesPath))
+	mergeRuleConfigFromPathWithReader(cfg, rulesPath, os.ReadFile)
+}
+
+func mergeRuleConfigFromPathWithReader(cfg *RuleConfig, rulesPath string, readFile func(string) ([]byte, error)) {
+	raw, ok := readRuleConfigFileWithReader(strings.TrimSpace(rulesPath), readFile)
 	if !ok {
 		return
 	}
@@ -30,10 +44,17 @@ func mergeRuleConfigFromPath(cfg *RuleConfig, rulesPath string) {
 }
 
 func readRuleConfigFile(path string) (ruleConfigFile, bool) {
+	return readRuleConfigFileWithReader(path, os.ReadFile)
+}
+
+func readRuleConfigFileWithReader(path string, readFile func(string) ([]byte, error)) (ruleConfigFile, bool) {
 	if strings.TrimSpace(path) == "" {
 		return ruleConfigFile{}, false
 	}
-	content, err := os.ReadFile(path)
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	content, err := readFile(path)
 	if err != nil {
 		return ruleConfigFile{}, false
 	}

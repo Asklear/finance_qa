@@ -36,7 +36,7 @@ ORDER BY period, item_name
 	}
 	defer rows.Close()
 
-	matchers := buildIncomeStatementValidationMatchers(getRuleConfig())
+	matchers := buildIncomeStatementValidationMatchers(e.currentRuleConfig())
 	accumulators := map[string]*cumulativeValidationAccumulator{}
 	for _, matcher := range matchers {
 		accumulators[matcher.key] = &cumulativeValidationAccumulator{}

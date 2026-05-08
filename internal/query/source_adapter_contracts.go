@@ -3,11 +3,11 @@ package query
 import "context"
 
 type ContractSourceAdapter struct {
-	engine *Engine
+	runtime ContractSourceRuntime
 }
 
-func NewContractSourceAdapter(engine *Engine) *ContractSourceAdapter {
-	return &ContractSourceAdapter{engine: engine}
+func NewContractSourceAdapter(runtime ContractSourceRuntime) *ContractSourceAdapter {
+	return &ContractSourceAdapter{runtime: runtime}
 }
 
 func (a *ContractSourceAdapter) Name() string {
@@ -20,15 +20,15 @@ func (a *ContractSourceAdapter) Capabilities() []SourceCapability {
 
 func (a *ContractSourceAdapter) Fetch(_ context.Context, spec QuerySpec) (FactSet, error) {
 	if spec.QueryFamily == QueryFamilyCoreMetric && spec.PreferContractAggregate {
-		summary, err := a.engine.collectContractAggregateSummary(spec)
+		summary, err := a.runtime.collectContractAggregateSummary(spec)
 		if err != nil {
-			return buildContractAggregateMissingFactSet(spec, err.Error()), nil
+			return buildContractAggregateMissingFactSetWithConfig(spec, err.Error(), a.runtime.currentRuleConfig()), nil
 		}
 		return buildContractAggregateFactSet(spec, summary), nil
 	}
-	summary, err := a.engine.collectContractDimensionSummaryForPeriod(spec.OriginalQuestion, spec.Entity, spec.PeriodFrom, spec.PeriodTo)
+	summary, err := a.runtime.collectContractDimensionSummaryForPeriod(spec.OriginalQuestion, spec.Entity, spec.PeriodFrom, spec.PeriodTo)
 	if err != nil && (spec.PeriodFrom == "" || spec.PeriodTo == "") {
-		summary, err = a.engine.collectContractDimensionSummary(spec.OriginalQuestion, spec.Entity, a.engine.getLatestContractPeriodAnchor())
+		summary, err = a.runtime.collectContractDimensionSummary(spec.OriginalQuestion, spec.Entity, a.runtime.getLatestContractPeriodAnchor())
 	}
 	if err != nil {
 		return FactSet{}, err

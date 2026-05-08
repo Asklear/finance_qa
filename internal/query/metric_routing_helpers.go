@@ -3,7 +3,10 @@ package query
 import "strings"
 
 func shouldForceDualPerspective(q string) bool {
-	cfg := getRuleConfig()
+	return shouldForceDualPerspectiveWithConfig(q, getRuleConfig())
+}
+
+func shouldForceDualPerspectiveWithConfig(q string, cfg RuleConfig) bool {
 	blockers := append([]string{"项目成本"}, cfg.intentKeywordGroup(routerGroupHRCost)...)
 	blockers = append(blockers, cfg.intentKeywordGroup(string(IntentARAPQuery))...)
 	blockers = append(blockers, cfg.intentKeywordGroup(string(IntentTaxQuery))...)
@@ -14,10 +17,14 @@ func shouldForceDualPerspective(q string) bool {
 }
 
 func shouldPreferCoreMetricSummary(q, entity string, hasRealEntity bool, from, to string) bool {
+	return shouldPreferCoreMetricSummaryWithConfig(q, entity, hasRealEntity, from, to, getRuleConfig())
+}
+
+func shouldPreferCoreMetricSummaryWithConfig(q, entity string, hasRealEntity bool, from, to string, cfg RuleConfig) bool {
 	if shouldUseReconciliation(q) {
 		return false
 	}
-	if !shouldForceDualPerspective(q) {
+	if !shouldForceDualPerspectiveWithConfig(q, cfg) {
 		return false
 	}
 	if !hasRealEntity {
@@ -26,13 +33,17 @@ func shouldPreferCoreMetricSummary(q, entity string, hasRealEntity bool, from, t
 	if from == to {
 		return false
 	}
-	if isGenericMetricEntity(entity) || looksLikeTemporalMetricEntity(entity) {
+	if isGenericMetricEntityWithConfig(entity, cfg) || looksLikeTemporalMetricEntity(entity) {
 		return true
 	}
 	return false
 }
 
 func isIntervalCoreMetricQuestion(q, entity string, hasRealEntity bool, from, to string) bool {
+	return isIntervalCoreMetricQuestionWithConfig(q, entity, hasRealEntity, from, to, getRuleConfig())
+}
+
+func isIntervalCoreMetricQuestionWithConfig(q, entity string, hasRealEntity bool, from, to string, cfg RuleConfig) bool {
 	if shouldUseReconciliation(q) {
 		return false
 	}
@@ -42,17 +53,20 @@ func isIntervalCoreMetricQuestion(q, entity string, hasRealEntity bool, from, to
 	if hasRealEntity {
 		return false
 	}
-	if strings.TrimSpace(entity) != "" && !isGenericMetricEntity(entity) && !looksLikeTemporalMetricEntity(entity) {
+	if strings.TrimSpace(entity) != "" && !isGenericMetricEntityWithConfig(entity, cfg) && !looksLikeTemporalMetricEntity(entity) {
 		return false
 	}
-	if !containsAny(q, metricQuestionKeywords(getRuleConfig())) {
+	if !containsAny(q, metricQuestionKeywords(cfg)) {
 		return false
 	}
 	return containsAny(q, []string{"季度", "q1", "q2", "q3", "q4", "Q1", "Q2", "Q3", "Q4", "上半年", "下半年", "全年", "全年度", "整年", "年度", "累计", "年内"})
 }
 
 func shouldUseSingleAccrualCoreMetrics(q string) bool {
-	cfg := getRuleConfig()
+	return shouldUseSingleAccrualCoreMetricsWithConfig(q, getRuleConfig())
+}
+
+func shouldUseSingleAccrualCoreMetricsWithConfig(q string, cfg RuleConfig) bool {
 	if shouldUseReconciliation(q) || containsAny(q, cfg.ProfitSingleViewBlockKeywords()) {
 		return false
 	}
@@ -73,7 +87,11 @@ func shouldUseSupplierPaymentStats(q string) bool {
 }
 
 func isCounterpartyClassificationQuestion(q string) bool {
-	return containsAny(q, getRuleConfig().CounterpartyClassificationQuestionKeywords())
+	return isCounterpartyClassificationQuestionWithConfig(q, getRuleConfig())
+}
+
+func isCounterpartyClassificationQuestionWithConfig(q string, cfg RuleConfig) bool {
+	return containsAny(q, cfg.CounterpartyClassificationQuestionKeywords())
 }
 
 func shouldBypassDualPerspective(q, entity string) bool {

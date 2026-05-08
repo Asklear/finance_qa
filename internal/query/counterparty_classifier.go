@@ -45,7 +45,10 @@ type CounterpartyClassification struct {
 // ClassifyCounterparty 基于分录证据识别交易对手角色。
 // 规则会综合流水方向、科目、摘要、税种关键词，不会只看净流向。
 func ClassifyCounterparty(counterparty string, evidence []LedgerEvidence) CounterpartyClassification {
-	cfg := getRuleConfig()
+	return ClassifyCounterpartyWithConfig(counterparty, evidence, getRuleConfig())
+}
+
+func ClassifyCounterpartyWithConfig(counterparty string, evidence []LedgerEvidence, cfg RuleConfig) CounterpartyClassification {
 	customerKeywords := cfg.CounterpartyRoleKeywords(CounterpartyCustomer)
 	supplierKeywords := cfg.CounterpartyRoleKeywords(CounterpartySupplier)
 	employeeKeywords := cfg.CounterpartyRoleKeywords(CounterpartyEmployee)

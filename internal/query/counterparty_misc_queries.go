@@ -52,7 +52,7 @@ func (e *Engine) detectEntityRole(name string) (role string, log string) {
 	endDate := monthEndDay(e.getLatestPeriodAnchor().Format("2006-01"))
 	startDate := "2000-01-01"
 	evidence := e.collectCounterpartyEvidence(name, startDate[:7], endDate[:7])
-	classification := ClassifyCounterparty(name, evidence)
+	classification := ClassifyCounterpartyWithConfig(name, evidence, e.currentRuleConfig())
 	if classification.Role == CounterpartyUnknown {
 		return "unknown", "unknown"
 	}

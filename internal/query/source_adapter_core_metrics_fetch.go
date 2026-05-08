@@ -3,13 +3,14 @@ package query
 import "fmt"
 
 func (a *CoreMetricsSourceAdapter) fetchFactSet(spec QuerySpec) (FactSet, error) {
-	request := resolveCoreMetricRequest(spec.OriginalQuestion, metricDisplayName(string(spec.MetricKind)))
-	coverage := a.engine.resolveCoreMetricCoverageForRequest(spec.PeriodFrom, spec.PeriodTo, request)
+	cfg := a.runtime.currentRuleConfig()
+	request := resolveCoreMetricRequestWithConfig(spec.OriginalQuestion, metricDisplayName(string(spec.MetricKind)), cfg)
+	coverage := a.runtime.resolveCoreMetricCoverageForRequest(spec.PeriodFrom, spec.PeriodTo, request)
 	if !coverage.HasData {
 		return buildCoreMetricsMissingFactSet(spec, coverage), nil
 	}
 
-	unified, sqls, logs, err := a.engine.computeUnifiedCoreMetrics(coverage.ActualFrom, coverage.ActualTo)
+	unified, sqls, logs, err := a.runtime.computeUnifiedCoreMetrics(coverage.ActualFrom, coverage.ActualTo)
 	if err != nil {
 		return FactSet{}, err
 	}

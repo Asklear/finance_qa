@@ -17,7 +17,7 @@ func (e *Engine) monthlyBookSummary(year, month int) (monthlyBookView, string, e
 	hasTotalProfit := false
 	hasNetProfit := false
 	hasIncomeTax := false
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 	rows, err := e.db.Query(`
 SELECT item_name, current_amount
 FROM income_statement

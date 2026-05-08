@@ -38,7 +38,7 @@ func shouldUseStrictContractSourceForSpec(spec QuerySpec) bool {
 
 func buildStrictContractMissingResult(ctx queryExecutionContext, failure Result) Result {
 	reason := strings.TrimSpace(failure.Message)
-	result := buildStrictContractMissingResultForSpec(ctx.spec, reason, nil, failure.ExecutedSQL, failure.CalculationLogs)
+	result := buildStrictContractMissingResultForSpecWithConfig(ctx.spec, reason, nil, failure.ExecutedSQL, failure.CalculationLogs, ctx.cfg)
 	if ctx.engine != nil {
 		result = ctx.engine.enrichStrictContractMissingWithContinuityCandidates(ctx.spec, result)
 	}
@@ -46,12 +46,16 @@ func buildStrictContractMissingResult(ctx queryExecutionContext, failure Result)
 }
 
 func buildStrictContractMissingResultForSpec(spec QuerySpec, reason string, sourceTables []string, executedSQL, calculationLogs []string) Result {
+	return buildStrictContractMissingResultForSpecWithConfig(spec, reason, sourceTables, executedSQL, calculationLogs, getRuleConfig())
+}
+
+func buildStrictContractMissingResultForSpecWithConfig(spec QuerySpec, reason string, sourceTables []string, executedSQL, calculationLogs []string, cfg RuleConfig) Result {
 	rawReason := strings.TrimSpace(reason)
 	reason = normalizeStrictContractMissingReason(rawReason)
 	if reason == "" {
 		reason = "合同/项目台账在请求期间没有足够记录"
 	}
-	tables := contractStrictSourceTablesForSpec(spec, sourceTables)
+	tables := contractStrictSourceTablesForSpecWithConfig(spec, sourceTables, cfg)
 	period := displayPeriod(spec.PeriodFrom, spec.PeriodTo)
 	if strings.TrimSpace(period) == "" {
 		period = "请求期间"
@@ -80,7 +84,7 @@ func buildStrictContractMissingResultForSpec(spec QuerySpec, reason string, sour
 			"source_priority":          "contract_strict",
 			"source_tables":            tables,
 			"source_primary_tables":    tables,
-			"requested_metrics":        detectRequestedMetrics(spec.OriginalQuestion),
+			"requested_metrics":        detectRequestedMetricsWithConfig(spec.OriginalQuestion, cfg),
 			"period":                   period,
 			"period_from":              spec.PeriodFrom,
 			"period_to":                spec.PeriodTo,
@@ -92,6 +96,10 @@ func buildStrictContractMissingResultForSpec(spec QuerySpec, reason string, sour
 }
 
 func contractStrictSourceTablesForSpec(spec QuerySpec, sourceTables []string) []string {
+	return contractStrictSourceTablesForSpecWithConfig(spec, sourceTables, getRuleConfig())
+}
+
+func contractStrictSourceTablesForSpecWithConfig(spec QuerySpec, sourceTables []string, cfg RuleConfig) []string {
 	if len(sourceTables) > 0 {
 		return dedupeSourceTables(sourceTables...)
 	}
@@ -104,12 +112,12 @@ func contractStrictSourceTablesForSpec(spec QuerySpec, sourceTables []string) []
 		}
 	}
 	if inferContractAskedTopic(spec.OriginalQuestion) == "content" {
-		return contractSourceTablesForRole("contract_content")
+		return contractSourceTablesForRoleWithConfig("contract_content", cfg)
 	}
-	if tables := contractAggregateSourceTablesForMetrics(detectRequestedMetrics(spec.OriginalQuestion)); len(tables) > 0 {
+	if tables := contractAggregateSourceTablesForMetricsWithConfig(detectRequestedMetricsWithConfig(spec.OriginalQuestion, cfg), cfg); len(tables) > 0 {
 		return tables
 	}
-	return getRuleConfig().ContractSourceTables(contractAggregateRole)
+	return cfg.ContractSourceTables(contractAggregateRole)
 }
 
 func normalizeStrictContractMissingReason(reason string) string {

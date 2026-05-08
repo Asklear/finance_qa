@@ -16,17 +16,17 @@ func NewSourceRegistry() *SourceRegistry {
 	return &SourceRegistry{adapters: make([]SourceAdapter, 0, 8)}
 }
 
-func NewDefaultSourceRegistry(engine *Engine) *SourceRegistry {
+func NewDefaultSourceRegistry(runtime DefaultSourceRuntime) *SourceRegistry {
 	registry := NewSourceRegistry()
-	if engine == nil {
+	if runtime == nil {
 		return registry
 	}
-	registry.Register(NewContractDetailSourceAdapter(engine))
-	registry.Register(NewContractSourceAdapter(engine))
-	registry.Register(NewCoreMetricsSourceAdapter(engine))
-	registry.Register(NewARAPSourceAdapter(engine))
-	registry.Register(NewReadinessSourceAdapter(engine))
-	registry.Register(NewSupplierPaymentSourceAdapter(engine))
+	registry.Register(NewContractDetailSourceAdapter(runtime))
+	registry.Register(NewContractSourceAdapter(runtime))
+	registry.Register(NewCoreMetricsSourceAdapter(runtime))
+	registry.Register(NewARAPSourceAdapter(runtime))
+	registry.Register(NewReadinessSourceAdapter(runtime))
+	registry.Register(NewSupplierPaymentSourceAdapter(runtime))
 	return registry
 }
 

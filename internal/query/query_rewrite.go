@@ -75,6 +75,10 @@ type BossQueryRewrite struct {
 }
 
 func RewriteBossQuery(question string, anchor time.Time) BossQueryRewrite {
+	return RewriteBossQueryWithConfig(question, anchor, getRuleConfig())
+}
+
+func RewriteBossQueryWithConfig(question string, anchor time.Time, cfg RuleConfig) BossQueryRewrite {
 	q := NormalizeQuestion(question)
 	from, to := ExtractPeriodWithNow(q, anchor)
 	subPeriod, hasSubPeriod := extractReceiptSubPeriod(q, from, to)
@@ -82,9 +86,9 @@ func RewriteBossQuery(question string, anchor time.Time) BossQueryRewrite {
 	if looksLikeBossRewriteNonEntity(entity) {
 		entity = ""
 	}
-	metric := detectBossMetric(q)
+	metric := detectBossMetricWithConfig(q, cfg)
 	perspective, sourceConstraint := detectBossPerspectiveAndSource(q, metric)
-	scope := detectBossScope(q, entity)
+	scope := detectBossScopeWithConfig(q, entity, cfg)
 	granularity := detectBossGranularity(q, metric, hasSubPeriod)
 
 	return BossQueryRewrite{
@@ -102,7 +106,10 @@ func RewriteBossQuery(question string, anchor time.Time) BossQueryRewrite {
 }
 
 func detectBossMetric(q string) BossMetric {
-	cfg := getRuleConfig()
+	return detectBossMetricWithConfig(q, getRuleConfig())
+}
+
+func detectBossMetricWithConfig(q string, cfg RuleConfig) BossMetric {
 	switch {
 	case shouldUsePreciseBalanceQuestion(q):
 		return BossMetricUnknown
@@ -171,10 +178,14 @@ func shouldUseExplicitFinancialAccountQuestion(q string) bool {
 }
 
 func detectBossScope(q, entity string) BossScope {
-	if shouldUseExpenseBreakdown(q) {
+	return detectBossScopeWithConfig(q, entity, getRuleConfig())
+}
+
+func detectBossScopeWithConfig(q, entity string, cfg RuleConfig) BossScope {
+	if shouldUseExpenseBreakdownWithConfig(q, cfg) {
 		return BossScopeCompany
 	}
-	if shouldUseCompanyScopeContractAggregate(q) {
+	if shouldUseCompanyScopeContractAggregateWithConfig(q, cfg) {
 		return BossScopeCompany
 	}
 	if strings.Contains(q, "合同") || (strings.Contains(q, "项目") && strings.TrimSpace(entity) != "") {

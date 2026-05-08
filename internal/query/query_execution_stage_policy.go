@@ -32,7 +32,7 @@ func (b *executionStagePlanBuilder) stagesOrEmpty() []executionStage {
 
 func resolveOperationalExecutionStages(ctx queryExecutionContext) []executionStage {
 	stages := make([]executionStage, 0, 2)
-	if shouldUseExpenseBreakdown(ctx.q) {
+	if shouldUseExpenseBreakdownWithConfig(ctx.q, ctx.cfg) {
 		stages = append(stages, executionStageExpenseBreakdown)
 	}
 	if ctx.spec.QueryFamily == QueryFamilyHRCost || shouldUseHRBreakdown(ctx.q, ctx.cfg) {
@@ -81,14 +81,14 @@ func shouldUseDirectPreciseBalance(ctx queryExecutionContext) bool {
 
 func resolveLegacySourceFallbackStages(ctx queryExecutionContext) []executionStage {
 	builder := newExecutionStagePlanBuilder(4)
-	if ctx.spec.NeedsContractDimension || ctx.spec.QueryFamily == QueryFamilyContractDimension || shouldUseContractDimension(ctx.q) {
+	if ctx.spec.NeedsContractDimension || ctx.spec.QueryFamily == QueryFamilyContractDimension || shouldUseContractDimensionWithConfig(ctx.q, ctx.cfg) {
 		builder.add(executionStageDirectContractDimension)
 	}
 	if ctx.spec.QueryFamily == QueryFamilyReconciliation || shouldUseReconciliation(ctx.q) {
 		builder.add(executionStageDirectReconciliation)
 	}
-	if isIntervalCoreMetricQuestion(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to) ||
-		shouldPreferCoreMetricSummary(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to) {
+	if isIntervalCoreMetricQuestionWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg) ||
+		shouldPreferCoreMetricSummaryWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg) {
 		builder.add(executionStageDirectCoreMetricRange)
 	}
 	if ctx.spec.QueryFamily == QueryFamilySupplierPayments || shouldUseSupplierPaymentStats(ctx.q) {
@@ -102,7 +102,7 @@ func resolveCounterpartyExecutionStages(ctx queryExecutionContext) []executionSt
 		return nil
 	}
 	builder := newExecutionStagePlanBuilder(2)
-	if ctx.hasRealEntity && isCounterpartyClassificationQuestion(ctx.q) {
+	if ctx.hasRealEntity && isCounterpartyClassificationQuestionWithConfig(ctx.q, ctx.cfg) {
 		builder.add(executionStageCounterpartyClassification)
 	}
 	if ctx.engine != nil && ctx.engine.shouldUseCounterpartyAuditFallback(ctx) {

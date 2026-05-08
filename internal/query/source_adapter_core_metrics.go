@@ -5,11 +5,11 @@ import (
 )
 
 type CoreMetricsSourceAdapter struct {
-	engine *Engine
+	runtime CoreMetricsSourceRuntime
 }
 
-func NewCoreMetricsSourceAdapter(engine *Engine) *CoreMetricsSourceAdapter {
-	return &CoreMetricsSourceAdapter{engine: engine}
+func NewCoreMetricsSourceAdapter(runtime CoreMetricsSourceRuntime) *CoreMetricsSourceAdapter {
+	return &CoreMetricsSourceAdapter{runtime: runtime}
 }
 
 func (a *CoreMetricsSourceAdapter) Name() string {

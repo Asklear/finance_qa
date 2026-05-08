@@ -8,10 +8,10 @@ func (e *Engine) queryFallback(q, from, to, err string) Result {
 }
 
 func (e *Engine) ruleFallback(q, from, to string) Result {
-	if shouldUseExpenseBreakdown(q) {
+	cfg := e.currentRuleConfig()
+	if shouldUseExpenseBreakdownWithConfig(q, cfg) {
 		return e.queryExpenseBreakdown(q, from, to)
 	}
-	cfg := getRuleConfig()
 	entity := e.extractNamedEntity(q)
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
 	switch resolveFallbackRoute(fallbackRouteContext{

@@ -87,14 +87,18 @@ func buildContractAggregateFactSet(spec QuerySpec, summary contractAggregateSumm
 }
 
 func buildContractAggregateMissingFactSet(spec QuerySpec, reason string) FactSet {
+	return buildContractAggregateMissingFactSetWithConfig(spec, reason, getRuleConfig())
+}
+
+func buildContractAggregateMissingFactSetWithConfig(spec QuerySpec, reason string, cfg RuleConfig) FactSet {
 	if strings.TrimSpace(reason) == "" {
 		reason = "合同/项目汇总表暂不可用"
 	}
 	tracePayload := map[string]any{
-		"requested_metrics": detectRequestedMetrics(spec.OriginalQuestion),
+		"requested_metrics": detectRequestedMetricsWithConfig(spec.OriginalQuestion, cfg),
 		"can_answer":        false,
 		"fallback_reason":   reason,
-		"source_tables":     getRuleConfig().ContractSourceTables(contractAggregateRole),
+		"source_tables":     cfg.ContractSourceTables(contractAggregateRole),
 	}
 	return FactSet{
 		Source: "contract_aggregate",

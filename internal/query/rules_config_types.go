@@ -1,7 +1,5 @@
 package query
 
-import "sync"
-
 const (
 	routerGroupHRCost      = "hr_cost"
 	routerGroupHealth      = "health"
@@ -13,12 +11,6 @@ const (
 	metricKeyCost          = "cost"
 	metricKeyProfit        = "profit"
 	contractRoleDefault    = "default"
-)
-
-var (
-	ruleConfigCacheMu   sync.RWMutex
-	ruleConfigCacheKey  string
-	ruleConfigCacheData RuleConfig
 )
 
 // RuleConfig 定义查询层可调规则（默认值 + 外部覆盖）。

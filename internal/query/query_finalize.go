@@ -149,7 +149,7 @@ func finalizeQueryResult(ctx queryExecutionContext, r Result) Result {
 	if ctx.engine != nil {
 		r = ctx.engine.annotateSourceAttribution(ctx.spec, r)
 	}
-	return r.withTraceData()
+	return r.WithTraceData()
 }
 
 func (ctx queryExecutionContext) finalize(r Result) Result {

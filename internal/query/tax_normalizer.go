@@ -37,25 +37,34 @@ type TaxNormalizationReport struct {
 
 // NormalizeTax 会同时产出销项和进项口径，便于主线程在 engine 层复用。
 func NormalizeTax(counterparty string, evidence []LedgerEvidence) TaxNormalizationReport {
-	classification := ClassifyCounterparty(counterparty, evidence)
+	return NormalizeTaxWithConfig(counterparty, evidence, getRuleConfig())
+}
+
+func NormalizeTaxWithConfig(counterparty string, evidence []LedgerEvidence, cfg RuleConfig) TaxNormalizationReport {
+	classification := ClassifyCounterpartyWithConfig(counterparty, evidence, cfg)
 	return TaxNormalizationReport{
 		Counterparty: counterparty,
 		Role:         classification.Role,
-		Output:       normalizeTaxSide(TaxSideOutput, counterparty, classification.Role, evidence),
-		Input:        normalizeTaxSide(TaxSideInput, counterparty, classification.Role, evidence),
+		Output:       normalizeTaxSideWithConfig(TaxSideOutput, counterparty, classification.Role, evidence, cfg),
+		Input:        normalizeTaxSideWithConfig(TaxSideInput, counterparty, classification.Role, evidence, cfg),
 	}
 }
 
 func NormalizeOutputTax(counterparty string, evidence []LedgerEvidence) TaxBreakdown {
-	return normalizeTaxSide(TaxSideOutput, counterparty, ClassifyCounterparty(counterparty, evidence).Role, evidence)
+	cfg := getRuleConfig()
+	return normalizeTaxSideWithConfig(TaxSideOutput, counterparty, ClassifyCounterpartyWithConfig(counterparty, evidence, cfg).Role, evidence, cfg)
 }
 
 func NormalizeInputTax(counterparty string, evidence []LedgerEvidence) TaxBreakdown {
-	return normalizeTaxSide(TaxSideInput, counterparty, ClassifyCounterparty(counterparty, evidence).Role, evidence)
+	cfg := getRuleConfig()
+	return normalizeTaxSideWithConfig(TaxSideInput, counterparty, ClassifyCounterpartyWithConfig(counterparty, evidence, cfg).Role, evidence, cfg)
 }
 
 func normalizeTaxSide(side TaxSide, counterparty string, role CounterpartyRole, evidence []LedgerEvidence) TaxBreakdown {
-	cfg := getRuleConfig()
+	return normalizeTaxSideWithConfig(side, counterparty, role, evidence, getRuleConfig())
+}
+
+func normalizeTaxSideWithConfig(side TaxSide, counterparty string, role CounterpartyRole, evidence []LedgerEvidence, cfg RuleConfig) TaxBreakdown {
 	var cashIn, cashOut, accrual, tax float64
 	signals := make([]string, 0, len(evidence)*2)
 

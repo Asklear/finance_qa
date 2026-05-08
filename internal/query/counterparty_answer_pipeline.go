@@ -4,8 +4,12 @@ type counterpartyAnswerHandler func(*Engine, counterpartyAuditContext) (Result, 
 
 func defaultCounterpartyAnswerHandlers() []counterpartyAnswerHandler {
 	return []counterpartyAnswerHandler{
-		func(_ *Engine, ctx counterpartyAuditContext) (Result, bool) {
-			if !containsAny(ctx.q, getRuleConfig().CounterpartyClassificationQuestionKeywords()) {
+		func(e *Engine, ctx counterpartyAuditContext) (Result, bool) {
+			cfg := getRuleConfig()
+			if e != nil {
+				cfg = e.currentRuleConfig()
+			}
+			if !containsAny(ctx.q, cfg.CounterpartyClassificationQuestionKeywords()) {
 				return Result{}, false
 			}
 			return tryCounterpartyClassificationAnswer(ctx)

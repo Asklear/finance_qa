@@ -23,7 +23,7 @@ func (e *Engine) queryHRBreakdown(from, to string) Result {
 	start := from + "-01"
 	end := monthEndDay(to)
 	periodLabel := displayPeriod(from, to)
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 
 	accountSQL := buildHRAccountingQuery(cfg)
 	cashSQL := buildHRCashQuery(cfg, false)

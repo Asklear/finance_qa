@@ -97,7 +97,7 @@ func (e *Engine) HostLLMPayload(from, to, question string) Result {
 			to = anchor
 		}
 	}
-	return e.queryHostLLMPayload(question, from, to).withTraceData()
+	return e.queryHostLLMPayload(question, from, to).WithTraceData()
 }
 
 func (e *Engine) buildHostLLMPayload(from, to, question string) map[string]any {

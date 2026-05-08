@@ -6,11 +6,11 @@ import (
 )
 
 type ARAPSourceAdapter struct {
-	engine *Engine
+	runtime ARAPSourceRuntime
 }
 
-func NewARAPSourceAdapter(engine *Engine) *ARAPSourceAdapter {
-	return &ARAPSourceAdapter{engine: engine}
+func NewARAPSourceAdapter(runtime ARAPSourceRuntime) *ARAPSourceAdapter {
+	return &ARAPSourceAdapter{runtime: runtime}
 }
 
 func (a *ARAPSourceAdapter) Name() string {
@@ -35,7 +35,7 @@ func (a *ARAPSourceAdapter) Fetch(_ context.Context, spec QuerySpec) (FactSet, e
 	scopes := detectARAPScopes(spec)
 	facts := make([]Fact, 0, len(scopes)*6)
 	for _, scope := range scopes {
-		result := a.engine.queryAccountPayableReceivable(spec.PeriodTo, scope.accountName, scope.codePrefix, scope.typ, spec.Entity)
+		result := a.runtime.queryAccountPayableReceivable(spec.PeriodTo, scope.accountName, scope.codePrefix, scope.typ, spec.Entity)
 		if result.Success {
 			official := result.Data["source"] == "balance_sheet"
 			facts = append(facts, buildARAPFactsFromResult(spec, scope, result, official)...)

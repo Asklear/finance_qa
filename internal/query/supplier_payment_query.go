@@ -40,7 +40,7 @@ func (e *Engine) querySupplierPayments(from, to string) Result {
 }
 
 func (e *Engine) shouldIncludeSupplierPaymentCounterparty(name string, classification CounterpartyClassification) (bool, string) {
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 	switch {
 	case looksLikeSupplierPaymentExcludedName(name, cfg):
 		return false, "non_counterparty_flow"

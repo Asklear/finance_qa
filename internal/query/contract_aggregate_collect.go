@@ -48,6 +48,7 @@ type contractAggregateOpenItem struct {
 }
 
 func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggregateSummary, error) {
+	cfg := e.currentRuleConfig()
 	entity := strings.TrimSpace(spec.Entity)
 	if entity != "" || !shouldUseCompanyScopeContractAggregate(spec.OriginalQuestion) {
 		if resolved := e.resolveContractSubject(spec.OriginalQuestion, entity); resolved != "" {
@@ -62,7 +63,7 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 		entityLike = "%" + entity + "%"
 	}
 
-	requestedMetrics := detectRequestedMetrics(spec.OriginalQuestion)
+	requestedMetrics := detectRequestedMetricsWithConfig(spec.OriginalQuestion, cfg)
 	needRevenue := contractAggregateNeedsRevenueData(requestedMetrics)
 	needCost := contractAggregateNeedsCostData(requestedMetrics)
 
@@ -73,7 +74,7 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 		PeriodFrom:       spec.PeriodFrom,
 		PeriodTo:         spec.PeriodTo,
 		RequestedMetrics: requestedMetrics,
-		SourceTables:     contractAggregateSourceTablesForMetrics(requestedMetrics),
+		SourceTables:     contractAggregateSourceTablesForMetricsWithConfig(requestedMetrics, cfg),
 	}
 
 	if needRevenue {
@@ -382,7 +383,11 @@ ORDER BY 5 DESC, customer_name, contract_content`
 }
 
 func contractAggregateSourceTablesForMetrics(requestedMetrics []string) []string {
-	configured := getRuleConfig().ContractSourceTables(contractAggregateRole)
+	return contractAggregateSourceTablesForMetricsWithConfig(requestedMetrics, getRuleConfig())
+}
+
+func contractAggregateSourceTablesForMetricsWithConfig(requestedMetrics []string, cfg RuleConfig) []string {
+	configured := cfg.ContractSourceTables(contractAggregateRole)
 	tables := []string{"fin_contracts"}
 	if contractAggregateNeedsRevenueData(requestedMetrics) {
 		tables = append(tables, "fin_fund_income", "fin_fund_income_groups", "fin_fund_income_group_members")

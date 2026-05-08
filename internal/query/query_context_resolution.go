@@ -51,10 +51,11 @@ func (e *Engine) resolveQueryEntity(q string, spec QuerySpec) string {
 }
 
 func (e *Engine) applyQueryPriorityAdjustments(q string, intent Intent, spec QuerySpec, entity string, hasRealEntity bool, anchor time.Time) (QuerySpec, string, bool, time.Time) {
-	if intent == IntentIdentityQuery || isCounterpartyClassificationQuestion(q) {
+	cfg := e.currentRuleConfig()
+	if intent == IntentIdentityQuery || isCounterpartyClassificationQuestionWithConfig(q, cfg) {
 		return spec, entity, hasRealEntity, anchor
 	}
-	if shouldUseExpenseBreakdown(q) {
+	if shouldUseExpenseBreakdownWithConfig(q, cfg) {
 		return spec, entity, hasRealEntity, anchor
 	}
 	if spec.QueryFamily == QueryFamilyContractDetail {
@@ -98,11 +99,11 @@ func normalizeExplicitCashCompanyRoute(q string, spec QuerySpec, entity string, 
 
 func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 	q := e.normalizeQuestionAndResolveCompany(question)
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 	anchor := e.getLatestPeriodAnchor()
 
-	intent, intentTrace := ClassifyIntentV2(q)
-	spec := BuildQuerySpec(q, anchor)
+	intent, intentTrace := classifyIntentV2(q, cfg)
+	spec := buildQuerySpec(q, anchor, cfg)
 	entity := e.resolveQueryEntity(q, spec)
 	spec = reconcileQuerySpec(spec, entity, cfg)
 	spec = e.applyLegacyContractContentFallback(q, spec)

@@ -7,7 +7,14 @@ func isGenericMetricEntity(entity string) bool {
 	if key == "" {
 		return true
 	}
-	cfg := getRuleConfig()
+	return isGenericMetricEntityWithConfig(entity, getRuleConfig())
+}
+
+func isGenericMetricEntityWithConfig(entity string, cfg RuleConfig) bool {
+	key := normalizeEntityText(entity)
+	if key == "" {
+		return true
+	}
 	for _, s := range cfg.GenericMetricStopwords {
 		if normalizeEntityText(s) == key {
 			return true
@@ -17,8 +24,11 @@ func isGenericMetricEntity(entity string) bool {
 }
 
 func detectRequestedMetrics(q string) []string {
+	return detectRequestedMetricsWithConfig(q, getRuleConfig())
+}
+
+func detectRequestedMetricsWithConfig(q string, cfg RuleConfig) []string {
 	metrics := make([]string, 0, 3)
-	cfg := getRuleConfig()
 	if side := detectContractARAPMetric(q); side != "" {
 		return []string{side}
 	}
@@ -35,7 +45,7 @@ func detectRequestedMetrics(q string) []string {
 		if containsAny(q, cfg.IntentKeywords(IntentMonthlySummary)) {
 			return []string{"收入", "成本", "利润"}
 		}
-		metrics = append(metrics, detectCoreMetric(q))
+		metrics = append(metrics, detectCoreMetricWithConfig(q, cfg))
 	}
 	return metrics
 }
@@ -68,10 +78,14 @@ func looksLikeSupplierInvoiceUnpaidQuestion(q string) bool {
 }
 
 func detectCoreMetric(q string) string {
+	return detectCoreMetricWithConfig(q, getRuleConfig())
+}
+
+func detectCoreMetricWithConfig(q string, cfg RuleConfig) string {
 	switch {
-	case containsAny(q, getRuleConfig().MetricKeywords(metricKeyProfit)):
+	case containsAny(q, cfg.MetricKeywords(metricKeyProfit)):
 		return "利润"
-	case containsAny(q, getRuleConfig().MetricKeywords(metricKeyCost)):
+	case containsAny(q, cfg.MetricKeywords(metricKeyCost)):
 		return "成本"
 	default:
 		return "收入"

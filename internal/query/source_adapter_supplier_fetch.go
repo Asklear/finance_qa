@@ -3,11 +3,11 @@ package query
 import "context"
 
 type SupplierPaymentSourceAdapter struct {
-	engine *Engine
+	runtime SupplierPaymentSourceRuntime
 }
 
-func NewSupplierPaymentSourceAdapter(engine *Engine) *SupplierPaymentSourceAdapter {
-	return &SupplierPaymentSourceAdapter{engine: engine}
+func NewSupplierPaymentSourceAdapter(runtime SupplierPaymentSourceRuntime) *SupplierPaymentSourceAdapter {
+	return &SupplierPaymentSourceAdapter{runtime: runtime}
 }
 
 func (a *SupplierPaymentSourceAdapter) Name() string {
@@ -19,7 +19,7 @@ func (a *SupplierPaymentSourceAdapter) Capabilities() []SourceCapability {
 }
 
 func (a *SupplierPaymentSourceAdapter) Fetch(_ context.Context, spec QuerySpec) (FactSet, error) {
-	summary, err := a.engine.collectSupplierPaymentSummary(spec.PeriodFrom, spec.PeriodTo)
+	summary, err := a.runtime.collectSupplierPaymentSummary(spec.PeriodFrom, spec.PeriodTo)
 	if err != nil {
 		return FactSet{}, err
 	}

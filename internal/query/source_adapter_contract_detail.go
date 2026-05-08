@@ -3,11 +3,11 @@ package query
 import "context"
 
 type ContractDetailSourceAdapter struct {
-	engine *Engine
+	runtime ContractDetailSourceRuntime
 }
 
-func NewContractDetailSourceAdapter(engine *Engine) *ContractDetailSourceAdapter {
-	return &ContractDetailSourceAdapter{engine: engine}
+func NewContractDetailSourceAdapter(runtime ContractDetailSourceRuntime) *ContractDetailSourceAdapter {
+	return &ContractDetailSourceAdapter{runtime: runtime}
 }
 
 func (a *ContractDetailSourceAdapter) Name() string {
@@ -19,8 +19,8 @@ func (a *ContractDetailSourceAdapter) Capabilities() []SourceCapability {
 }
 
 func (a *ContractDetailSourceAdapter) Fetch(ctx context.Context, spec QuerySpec) (FactSet, error) {
-	probe := a.engine.ProbeContractDetailSources(spec)
-	detail, err := a.engine.collectContractDetail(ctx, spec, probe)
+	probe := a.runtime.ProbeContractDetailSources(spec)
+	detail, err := a.runtime.collectContractDetail(ctx, spec, probe)
 	if err != nil {
 		return FactSet{}, err
 	}

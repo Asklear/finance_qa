@@ -28,7 +28,7 @@ func (e *Engine) detectInternalBranchTransferCash(start, end string) (float64, s
 	}
 	e.cacheMu.RUnlock()
 
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 	query := internalBranchTransferLedgerQuery()
 	rows, err := e.db.Query(query, e.Company, e.Company, start, end)
 	if err != nil {

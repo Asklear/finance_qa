@@ -19,7 +19,7 @@ func (e *Engine) cumulativeBookSummaryForRange(from, to string) (monthlyBookView
 
 	startBoundary, boundaryLog := e.resolveCumulativeRangeLowerBound(from, to)
 	previousRequired := startBoundary < from
-	matchers := buildIncomeStatementRangeMatchers(getRuleConfig())
+	matchers := buildIncomeStatementRangeMatchers(e.currentRuleConfig())
 	accumulators := map[string]*cumulativeMetricAccumulator{}
 	for _, matcher := range matchers {
 		accumulators[matcher.key] = &cumulativeMetricAccumulator{}

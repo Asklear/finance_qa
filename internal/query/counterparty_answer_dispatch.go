@@ -6,15 +6,16 @@ func (e *Engine) queryCounterpartyAmountFallback(question, entity, from, to stri
 	}
 	snap := e.buildCounterpartySnapshot(entity, from, to)
 	evidence := e.collectCounterpartyEvidence(entity, from, to)
-	classification := ClassifyCounterparty(entity, evidence)
-	taxReport := NormalizeTax(entity, evidence)
+	cfg := e.currentRuleConfig()
+	classification := ClassifyCounterpartyWithConfig(entity, evidence, cfg)
+	taxReport := NormalizeTaxWithConfig(entity, evidence, cfg)
 	usedRetro := false
 	if snap.BankIn == 0 && snap.BankOut == 0 && snap.RevenueNet == 0 && snap.BookCost == 0 && snap.BookExpense == 0 {
 		retroFrom := from[:4] + "-01"
 		snap = e.buildCounterpartySnapshot(entity, retroFrom, to)
 		evidence = e.collectCounterpartyEvidence(entity, retroFrom, to)
-		classification = ClassifyCounterparty(entity, evidence)
-		taxReport = NormalizeTax(entity, evidence)
+		classification = ClassifyCounterpartyWithConfig(entity, evidence, cfg)
+		taxReport = NormalizeTaxWithConfig(entity, evidence, cfg)
 		usedRetro = true
 	}
 

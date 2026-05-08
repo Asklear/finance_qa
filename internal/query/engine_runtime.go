@@ -15,12 +15,13 @@ import (
 )
 
 type Engine struct {
-	db        *sql.DB
-	dbPath    string
-	Company   string
-	available []string
-	calc      *accounting.Calculator
-	dim       *dimensions.Manager
+	db                 *sql.DB
+	dbPath             string
+	Company            string
+	available          []string
+	calc               *accounting.Calculator
+	dim                *dimensions.Manager
+	ruleConfigProvider RuleConfigProvider
 
 	cacheMu             sync.RWMutex
 	latestAnchorCache   map[string]time.Time
@@ -46,7 +47,19 @@ type cachedBranchTransfer struct {
 	logs  []string
 }
 
-func NewEngine(dbPath, company string) (*Engine, error) {
+// EngineOption customizes Engine construction without changing the default constructor path.
+type EngineOption func(*Engine)
+
+// WithRuleConfigProvider injects the provider used to resolve query routing and rule-based behavior.
+func WithRuleConfigProvider(provider RuleConfigProvider) EngineOption {
+	return func(e *Engine) {
+		if provider != nil {
+			e.ruleConfigProvider = provider
+		}
+	}
+}
+
+func NewEngine(dbPath, company string, opts ...EngineOption) (*Engine, error) {
 	if err := dbpkg.Bootstrap(context.Background(), dbPath); err != nil {
 		return nil, fmt.Errorf("bootstrap db: %w", err)
 	}
@@ -64,13 +77,14 @@ func NewEngine(dbPath, company string) (*Engine, error) {
 			calc.Mapper = mapper
 		}
 	}
-	return &Engine{
+	engine := &Engine{
 		db:                  db,
 		dbPath:              dbPath,
 		Company:             resolvedCompany,
 		available:           available,
 		calc:                calc,
 		dim:                 dimMgr,
+		ruleConfigProvider:  defaultRuleConfigProviderInstance,
 		latestAnchorCache:   map[string]time.Time{},
 		availablePeriod:     map[string]string{},
 		tableColumnCache:    map[string]map[string]bool{},
@@ -80,7 +94,13 @@ func NewEngine(dbPath, company string) (*Engine, error) {
 		hrBreakdownCache:    map[string]Result{},
 		branchTransferCache: map[string]cachedBranchTransfer{},
 		openItemSummary:     map[string]openitems.Summary{},
-	}, nil
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(engine)
+		}
+	}
+	return engine, nil
 }
 
 func (e *Engine) Close() error {

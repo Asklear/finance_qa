@@ -29,8 +29,8 @@ func resolveFallbackRoute(ctx fallbackRouteContext) fallbackRoute {
 	switch {
 	case shouldUseReconciliation(ctx.q):
 		return fallbackRouteReconciliation
-	case isIntervalCoreMetricQuestion(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to) ||
-		shouldPreferCoreMetricSummary(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to):
+	case isIntervalCoreMetricQuestionWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg) ||
+		shouldPreferCoreMetricSummaryWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg):
 		return fallbackRouteCoreMetric
 	case isSupplierPaymentsFallbackQuestion(ctx.q):
 		return fallbackRouteSupplierPayments

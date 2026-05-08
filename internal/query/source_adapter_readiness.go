@@ -7,7 +7,7 @@ import (
 )
 
 type ReadinessSourceAdapter struct {
-	engine *Engine
+	runtime ReadinessSourceRuntime
 }
 
 type readinessSummary struct {
@@ -26,8 +26,8 @@ type readinessSummary struct {
 	Logs             []string
 }
 
-func NewReadinessSourceAdapter(engine *Engine) *ReadinessSourceAdapter {
-	return &ReadinessSourceAdapter{engine: engine}
+func NewReadinessSourceAdapter(runtime ReadinessSourceRuntime) *ReadinessSourceAdapter {
+	return &ReadinessSourceAdapter{runtime: runtime}
 }
 
 func (a *ReadinessSourceAdapter) Name() string {
@@ -39,7 +39,7 @@ func (a *ReadinessSourceAdapter) Capabilities() []SourceCapability {
 }
 
 func (a *ReadinessSourceAdapter) Fetch(_ context.Context, spec QuerySpec) (FactSet, error) {
-	summary, err := a.engine.collectEntityDataReadiness(spec.Entity, spec.PeriodFrom, spec.PeriodTo)
+	summary, err := a.runtime.collectEntityDataReadiness(spec.Entity, spec.PeriodFrom, spec.PeriodTo)
 	if err != nil {
 		return FactSet{}, err
 	}

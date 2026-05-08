@@ -56,7 +56,7 @@ ORDER BY out_amt DESC, counterparty_name
 			"supplier_payment_classification: collectCounterpartyEvidence + ClassifyCounterparty + internal-party filter per counterparty",
 		},
 	}
-	cfg := getRuleConfig()
+	cfg := e.currentRuleConfig()
 	aggregates := make([]supplierPaymentRow, 0, 32)
 	candidateNames := make([]string, 0, 32)
 	prefiltered := make(map[string]string, 8)
@@ -99,11 +99,11 @@ ORDER BY out_amt DESC, counterparty_name
 			include, reason = false, preReason
 		} else {
 			evidence = groupedEvidence[name]
-			classification = ClassifyCounterparty(name, evidence)
+			classification = ClassifyCounterpartyWithConfig(name, evidence, cfg)
 			include, reason = e.shouldIncludeSupplierPaymentCounterparty(name, classification)
 			if !include && !hasCompleteStructuredCounterpartyEvidence(evidence) {
 				evidence = e.collectCounterpartyEvidence(name, from, to)
-				classification = ClassifyCounterparty(name, evidence)
+				classification = ClassifyCounterpartyWithConfig(name, evidence, cfg)
 				include, reason = e.shouldIncludeSupplierPaymentCounterparty(name, classification)
 			}
 		}
