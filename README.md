@@ -138,7 +138,8 @@ http://127.0.0.1:8787/feishu/oauth/callback
 然后通过 SSH 端口转发在服务器上执行一次用户授权：
 
 ```bash
-ssh -L 8787:127.0.0.1:8787 lzh 'cd ~/finance_qa && ./bin/financeqa feishu oauth-login --token-file ~/finance_qa/secrets/feishu_user_token.json'
+export SERVER="deploy@finance-host"
+ssh -L 8787:127.0.0.1:8787 "$SERVER" 'cd ~/finance_qa && ./bin/financeqa feishu oauth-login --token-file ~/finance_qa/secrets/feishu_user_token.json'
 ```
 
 命令会打印授权链接，在本机浏览器打开并同意授权；回调会通过 SSH 隧道写入服务器 token file。授权后服务器 `.env` 配置：
@@ -605,14 +606,15 @@ Go MCP 层（`financeqa serve`）会额外补充：
 # 1. 构建带符号剥离的二进制（减小体积 30-50%）
 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
 
-# 2. 上传到服务器
-scp bin/financeqa lzh:/root/finance_qa/bin/
+# 2. 上传到服务器。SERVER / KEY_PATH 使用本地环境变量，不要写入仓库。
+export SERVER="deploy@finance-host"
+export KEY_PATH="$HOME/.ssh/finance-prod.pem"
+scp -i "$KEY_PATH" bin/financeqa "$SERVER:/root/finance_qa/bin/"
 
 # 3. 使用仓库源文件部署插件 runtime，脚本会本地交叉编译 Linux 二进制并上传
 # OpenClaw extension 只放 runtime 实文件；OpenClaw/Claude skill 目录级软链接到 ~/finance_qa
 # 脚本默认会在部署后重启 OpenClaw Gateway，确保新的 extension runtime 被加载
-SERVER=root@8.129.14.124 KEY_PATH="$HOME/Downloads/未命名文件夹 2/lzh-key.pem" \
-  tests/scripts/sync_openclaw_bridge_and_skill.sh
+SERVER="$SERVER" KEY_PATH="$KEY_PATH" tests/scripts/sync_openclaw_bridge_and_skill.sh
 
 # 4. 核验 openclaw.json 运行配置，并同步 OpenClaw install metadata 版本
 #    脚本只读校验 skill 路径和 openclaw-finance 插件开关；只写 plugins.installs.openclaw-finance.version/installedAt。

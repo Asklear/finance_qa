@@ -124,9 +124,9 @@ flowchart LR
 3. Go MCP 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
 4. OpenClaw/Claude 当前可调用 Go MCP 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 5. `finance-query` 推荐 MCP 调用格式：`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"..."}}}`。
-6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库；脚本会先在本地交叉编译 Linux `financeqa`，再上传到 `~/finance_qa/bin/financeqa`。OpenClaw extension runtime 文件拷贝到 `~/.openclaw/extensions/openclaw-finance`，OpenClaw/Claude skill 目录整体软链接到 `~/finance_qa`。脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据，并默认重启 OpenClaw Gateway 让新的 extension runtime 生效。
+6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库；脚本会先在本地交叉编译 Linux `financeqa`，再上传到 `~/finance_qa/bin/financeqa`。`SERVER` 和 `KEY_PATH` 必须由调用方通过环境变量传入，仓库中不保留生产 IP、端口或私钥路径。OpenClaw extension runtime 文件拷贝到 `~/.openclaw/extensions/openclaw-finance`，OpenClaw/Claude skill 目录整体软链接到 `~/finance_qa`。脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据，并默认重启 OpenClaw Gateway 让新的 extension runtime 生效。
 7. OpenClaw extension 只保留 runtime 实文件；不要把 extension 目录、`dist/index.esm.js`、`openclaw.plugin.json` 或 `package.json` 挂成指向仓库的软链接。目录级 symlink 适用于 OpenClaw/Claude skill，因为文件级 symlink 会被 OpenClaw skill loader 判定为越过配置根目录并跳过。
-8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.0.10`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
+8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.0.11`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
 9. OpenClaw 插件发现依赖 `plugin/openclaw-finance/package.json` 的 `openclaw.extensions`，当前必须包含 `./dist/index.esm.js`；`openclaw.json` 的 install version 只负责安装元数据同步，不负责发现插件。
 
 ## 运行时要点

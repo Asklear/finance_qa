@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # Sync Go MCP binary + SKILL.md + appendix + OpenClaw plugin runtime to server.
-# Defaults match current production host; can be overridden via env vars.
+# SERVER and KEY_PATH are intentionally required so production network targets
+# and private key paths are not committed to the repository.
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-SERVER="${SERVER:-root@8.129.14.124}"
-KEY_PATH="${KEY_PATH:-$HOME/Downloads/未命名文件夹 2/lzh-key.pem}"
+: "${SERVER:?Set SERVER to your SSH target, for example deploy@finance-host}"
+: "${KEY_PATH:?Set KEY_PATH to your private key path}"
 REMOTE_HOME="${REMOTE_HOME:-$(ssh -i "$KEY_PATH" "$SERVER" 'printf %s "$HOME"')}"
 
 LOCAL_SKILL="$ROOT_DIR/SKILL.md"

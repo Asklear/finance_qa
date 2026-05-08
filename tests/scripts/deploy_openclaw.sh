@@ -4,11 +4,11 @@
 # 作用: 编译 FinanceQA 后端并发送至目标服务器进行原生部署
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 # --- 配置区 ---
-SERVER="root@X.X.X.X"
-KEY="${HOME}/.ssh/your-key.pem"
+: "${SERVER:?Set SERVER to your SSH target, for example deploy@finance-host}"
+: "${KEY:?Set KEY to your private key path}"
 REMOTE_HOME="$(ssh -i "$KEY" "$SERVER" 'printf %s "$HOME"')"
 REMOTE_DIR="${REMOTE_DIR:-$REMOTE_HOME/finance_qa}"
 REMOTE_FINANCEQA_BIN="${REMOTE_FINANCEQA_BIN:-$REMOTE_DIR/bin/financeqa}"

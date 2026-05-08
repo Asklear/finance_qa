@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -292,6 +293,8 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 	scriptText := string(syncScript)
 
 	for _, want := range []string{
+		`: "${SERVER:?Set SERVER to your SSH target`,
+		`: "${KEY_PATH:?Set KEY_PATH to your private key path}"`,
 		`LOCAL_PLUGIN_DIST="$ROOT_DIR/plugin/openclaw-finance/dist/index.esm.js"`,
 		`LOCAL_PLUGIN_MANIFEST="$ROOT_DIR/plugin/openclaw-finance/openclaw.plugin.json"`,
 		`LOCAL_CLAUDE_WRAPPER="$ROOT_DIR/tests/scripts/claude_finance_final_answer.sh"`,
@@ -353,6 +356,37 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 	}
 	if strings.Contains(scriptText, "finance_bridge.py") || strings.Contains(scriptText, "LOCAL_BRIDGE") {
 		t.Fatalf("sync script should publish Go MCP only, got Python bridge references")
+	}
+}
+
+func TestDeploymentDocsAndSyncScriptDoNotExposeProductionNetworkTargets(t *testing.T) {
+	t.Parallel()
+
+	checkedFiles := []string{
+		filepath.Join("..", "..", "README.md"),
+		filepath.Join("..", "..", "docs", "architecture", "03-deployment-runtime.md"),
+		filepath.Join("..", "..", "plugin", "openclaw-finance", "server", "README.md"),
+		filepath.Join("..", "..", "tests", "scripts", "deploy_openclaw.sh"),
+		filepath.Join("..", "..", "tests", "scripts", "sync_openclaw_bridge_and_skill.sh"),
+	}
+	publicIPv4 := regexp.MustCompile(`\b(?:[1-9]\d?|1\d\d|2[0-4]\d|25[0-5])\.(?:\d{1,3})\.(?:\d{1,3})\.(?:\d{1,3})\b`)
+	privateOrLocalIPv4 := regexp.MustCompile(`^(?:127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[0-1])\.)`)
+
+	for _, path := range checkedFiles {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(raw)
+		for _, match := range publicIPv4.FindAllString(text, -1) {
+			if privateOrLocalIPv4.MatchString(match) {
+				continue
+			}
+			t.Fatalf("%s exposes public IPv4 target %q; use placeholders or env vars", path, match)
+		}
+		if strings.Contains(text, `KEY_PATH="${KEY_PATH:-`) || strings.Contains(text, `KEY="${HOME}`) {
+			t.Fatalf("%s must not provide a default private key path", path)
+		}
 	}
 }
 
