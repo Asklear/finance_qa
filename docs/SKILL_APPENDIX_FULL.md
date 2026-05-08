@@ -219,7 +219,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
-1. `final_answer` / `boss_reply_text`：老板可见最终答案，宿主应原样输出，不得改写口径、金额或来源。
+1. `final_answer` / `boss_reply_text`：老板可见最终答案，宿主应保留关键数值、期间、业务口径和来源说明；可重写周边措辞，但不得改口径、改金额、改来源或从其他字段重算。
 2. `boss_reply`：老板口径结论/原因/建议；仅当没有 `final_answer` / `boss_reply_text` 时再按三段组织。
 3. `host_summary_contract`：合同/项目维度及合同汇总结构化摘要
 4. `host_summary_supplier_payments`：供应商付款期间汇总摘要，含：
@@ -427,7 +427,7 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
    - 不得把序时账汇总金额擅自改写成“不含税”“税后利润”或“已剔税”
    - 如果要对老板做一段自然语言总结，至少补一句“该经营口径来自序时账汇总，默认未剔税，通常按含税理解”
 10. `bridge_meta.capabilities.tax_disclosure=true` 时，表示 Go MCP 已显式暴露税口径提示；宿主应优先消费结构化字段，不要回退到正则抽取自然语言。
-11. `bridge_meta.capabilities.final_answer=true` 时，优先原样输出 `final_answer` 或 `boss_reply_text`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
+11. `bridge_meta.capabilities.final_answer=true` 时，优先按 `final_answer` 或 `boss_reply_text` 的关键数值、期间、业务口径和来源组织老板回答；措辞可重写，但不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
 12. `bridge_meta.capabilities.boss_reply=true` 时，在没有 `final_answer` / `boss_reply_text` 时再消费 `boss_reply`，不要自己从 `message` / `executed_sql` / `calculation_logs` 重拼老板口径。
 13. `bridge_meta.capabilities.contract_summary=true` 时，合同类和合同汇总类问题优先消费 `host_summary_contract`。
 14. `bridge_meta.capabilities.supplier_payment_summary=true` 时，供应商付款问题优先消费 `host_summary_supplier_payments`，不要把被剔除的员工、内部往来、税费、手续费对象重新算回去。

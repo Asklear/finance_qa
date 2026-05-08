@@ -15,12 +15,13 @@ func TestOnlineAgentFinalAnswerCheckScriptValidatesBridgeFinalAnswer(t *testing.
 	tmp := t.TempDir()
 	expectedPath := filepath.Join(tmp, "bridge_expected.jsonl")
 	passAnswersPath := filepath.Join(tmp, "openclaw_pass.jsonl")
+	strictAnswersPath := filepath.Join(tmp, "openclaw_strict.jsonl")
 	failAnswersPath := filepath.Join(tmp, "openclaw_fail.jsonl")
 	summaryPath := filepath.Join(tmp, "summary.json")
 
 	question := "2026年3月收入、成本、利润分别是多少？"
 	expectedLine := `{"question":"` + question + `","expected":{"success":true,"final_answer":"2026-03先看合同经营口径：营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。\n\n来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》","data":{"period":"2026-03","source_priority":"contract_first","requested_metrics":["收入","成本","利润"],"source_note":"来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》","contract_summary":{"scope":"company","revenue_settlement":5612513.29,"cost_settlement":2024957.12,"profit":3587556.17}}}}` + "\n"
-	passLine := `{"question":"` + question + `","answer":"2026-03先看合同经营口径：营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。\n\n来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》"}` + "\n"
+	passLine := `{"question":"` + question + `","answer":"2026年3月按合同口径看，营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》"}` + "\n"
 	failLine := `{"question":"` + question + `","answer":"2026年3月：收入 310.63 万，成本及费用 281.50 万，利润 29.13 万。来源：《利润表》"}` + "\n"
 
 	if err := os.WriteFile(expectedPath, []byte(expectedLine), 0o644); err != nil {
@@ -28,6 +29,9 @@ func TestOnlineAgentFinalAnswerCheckScriptValidatesBridgeFinalAnswer(t *testing.
 	}
 	if err := os.WriteFile(passAnswersPath, []byte(passLine), 0o644); err != nil {
 		t.Fatalf("write pass answers: %v", err)
+	}
+	if err := os.WriteFile(strictAnswersPath, []byte(`{"question":"`+question+`","answer":"2026-03先看合同经营口径：营收 5612513.29 元，合同成本 2024957.12 元，利润 3587556.17 元。\n\n来源：《优集资金收入计算表-副本.xlsx》；《优集成本计算表-4.23-池.xlsx》；补充参考：《合同信息表》"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write strict answers: %v", err)
 	}
 	if err := os.WriteFile(failAnswersPath, []byte(failLine), 0o644); err != nil {
 		t.Fatalf("write fail answers: %v", err)
@@ -48,6 +52,23 @@ func TestOnlineAgentFinalAnswerCheckScriptValidatesBridgeFinalAnswer(t *testing.
 	}
 	if !strings.Contains(passOut.String(), "pass=1/1") {
 		t.Fatalf("pass output should report 1/1, got %s", passOut.String())
+	}
+
+	strictCmd := exec.Command("python3", scriptPath,
+		"--expected-jsonl", expectedPath,
+		"--answers-jsonl", strictAnswersPath,
+		"--host", "openclaw",
+		"--summary-json", summaryPath,
+		"--strict-final-answer",
+	)
+	var strictOut bytes.Buffer
+	strictCmd.Stdout = &strictOut
+	strictCmd.Stderr = &strictOut
+	if err := strictCmd.Run(); err != nil {
+		t.Fatalf("strict fixture should validate exact final_answer: %v\n%s", err, strictOut.String())
+	}
+	if !strings.Contains(strictOut.String(), "pass=1/1") {
+		t.Fatalf("strict output should report 1/1, got %s", strictOut.String())
 	}
 
 	failCmd := exec.Command("python3", scriptPath,

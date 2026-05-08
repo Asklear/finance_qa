@@ -18,6 +18,8 @@ OpenClaw extension -> dist/index.esm.js -> ~/finance_qa/bin/financeqa serve
 ~/finance_qa/bin/financeqa
 ```
 
+OpenClaw 这层会在 `before_prompt_build` 加强财务题约束。直接财务提问和模型超时后的 `Continue where you left off` fallback 都必须从当前 prompt 或最近 user 历史里恢复最新财务问题，并预先调用 `finance-query` 注入当前 Go MCP 结果上下文。最终回答仍由模型自行组织；只要求关键数值、期间、口径和来源一致，不要求逐字复述或完全一致，也不使用 `before_dispatch` 直接拦截输出。
+
 ### 1. 直接运行 Go MCP 服务器
 
 ```bash
@@ -49,14 +51,21 @@ OpenClaw extension -> dist/index.esm.js -> ~/finance_qa/bin/financeqa serve
         "source": "path",
         "sourcePath": "/root/.openclaw/extensions/openclaw-finance",
         "installPath": "/root/.openclaw/extensions/openclaw-finance",
-        "version": "2.0.1"
+        "version": "2.0.9"
       }
     }
   }
 }
 ```
 
-如果这几项已经存在，部署 Go MCP runtime、skill 或二进制时不需要修改 `openclaw.json` 的运行开关。当前线上 `openclaw.json` 的 `plugins.installs.openclaw-finance.version` 是 OpenClaw install metadata，需要与 Go MCP binary 和 OpenClaw plugin metadata 同步。
+如果这几项已经存在，部署 Go MCP runtime、skill 或二进制时不需要修改 `openclaw.json` 的运行开关。当前线上 `openclaw.json` 的 `plugins.installs.openclaw-finance.version` 是 OpenClaw install metadata，需要与 Go MCP binary 和 OpenClaw plugin metadata 同步。另一个关键点是 `package.json` 必须声明 `openclaw.extensions: ["./dist/index.esm.js"]`，这才是 OpenClaw 发现插件的入口。
+
+发布路径固定为：OpenClaw extension 目录保留拷贝后的 runtime 实文件；`~/.openclaw/skills/finance` 和 `~/.claude/skills/finance` 使用目录级 symlink 指向 `/root/finance_qa`。不要把 extension 目录改成 symlink，也不要使用文件级 skill symlink；后者会被 OpenClaw skill loader 跳过。
+
+替换 extension runtime 文件后必须重启 OpenClaw Gateway；运行中的 Gateway 不会自动重新加载已注册的插件实例。同步脚本默认执行 `openclaw gateway restart` 并检查 `RPC probe: ok`。
+
+插件通过 stdio 启动 `~/finance_qa/bin/financeqa serve` 时，工作目录固定为 `~/finance_qa`，确保 Gateway 进程也能加载仓库 `.env` 和默认数据库配置。
+部署新二进制前，脚本会先停止旧的 `~/finance_qa/bin/financeqa serve` 子进程，避免正在执行的二进制导致上传失败。
 
 ## 暴露的工具
 
@@ -68,6 +77,6 @@ OpenClaw extension -> dist/index.esm.js -> ~/finance_qa/bin/financeqa serve
 
 ## 兼容性
 
-- 输出格式与原 Python bridge 完全一致
+- Go MCP 工具 payload 保持原 Python bridge 兼容字段
 - `final_answer` 和 `host_summary_contract` 字段已原生支持
 - 无需 Python 环境依赖

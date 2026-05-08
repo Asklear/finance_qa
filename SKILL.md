@@ -1,6 +1,6 @@
 ---
 name: "finance"
-description: "For any老板财务/经营/合同/回款/开票/收入/成本/利润 question, MUST call `finance-query` first and return `final_answer` unchanged; never answer from memory, prior chat, income statement, bank/journal data, or raw SQL unless finance-query says to fall back."
+description: "处理老板财务、经营、合同、回款、开票、收入、成本、利润等问题时，必须先调用 `finance-query`，并以当前结果中的关键金额、期间、业务口径和来源说明为准；可以重写周边措辞，但不得凭记忆、历史对话、旧结果、利润表、银行流水、序时账或 SQL 自行作答，除非 `finance-query` 明确要求回退。"
 metadata:
   {
     "openclaw": { "always": true },
@@ -81,8 +81,9 @@ metadata:
 ## 3. 宿主结果消费顺序
 
 1. 先解析桥接返回的 `content[0].text` JSON。
-2. 若存在 `final_answer` 或 `boss_reply_text`，必须原样作为老板可见回答输出：
-   - 不得改写口径
+2. 若存在 `final_answer` 或 `boss_reply_text`，必须以当前结果为权威来源组织老板可见回答：
+   - 关键数值、期间、业务口径和来源说明必须与 Go MCP 当前结果一致
+   - 可以按老板汇报风格压缩或重写周边措辞，但不能改结论、改口径或改来源
    - 不得从 `executed_sql`、`calculation_logs`、`fact_sets`、`llm_payload` 或其他字段重算金额
    - 不得替换或删除其中的来源说明
 3. 若没有 `final_answer` / `boss_reply_text`，但存在 `boss_reply`，优先直接使用：
@@ -150,7 +151,7 @@ metadata:
 
 ## 4. 宿主不能自己改写的结构化约束
 
-1. `final_answer` / `boss_reply_text` 是后端已整理好的老板可见最终答案，宿主必须原样输出。
+1. `final_answer` / `boss_reply_text` 是后端已整理好的老板可见最终答案，宿主必须保留其中的关键数值、期间、业务口径和来源说明；周边措辞可以重写，但不得二次改口径或重算金额。
 2. `boss_reply` 是后端已整理好的老板口径，不要再从 `executed_sql`、`calculation_logs`、`evidence` 里二次拼数。
 3. `host_summary_contract` 出现时，必须按其字段回答，不允许自行改写成别的时间口径。
 4. `host_summary_supplier_payments` 出现时，必须按其结构化字段回答供应商付款问题，不允许绕开它重新按名称猜供应商、或把被剔除对象重新算回去。

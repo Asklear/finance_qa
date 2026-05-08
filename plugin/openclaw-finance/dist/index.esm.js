@@ -25,6 +25,14 @@ function findFinanceQABinary() {
   return fixedServerBin;
 }
 
+function findFinanceQACwd(binaryPath) {
+  const binDir = path.dirname(binaryPath);
+  if (path.basename(binDir) === "bin") {
+    return path.dirname(binDir);
+  }
+  return process.cwd();
+}
+
 const FINANCE_KEYWORDS = [
   "财务",
   "经营",
@@ -73,6 +81,7 @@ class MCPClient {
     return new Promise((resolve, reject) => {
       this.process = spawn(this.binaryPath, ["serve"], {
         stdio: ["pipe", "pipe", "pipe"],
+        cwd: findFinanceQACwd(this.binaryPath),
         env: { ...process.env }
       });
 
@@ -215,6 +224,22 @@ function userVisibleText(value) {
     .trim();
 }
 
+function messageContentText(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((item) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object") return item.text || item.content || "";
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content && typeof content === "object") return content.text || content.content || "";
+  return "";
+}
+
 function isFinanceQuestion(rawText) {
   const text = userVisibleText(rawText);
   if (!text || text.startsWith("/")) return false;
@@ -223,15 +248,105 @@ function isFinanceQuestion(rawText) {
   return FINANCE_KEYWORDS.some((keyword) => text.includes(keyword));
 }
 
-function mustCallFinanceQuerySystemContext() {
-  return [
+function latestFinanceQuestionFromMessages(messages) {
+  if (!Array.isArray(messages)) return "";
+  for (let i = messages.length - 1; i >= 0 && i >= messages.length - 12; i--) {
+    const entry = messages[i];
+    const message = entry?.message && typeof entry.message === "object" ? entry.message : entry;
+    if (message?.role !== "user") continue;
+    const text = userVisibleText(messageContentText(message.content));
+    if (isFinanceQuestion(text)) return text;
+  }
+  return "";
+}
+
+function latestUserTextFromMessages(messages) {
+  if (!Array.isArray(messages)) return "";
+  for (let i = messages.length - 1; i >= 0 && i >= messages.length - 6; i--) {
+    const entry = messages[i];
+    const message = entry?.message && typeof entry.message === "object" ? entry.message : entry;
+    if (message?.role !== "user") continue;
+    return userVisibleText(messageContentText(message.content));
+  }
+  return "";
+}
+
+function isRetryOrContinuation(rawText) {
+  return /(continue where you left off|previous model attempt failed|timed out|继续|接着)/i.test(String(rawText || ""));
+}
+
+function financeQuestionForPromptEvent(event) {
+  const prompt = userVisibleText(event?.prompt || "");
+  if (isFinanceQuestion(prompt)) return prompt;
+  const latestUserText = latestUserTextFromMessages(event?.messages);
+  if (isFinanceQuestion(latestUserText)) return latestUserText;
+  if (isRetryOrContinuation(prompt) || isRetryOrContinuation(latestUserText)) {
+    return latestFinanceQuestionFromMessages(event?.messages);
+  }
+  return "";
+}
+
+function mustCallFinanceQuerySystemContext(latestQuestion) {
+  const lines = [
     "Finance QA routing policy:",
+    latestQuestion ? `Latest finance question that MUST be sent to finance-query: ${latestQuestion}` : "",
+    "The current `finance-query` result may be injected into the prompt as authoritative context. Use that current result for key amounts, periods, business basis, and source notes before considering prior conversation history.",
     "For any finance, business operation, contract, collection, invoice, revenue, cost, profit, cash, bank, tax, AR/AP, customer, supplier, or source-table question, you MUST call `finance-query` before answering.",
     "Do not answer from prior conversation history, memory, previous tool results, raw SQL, income statement/book values, or cached summaries, even when the latest user message repeats an earlier question.",
-    "After `finance-query`, parse `content[0].text` as JSON and answer from the current tool result. If `final_answer` or `boss_reply_text` exists, use that text as the visible answer instead of summarizing from structured data.",
+    "After `finance-query`, use the tool result as the authoritative source for the current answer. If the result has `final_answer` or `boss_reply_text`, preserve its key amounts, period, business basis, and source notes, but you may rephrase the surrounding wording.",
     "do not omit the source note. If you paraphrase for brevity, the final visible answer must still include the current result's `来源：...` sentence from `source_note`, `source_summary`, `final_answer`, or `boss_reply_text`.",
     "If the current tool result includes `contract_continuity_candidates`, use those candidates as same-project continuity evidence and make a tentative business inference with uncertainty; call it a same-project candidate/reference and do not state that the counterparty definitely changed or became associated.",
     "Keep the source note from the tool result. Do not expose internal IDs, SQL, route traces, or contract IDs unless the user explicitly asks for technical details."
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+function parseToolResultPayload(result) {
+  const text = result?.content?.find((item) => item?.type === "text")?.text || "";
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
+function compactFinancePayload(payload) {
+  if (!payload || typeof payload !== "object") return payload;
+  const data = payload.data && typeof payload.data === "object" ? payload.data : {};
+  return {
+    error: payload.error,
+    success: payload.success,
+    final_answer: payload.final_answer || payload.boss_reply_text || payload.message,
+    source_note: data.source_note || payload.source_note,
+    source_update_note: data.source_update_note || payload.source_update_note,
+    period: data.period,
+    source_priority: data.source_priority,
+    requested_metrics: data.requested_metrics,
+    role: data.role,
+    account_view: data.account_view,
+    cash_view: data.cash_view,
+    contract_summary: data.contract_summary,
+    customer_summary: data.customer_summary,
+    supplier_summary: data.supplier_summary,
+    tax_summary: data.tax_summary,
+    source_documents: data.source_documents,
+    source_cell_notes: data.source_cell_notes,
+    remarks: data.remarks,
+    contract_continuity_candidates: data.contract_continuity_candidates
+  };
+}
+
+async function financeQueryPromptContext(question) {
+  const result = await callFinanceTool("finance-query", { query: question });
+  const payload = compactFinancePayload(parseToolResultPayload(result));
+  return [
+    "Current authoritative finance-query result for the latest user finance question.",
+    "Use these current facts for the visible answer. Preserve the key amounts, period, business basis, and source note; do not reuse conflicting amounts or sources from prior conversation history.",
+    "You may rephrase the final wording, but the numbers and source must match this current result.",
+    "```json",
+    JSON.stringify({ query: question, result: payload }, null, 2),
+    "```"
   ].join("\n");
 }
 
@@ -273,18 +388,10 @@ const plugin = {
   id: PLUGIN_ID,
   name: "Finance",
   description: "Finance MCP plugin (native, no Python bridge)",
-  async register(api) {
-    // Try to pre-start MCP client
-    try {
-      await getMCPClient();
-    } catch (err) {
-      console.error("[finance] Failed to pre-start MCP client:", err.message);
-      // Continue anyway, will retry on first tool call
-    }
-
+  register(api) {
     api.registerTool(createFinanceTool(
       "finance-query",
-      "Boss finance QA. Call this first for finance questions. When the returned JSON has final_answer or boss_reply_text, preserve key amounts, uncertainty wording, and source notes. When it has contract_continuity_candidates, describe them as same-project candidates/references, not a confirmed counterparty mapping.",
+      "Boss finance QA. Call this first for finance questions. When the returned JSON has final_answer or boss_reply_text, preserve key amounts, period, business basis, uncertainty, and source notes; surrounding wording may be rephrased. When it has contract_continuity_candidates, describe them as same-project candidates/references, not a confirmed counterparty mapping.",
       {
         type: "object",
         properties: {
@@ -331,18 +438,14 @@ const plugin = {
       }
     ), { name: "finance-sync" });
 
-    api.on("before_prompt_build", (event) => {
-      const prompt = userVisibleText(event?.prompt || "");
-      if (!isFinanceQuestion(prompt)) return undefined;
-      return { prependSystemContext: mustCallFinanceQuerySystemContext() };
-    });
-
-    // Cleanup on exit
-    api.on("cleanup", () => {
-      if (mcpClient) {
-        mcpClient.stop();
-        mcpClient = null;
-      }
+    api.on("before_prompt_build", async (event) => {
+      const latestQuestion = financeQuestionForPromptEvent(event);
+      if (!latestQuestion) return undefined;
+      const prependContext = await financeQueryPromptContext(latestQuestion);
+      return {
+        prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion),
+        prependContext
+      };
     });
   }
 };

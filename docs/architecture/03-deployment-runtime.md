@@ -30,6 +30,7 @@ flowchart LR
     end
 
     subgraph HostRepo["服务器仓库 ~/finance_qa"]
+        HR0["~/finance_qa/"]
         HR1["SKILL.md"]
         HR2["docs/SKILL_APPENDIX_FULL.md"]
         HR3["plugin/openclaw-finance/dist/index.esm.js"]
@@ -41,24 +42,28 @@ flowchart LR
     end
 
     subgraph OpenClaw["OpenClaw 当前 skill/extension 路径"]
+        OC0["~/.openclaw/skills/finance/"]
         OC1["~/.openclaw/skills/finance/SKILL.md"]
         OC2["~/.openclaw/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
         OC3["~/.openclaw/extensions/openclaw-finance/dist/index.esm.js"]
         OC4["~/.openclaw/extensions/openclaw-finance/openclaw.plugin.json"]
         OC5["~/.openclaw/extensions/openclaw-finance/package.json"]
-        OC1 -. symlink .-> HR1
-        OC2 -. symlink .-> HR2
-        OC3 -. symlink .-> HR3
-        OC4 -. symlink .-> HR6
-        OC5 -. symlink .-> HR7
+        OC0 -. directory symlink .-> HR0
+        OC1 -. via symlink dir .-> HR1
+        OC2 -. via symlink dir .-> HR2
+        HR3 -. copy .-> OC3
+        HR6 -. copy .-> OC4
+        HR7 -. copy .-> OC5
         OC1 --> OC2
     end
 
     subgraph Claude["Claude Code 当前 skill 路径"]
+        CC0["~/.claude/skills/finance/"]
         CC1["~/.claude/skills/finance/SKILL.md"]
         CC2["~/.claude/skills/finance/docs/SKILL_APPENDIX_FULL.md"]
-        CC1 -. symlink .-> HR1
-        CC2 -. symlink .-> HR2
+        CC0 -. directory symlink .-> HR0
+        CC1 -. via symlink dir .-> HR1
+        CC2 -. via symlink dir .-> HR2
         CC1 --> CC2
     end
 
@@ -119,9 +124,10 @@ flowchart LR
 3. Go MCP 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
 4. OpenClaw/Claude 当前可调用 Go MCP 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 5. `finance-query` 推荐 MCP 调用格式：`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"..."}}}`。
-6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库，并用软链接发布到 OpenClaw/Claude 消费路径；脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据。
-7. OpenClaw extension 只保留 runtime 文件；OpenClaw/Claude skill 路径必须指向服务器仓库同一份 `SKILL.md` 与 appendix。
-8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.0.1`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
+6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库；脚本会先在本地交叉编译 Linux `financeqa`，再上传到 `~/finance_qa/bin/financeqa`。OpenClaw extension runtime 文件拷贝到 `~/.openclaw/extensions/openclaw-finance`，OpenClaw/Claude skill 目录整体软链接到 `~/finance_qa`。脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据，并默认重启 OpenClaw Gateway 让新的 extension runtime 生效。
+7. OpenClaw extension 只保留 runtime 实文件；不要把 extension 目录、`dist/index.esm.js`、`openclaw.plugin.json` 或 `package.json` 挂成指向仓库的软链接。目录级 symlink 适用于 OpenClaw/Claude skill，因为文件级 symlink 会被 OpenClaw skill loader 判定为越过配置根目录并跳过。
+8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.0.9`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
+9. OpenClaw 插件发现依赖 `plugin/openclaw-finance/package.json` 的 `openclaw.extensions`，当前必须包含 `./dist/index.esm.js`；`openclaw.json` 的 install version 只负责安装元数据同步，不负责发现插件。
 
 ## 运行时要点
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Validate OpenClaw/Claude final answers against Go MCP-produced final_answer.
+"""Validate OpenClaw/Claude answers against Go MCP-produced finance facts.
 
-Default mode is offline validation of JSONL files already captured from online
-agents. Live agent execution is opt-in via FINANCEQA_RUN_ONLINE_AGENT_TESTS=1.
+Default mode checks amounts, source notes, and business口径. Strict matching
+to the exact Go MCP `final_answer` text is opt-in for regression debugging.
+Live agent execution is opt-in via FINANCEQA_RUN_ONLINE_AGENT_TESTS=1.
 """
 
 import argparse
@@ -293,7 +294,7 @@ def expected_payload(row):
     return as_dict(payload)
 
 
-def validate_answer(question, payload, answer, strict_final_answer=True):
+def validate_answer(question, payload, answer, strict_final_answer=False):
     fails = []
     answer = str(answer or "").strip()
     if not answer:
@@ -424,7 +425,8 @@ def main():
     parser.add_argument("--hosts", nargs="+", default=["openclaw", "claude"], choices=["openclaw", "claude"])
     parser.add_argument("--out-dir", default="tmp/online_eval", help="output dir for live agent answer JSONL")
     parser.add_argument("--timeout-sec", type=int, default=180)
-    parser.add_argument("--no-strict-final-answer", action="store_true", help="do not require expected final_answer text to appear in host answer")
+    parser.add_argument("--strict-final-answer", action="store_true", help="require the host answer to include the exact Go MCP final_answer text")
+    parser.add_argument("--no-strict-final-answer", action="store_true", help="compatibility flag; the default mode is already non-strict")
     args = parser.parse_args()
 
     suites = args.question_suite or DEFAULT_SUITES
@@ -441,7 +443,7 @@ def main():
         expected_rows,
         answer_rows,
         args.host,
-        strict_final_answer=not args.no_strict_final_answer,
+        strict_final_answer=args.strict_final_answer and not args.no_strict_final_answer,
     )
     summary = {
         "host": args.host,
