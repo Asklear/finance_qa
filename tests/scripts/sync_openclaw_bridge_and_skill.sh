@@ -7,13 +7,24 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SERVER="${SERVER:-lzh}"
-SSH_OPTS=()
-SCP_OPTS=()
-if [[ -n "${KEY_PATH:-}" ]]; then
-  SSH_OPTS=(-i "$KEY_PATH")
-  SCP_OPTS=(-i "$KEY_PATH")
-fi
-REMOTE_HOME="${REMOTE_HOME:-$(ssh "${SSH_OPTS[@]}" "$SERVER" 'printf %s "$HOME"')}"
+
+ssh_remote() {
+  if [[ -n "${KEY_PATH:-}" ]]; then
+    ssh -i "$KEY_PATH" "$@"
+    return
+  fi
+  ssh "$@"
+}
+
+scp_remote() {
+  if [[ -n "${KEY_PATH:-}" ]]; then
+    scp -i "$KEY_PATH" "$@"
+    return
+  fi
+  scp "$@"
+}
+
+REMOTE_HOME="${REMOTE_HOME:-$(ssh_remote "$SERVER" 'printf %s "$HOME"')}"
 
 LOCAL_SKILL="$ROOT_DIR/SKILL.md"
 LOCAL_APPENDIX="$ROOT_DIR/docs/SKILL_APPENDIX_FULL.md"
@@ -69,39 +80,39 @@ if [[ ! -f "$LOCAL_ONLINE_CHECKER" ]]; then
 fi
 
 echo "[1/8] upload SKILL.md to ${SERVER}:${REMOTE_REPO_DIR}/SKILL.md"
-scp "${SCP_OPTS[@]}" "$LOCAL_SKILL" "$SERVER:$REMOTE_REPO_DIR/SKILL.md"
+scp_remote "$LOCAL_SKILL" "$SERVER:$REMOTE_REPO_DIR/SKILL.md"
 
 echo "[2/8] upload appendix to ${SERVER}:${REMOTE_REPO_DIR}/docs/SKILL_APPENDIX_FULL.md"
-ssh "${SSH_OPTS[@]}" "$SERVER" "mkdir -p '$REMOTE_REPO_DIR/docs'"
-scp "${SCP_OPTS[@]}" "$LOCAL_APPENDIX" "$SERVER:$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md"
+ssh_remote "$SERVER" "mkdir -p '$REMOTE_REPO_DIR/docs'"
+scp_remote "$LOCAL_APPENDIX" "$SERVER:$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md"
 
 echo "[3/8] upload OpenClaw plugin runtime into repo"
-ssh "${SSH_OPTS[@]}" "$SERVER" "mkdir -p '$REMOTE_REPO_DIR/plugin/openclaw-finance/dist'"
-scp "${SCP_OPTS[@]}" "$LOCAL_PLUGIN_DIST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js"
-scp "${SCP_OPTS[@]}" "$LOCAL_PLUGIN_MANIFEST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json"
-scp "${SCP_OPTS[@]}" "$LOCAL_PLUGIN_PACKAGE" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/package.json"
+ssh_remote "$SERVER" "mkdir -p '$REMOTE_REPO_DIR/plugin/openclaw-finance/dist'"
+scp_remote "$LOCAL_PLUGIN_DIST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js"
+scp_remote "$LOCAL_PLUGIN_MANIFEST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json"
+scp_remote "$LOCAL_PLUGIN_PACKAGE" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/package.json"
 
 echo "[4/8] upload Claude finance final_answer wrapper"
-ssh "${SSH_OPTS[@]}" "$SERVER" "mkdir -p '$REMOTE_REPO_DIR/tests/scripts'"
-scp "${SCP_OPTS[@]}" "$LOCAL_CLAUDE_WRAPPER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh"
-scp "${SCP_OPTS[@]}" "$LOCAL_ONLINE_CHECKER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py"
-ssh "${SSH_OPTS[@]}" "$SERVER" "chmod 755 '$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh' '$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py'"
+ssh_remote "$SERVER" "mkdir -p '$REMOTE_REPO_DIR/tests/scripts'"
+scp_remote "$LOCAL_CLAUDE_WRAPPER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh"
+scp_remote "$LOCAL_ONLINE_CHECKER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py"
+ssh_remote "$SERVER" "chmod 755 '$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh' '$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py'"
 
 echo "[5/8] build local Linux financeqa Go MCP binary and upload"
 (
   cd "$ROOT_DIR"
   GOOS=linux GOARCH=amd64 go build -o "$LOCAL_FINANCEQA_BIN" ./cmd/financeqa/...
 )
-ssh "${SSH_OPTS[@]}" "$SERVER" "set -e; \
+ssh_remote "$SERVER" "set -e; \
   if command -v pgrep >/dev/null 2>&1; then \
     pgrep -f '$REMOTE_FINANCEQA_SERVE_PATTERN' | xargs -r kill; \
   fi; \
   mkdir -p '$REMOTE_FINANCEQA_BIN_DIR' && rm -f '$REMOTE_REPO_DIR/financeqa'"
-scp "${SCP_OPTS[@]}" "$LOCAL_FINANCEQA_BIN" "$SERVER:$REMOTE_FINANCEQA_BIN"
-ssh "${SSH_OPTS[@]}" "$SERVER" "chmod 755 '$REMOTE_FINANCEQA_BIN'"
+scp_remote "$LOCAL_FINANCEQA_BIN" "$SERVER:$REMOTE_FINANCEQA_BIN"
+ssh_remote "$SERVER" "chmod 755 '$REMOTE_FINANCEQA_BIN'"
 
 echo "[6/8] publish OpenClaw extension runtime files and skill symlinks"
-ssh "${SSH_OPTS[@]}" "$SERVER" "set -e; \
+ssh_remote "$SERVER" "set -e; \
   if [ -L '$REMOTE_OPENCLAW_PLUGIN_DIR' ]; then rm -f '$REMOTE_OPENCLAW_PLUGIN_DIR'; fi; \
   mkdir -p '$REMOTE_OPENCLAW_SKILL_PARENT' '$REMOTE_CLAUDE_SKILL_PARENT'; \
   mkdir -p '$REMOTE_OPENCLAW_PLUGIN_DIR/dist'; \
@@ -118,7 +129,7 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "set -e; \
   chmod 444 '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js' '$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json' '$REMOTE_REPO_DIR/plugin/openclaw-finance/package.json'"
 
 echo "[7/8] verify skill path, plugin runtime, Claude wrapper, and Go MCP server on server"
-ssh "${SSH_OPTS[@]}" "$SERVER" "set -e; \
+ssh_remote "$SERVER" "set -e; \
   ls -ld '$REMOTE_OPENCLAW_SKILL_DIR' '$REMOTE_CLAUDE_SKILL_DIR'; \
   ls -l '$REMOTE_REPO_DIR/SKILL.md' '$REMOTE_REPO_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_FINANCEQA_BIN' '$REMOTE_OPENCLAW_SKILL_DIR/SKILL.md' '$REMOTE_OPENCLAW_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_CLAUDE_SKILL_DIR/SKILL.md' '$REMOTE_CLAUDE_SKILL_DIR/docs/SKILL_APPENDIX_FULL.md' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js' '$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/package.json' '$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh' '$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py'; \
   test ! -e '$REMOTE_REPO_DIR/financeqa'; \
@@ -152,7 +163,7 @@ ssh "${SSH_OPTS[@]}" "$SERVER" "set -e; \
 
 if [[ "$RESTART_OPENCLAW_GATEWAY" == "1" ]]; then
   echo "[8/8] restart OpenClaw gateway so the updated extension runtime is loaded"
-  ssh "${SSH_OPTS[@]}" "$SERVER" "set -e; \
+  ssh_remote "$SERVER" "set -e; \
     if command -v openclaw >/dev/null 2>&1; then \
       openclaw gateway restart; \
       sleep 3; \
