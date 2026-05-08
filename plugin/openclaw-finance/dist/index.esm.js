@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 
 const PLUGIN_ID = "openclaw-finance";
 
@@ -8,17 +9,20 @@ const PLUGIN_ID = "openclaw-finance";
 const FINANCEQA_BIN = process.env.FINANCEQA_BIN || findFinanceQABinary();
 
 function findFinanceQABinary() {
-  // Try common paths
+  const pluginDir = path.dirname(fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(pluginDir, "../../..");
+  const fixedServerBin = path.join(process.env.HOME || "", "finance_qa/bin/financeqa");
   const candidates = [
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../bin/financeqa"),
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../bin/financeqa"),
-    "/usr/local/bin/financeqa",
-    "/usr/bin/financeqa",
-    "./financeqa",
-    "financeqa"
+    fixedServerBin,
+    path.resolve(repoRoot, "bin/financeqa"),
+    path.resolve(process.cwd(), "bin/financeqa")
   ];
-  // Return first candidate - actual existence checked at runtime
-  return candidates[0];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return fixedServerBin;
 }
 
 const FINANCE_KEYWORDS = [

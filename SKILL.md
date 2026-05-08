@@ -25,7 +25,7 @@ metadata:
    - `FINANCEQA_PG_DSN`
    - `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/FINANCEQA_PG_SCHEMA`
 3. 未配置数据库时，CLI/桥接层会明确报错，不再回退本地 `finance.db`
-4. MCP 服务器默认二进制：`~/finance_qa/financeqa`（通过 `financeqa serve` 启动）
+4. MCP 服务器固定二进制：`~/finance_qa/bin/financeqa`（通过 `financeqa serve` 启动）
 5. MCP 服务器会自动加载：
    - 当前目录 `.env`
    - `FINANCEQA_ENV_FILE` 指定的文件（如 `~/finance_qa/.env`）
@@ -250,19 +250,19 @@ metadata:
 ### 7.1 直接问答
 
 ```bash
-./financeqa query --company "南京优集数据科技有限公司" "2026年3月收入、成本、利润分别是多少？"
+./bin/financeqa query --company "南京优集数据科技有限公司" "2026年3月收入、成本、利润分别是多少？"
 ```
 
 ### 7.2 获取宿主兜底数据包
 
 ```bash
-./financeqa host-data --company "南京优集数据科技有限公司" --from 2026-03 --to 2026-03 "为什么3月利润和现金差这么大"
+./bin/financeqa host-data --company "南京优集数据科技有限公司" --from 2026-03 --to 2026-03 "为什么3月利润和现金差这么大"
 ```
 
 ### 7.3 单文件导入
 
 ```bash
-./financeqa import --company "南京优集数据科技有限公司" /abs/path/report.xlsx
+./bin/financeqa import --company "南京优集数据科技有限公司" /abs/path/report.xlsx
 ```
 
 ### 7.4 数据上传落库约定

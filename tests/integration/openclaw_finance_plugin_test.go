@@ -54,6 +54,23 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 	if !strings.Contains(pluginText, "process.env.FINANCEQA_BIN") {
 		t.Fatalf("OpenClaw finance plugin should resolve the Go MCP binary path from FINANCEQA_BIN")
 	}
+	if !strings.Contains(pluginText, `process.env.HOME || ""`) ||
+		!strings.Contains(pluginText, `"finance_qa/bin/financeqa"`) {
+		t.Fatalf("OpenClaw finance plugin should prefer the fixed server binary path under $HOME/finance_qa/bin/financeqa")
+	}
+	if !strings.Contains(pluginText, "existsSync(candidate)") {
+		t.Fatalf("OpenClaw finance plugin should check binary candidates before selecting one")
+	}
+	for _, forbidden := range []string{
+		`path.resolve(repoRoot, "financeqa")`,
+		`path.resolve(process.cwd(), "financeqa")`,
+		`"/usr/local/bin/financeqa"`,
+		`"/usr/bin/financeqa"`,
+	} {
+		if strings.Contains(pluginText, forbidden) {
+			t.Fatalf("OpenClaw finance plugin should not fall back to non-canonical financeqa binary path %q", forbidden)
+		}
+	}
 	if !strings.Contains(pluginText, `spawn(this.binaryPath, ["serve"]`) {
 		t.Fatalf("OpenClaw finance plugin should start financeqa serve as the Go MCP server")
 	}
@@ -74,8 +91,8 @@ func TestOpenClawFinancePluginMetadataUsesCurrentMajorVersion(t *testing.T) {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("parse plugin metadata %s: %v", path, err)
 		}
-		if got := doc["version"]; got != "2.0.0" {
-			t.Fatalf("%s version = %v, want 2.0.0", path, got)
+		if got := doc["version"]; got != "2.0.1" {
+			t.Fatalf("%s version = %v, want 2.0.1", path, got)
 		}
 	}
 }
@@ -103,13 +120,22 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 		`ln -sfn '$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js'`,
 		`ln -sfn '$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json'`,
 		`ln -sfn '$REMOTE_REPO_DIR/plugin/openclaw-finance/package.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/package.json'`,
-		`go build -o '$REMOTE_REPO_DIR/financeqa' ./cmd/financeqa/...`,
-		`'$REMOTE_REPO_DIR/financeqa' serve`,
-		`plugins.entries['openclaw-finance'].hooks.allowPromptInjection = true`,
+		`REMOTE_FINANCEQA_BIN="${REMOTE_FINANCEQA_BIN:-$REMOTE_REPO_DIR/bin/financeqa}"`,
+		`rm -f '$REMOTE_REPO_DIR/financeqa'`,
+		`'$REMOTE_FINANCEQA_BIN' serve`,
+		`verify OpenClaw config references the finance plugin and skill path`,
+		`cfg.plugins?.entries?.['openclaw-finance']?.enabled === true`,
+		`cfg.plugins?.entries?.['openclaw-finance']?.hooks?.allowPromptInjection === true`,
+		`cfg.plugins.installs['openclaw-finance'].version = pluginVersion`,
+		`cfg.plugins.installs['openclaw-finance'].installedAt = new Date().toISOString()`,
 	} {
 		if !strings.Contains(scriptText, want) {
 			t.Fatalf("sync script should publish OpenClaw plugin runtime and prompt hook config; missing %q", want)
 		}
+	}
+	if strings.Contains(scriptText, `cfg.plugins.entries['openclaw-finance'].enabled = true`) ||
+		strings.Contains(scriptText, `cfg.plugins.entries['openclaw-finance'].hooks.allowPromptInjection = true`) {
+		t.Fatalf("sync script should verify existing OpenClaw runtime config by default, not rewrite plugin entry settings")
 	}
 	if strings.Contains(scriptText, `$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js`) ||
 		strings.Contains(scriptText, `$SERVER:$REMOTE_OPENCLAW_PLUGIN_DIR/index.ts`) ||
@@ -119,6 +145,12 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 	if strings.Contains(scriptText, "LOCAL_PLUGIN_INDEX") ||
 		strings.Contains(scriptText, "plugin/openclaw-finance/index.ts' '$REMOTE_OPENCLAW_PLUGIN_DIR/index.ts") {
 		t.Fatalf("sync script should not publish plugin source entrypoint into the OpenClaw extension")
+	}
+	if strings.Contains(scriptText, `go build -o '$REMOTE_REPO_DIR/financeqa'`) {
+		t.Fatalf("sync script should not build the canonical server binary at repo root")
+	}
+	if strings.Contains(scriptText, `ln -sfn '$REMOTE_FINANCEQA_BIN' '$REMOTE_REPO_DIR/financeqa'`) {
+		t.Fatalf("sync script should not keep a second repo-root financeqa entrypoint")
 	}
 	if strings.Contains(scriptText, "finance_bridge.py") || strings.Contains(scriptText, "LOCAL_BRIDGE") {
 		t.Fatalf("sync script should publish Go MCP only, got Python bridge references")
@@ -140,8 +172,8 @@ func TestFinanceFinalAnswerWrapperDoesNotHardcodeServerBridgePath(t *testing.T) 
 	if strings.Contains(wrapperText, "FINANCE_BRIDGE_PATH") || strings.Contains(wrapperText, "BRIDGE_PATH") || strings.Contains(wrapperText, "finance_bridge.py") {
 		t.Fatalf("final answer wrapper should not call the Python bridge")
 	}
-	if !strings.Contains(wrapperText, `FINANCEQA_BIN="${FINANCEQA_BIN:-$ROOT_DIR/financeqa}"`) {
-		t.Fatalf("final answer wrapper should default to the repo-local Go financeqa binary")
+	if !strings.Contains(wrapperText, `FINANCEQA_BIN="${FINANCEQA_BIN:-$ROOT_DIR/bin/financeqa}"`) {
+		t.Fatalf("final answer wrapper should default to the canonical repo bin/financeqa binary")
 	}
 	if !strings.Contains(wrapperText, `financeqa_bin, "serve"`) {
 		t.Fatalf("final answer wrapper should call financeqa serve")

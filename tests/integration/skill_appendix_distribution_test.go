@@ -139,13 +139,16 @@ func TestSyncScriptPublishesAppendixForOpenClawSkillDir(t *testing.T) {
 		t.Fatalf("sync script should symlink appendix into Claude Code skill docs path")
 	}
 	if !strings.Contains(scriptText, "skills.load.extraDirs") {
-		t.Fatalf("sync script should register finance skill under skills.load.extraDirs so runtime prompt ordering includes it")
+		t.Fatalf("sync script should verify finance skill is present under skills.load.extraDirs")
 	}
 	if !strings.Contains(scriptText, "const financeSkillDir = process.argv[2];") {
-		t.Fatalf("sync script should pass the published finance skill dir into the OpenClaw config patch")
+		t.Fatalf("sync script should pass the published finance skill dir into the OpenClaw config check")
 	}
-	if !strings.Contains(scriptText, "cfg.skills.load.extraDirs = [financeSkillDir, ...existing.filter((dir) => dir !== financeSkillDir)];") {
-		t.Fatalf("sync script should keep finance skill dir first in skills.load.extraDirs")
+	if !strings.Contains(scriptText, "extraDirs.includes(financeSkillDir)") {
+		t.Fatalf("sync script should verify existing OpenClaw config includes the finance skill dir")
+	}
+	if strings.Contains(scriptText, "cfg.skills.load.extraDirs = [financeSkillDir, ...existing.filter((dir) => dir !== financeSkillDir)];") {
+		t.Fatalf("sync script should not rewrite skills.load.extraDirs when existing OpenClaw config is usable")
 	}
 	if !strings.Contains(scriptText, "delete entry.skillsSnapshot;") {
 		t.Fatalf("sync script should clear stale OpenClaw session skillsSnapshot caches after publishing finance skill")

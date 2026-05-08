@@ -33,7 +33,7 @@ flowchart LR
         HR1["SKILL.md"]
         HR2["docs/SKILL_APPENDIX_FULL.md"]
         HR3["plugin/openclaw-finance/dist/index.esm.js"]
-        HR4["financeqa"]
+        HR4["bin/financeqa"]
         HR5[".env / config/rules.json"]
         HR6["plugin/openclaw-finance/openclaw.plugin.json"]
         HR7["plugin/openclaw-finance/package.json"]
@@ -65,7 +65,7 @@ flowchart LR
     subgraph Runtime["运行时"]
         RT1["宿主 LLM"]
         RT2["financeqa serve<br/>Go MCP"]
-        RT3["~/finance_qa/financeqa"]
+        RT3["~/finance_qa/bin/financeqa"]
         RT4["systemd timer: feishu scan"]
         RT5["systemd timer: ocr process-pending"]
         DB[("PostgreSQL default<br/>explicit SQLite only")]
@@ -115,13 +115,13 @@ flowchart LR
 ## 发布约束
 
 1. 发布到宿主时必须保留 `SKILL.md -> docs/SKILL_APPENDIX_FULL.md` 相对路径。
-2. 线上 Go MCP 默认二进制是 `~/finance_qa/financeqa`，代码变更后需要重新编译。
+2. 线上 Go MCP 固定且唯一的二进制是 `~/finance_qa/bin/financeqa`，代码变更后需要重新编译该文件。
 3. Go MCP 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
 4. OpenClaw/Claude 当前可调用 Go MCP 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 5. `finance-query` 推荐 MCP 调用格式：`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"..."}}}`。
-6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库，并用软链接发布到 OpenClaw/Claude 消费路径。
+6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库，并用软链接发布到 OpenClaw/Claude 消费路径；脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据。
 7. OpenClaw extension 只保留 runtime 文件；OpenClaw/Claude skill 路径必须指向服务器仓库同一份 `SKILL.md` 与 appendix。
-8. `finance_qa`、Go MCP 和 OpenClaw plugin 当前主版本均为 `2.0.0`，主版本号需要同步。
+8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.0.1`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
 
 ## 运行时要点
 
@@ -154,7 +154,7 @@ journalctl -u financeqa-ocr-worker.service -n 100 --no-pager
 如果从 macOS 本机部署到 Linux 服务器，先交叉编译 Linux 二进制，避免把 macOS Mach-O 文件覆盖到服务器：
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o financeqa ./cmd/financeqa
+GOOS=linux GOARCH=amd64 go build -o bin/financeqa ./cmd/financeqa
 ```
 
 运行链路：
@@ -239,10 +239,10 @@ OCR_WORKER_CONCURRENCY=2
 
 ```bash
 go test ./... -count=1
-go build -o financeqa ./cmd/financeqa/...
+go build -o bin/financeqa ./cmd/financeqa/...
 RUN_LIVE_OSS_SMOKE=1 go test ./internal/storage -run TestLiveOSSUploadDownloadSmoke -count=1 -v
 go test ./internal/feishusync -run 'TestPDFScanner|TestWorkbookScanner' -count=1
-./financeqa ocr process-file --file tmp/pdfs/gemini-smoke-contract.pdf
+./bin/financeqa ocr process-file --file tmp/pdfs/gemini-smoke-contract.pdf
 ```
 
 飞书应用审核通过且文档授权完成后，再跑真实闭环：
@@ -250,9 +250,9 @@ go test ./internal/feishusync -run 'TestPDFScanner|TestWorkbookScanner' -count=1
 ```bash
 # 需先配置 FEISHU_SYNC_SOURCES_FILE=~/finance_qa/secrets/feishu_sources.json
 # 或配置等价的 FEISHU_SYNC_SOURCES_JSON
-./financeqa feishu seed-sources
-./financeqa feishu scan --company "南京优集数据科技有限公司"
-./financeqa ocr process-pending --limit 10 --concurrency 2
+./bin/financeqa feishu seed-sources
+./bin/financeqa feishu scan --company "南京优集数据科技有限公司"
+./bin/financeqa ocr process-pending --limit 10 --concurrency 2
 ```
 
 常见边界：

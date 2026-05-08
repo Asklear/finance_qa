@@ -11,6 +11,7 @@ SERVER="root@X.X.X.X"
 KEY="${HOME}/.ssh/your-key.pem"
 REMOTE_HOME="$(ssh -i "$KEY" "$SERVER" 'printf %s "$HOME"')"
 REMOTE_DIR="${REMOTE_DIR:-$REMOTE_HOME/finance_qa}"
+REMOTE_FINANCEQA_BIN="${REMOTE_FINANCEQA_BIN:-$REMOTE_DIR/bin/financeqa}"
 PACKAGE_NAME="finance_qa_plugin"
 # -------------
 
@@ -56,13 +57,15 @@ ssh -i "$KEY" $SERVER << REMOTE_SCRIPT
     # 开始针对服务器架构原生编译
     export GOPROXY=https://goproxy.cn,direct
     go mod tidy
-    go build -o financeqa ./cmd/financeqa/...
+    mkdir -p "$(dirname "$REMOTE_FINANCEQA_BIN")"
+    go build -o "$REMOTE_FINANCEQA_BIN" ./cmd/financeqa/...
+    rm -f "$REMOTE_DIR/financeqa"
     
     echo ">> (可选) 将 SKILL.md 注册进 OpenClaw..."
     echo "============================================="
     echo "✅ 部署大功告成！"
     echo "当前服务端运行库入口已就绪:"
-    echo "$REMOTE_DIR/financeqa query '今年人力成本多少'"
+    echo "$REMOTE_FINANCEQA_BIN query '今年人力成本多少'"
     echo "============================================="
 REMOTE_SCRIPT
 

@@ -38,7 +38,7 @@
      '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"用户原问题"}}}' \
      | financeqa serve
    ```
-   若当前环境没有全局 `financeqa`，先在仓库内执行 `go build -o financeqa ./cmd/financeqa/...`，再用 `./financeqa serve`。解析 `tools/call` 返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源和来源更新时间，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 Go MCP 的最终答案。
+   若当前环境没有全局 `financeqa`，先在仓库内执行 `go build -o bin/financeqa ./cmd/financeqa/...`，再用 `./bin/financeqa serve`。线上固定且唯一的二进制路径是 `~/finance_qa/bin/financeqa`。解析 `tools/call` 返回的 `content[0].text` JSON 后，如果存在 `final_answer`，必须把 `final_answer` 原样返回；其次才用 `boss_reply_text`、`boss_reply`、`message`。不能摘要、改写、换算或省略来源和来源更新时间，不能用历史对话、记忆、旧答案、利润表/银行流水/原始 SQL 自己重算替代 Go MCP 的最终答案。
 1. 优先调用 `finance-query` 获取结构化回答。
 2. 若 `success=false` 或 `answer_method=llm_payload`，立即调用 `finance-host-data` 做兜底推理。
 3. 涉及报表导入，使用 `finance-upload`（单文件）。

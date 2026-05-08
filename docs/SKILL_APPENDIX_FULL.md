@@ -570,16 +570,16 @@ bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
 ```bash
 # 查询
-./financeqa query --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
+./bin/financeqa query --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
 
 # 合同维度查询
-./financeqa query --company "南京优集数据科技有限公司" "辽宁金程信息科技有限公司2025年合同结算多少？其中10月到账多少？"
+./bin/financeqa query --company "南京优集数据科技有限公司" "辽宁金程信息科技有限公司2025年合同结算多少？其中10月到账多少？"
 
 # 主动获取上层 Agent 数据包
-./financeqa host-data --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
+./bin/financeqa host-data --company "南京优集数据科技有限公司" --from 2026-02 --to 2026-02 "请判断该月利润异常原因"
 
 # 单文件导入
-./financeqa import /path/to/report.xls
+./bin/financeqa import /path/to/report.xls
 ```
 
 ## 14. 财务统计基本原则（不可违反）

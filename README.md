@@ -94,14 +94,14 @@ OCR_WORKER_CONCURRENCY=2
 go build ./cmd/financeqa/...
 
 # 如果从 macOS 本机部署到 Linux 服务器，使用交叉编译
-GOOS=linux GOARCH=amd64 go build -o financeqa ./cmd/financeqa
+GOOS=linux GOARCH=amd64 go build -o bin/financeqa ./cmd/financeqa
 
 # 2. 从本地文件夹全量导入初始化数据库
-./financeqa sync "/path/to/exported/excel/files"
+./bin/financeqa sync "/path/to/exported/excel/files"
 
 # 3. 命令行自然语言查询大体验
-./financeqa query --company "你的公司名称" "这个月花了多少钱"
-./financeqa query "今年客户收入总和汇总"
+./bin/financeqa query --company "你的公司名称" "这个月花了多少钱"
+./bin/financeqa query "今年客户收入总和汇总"
 ```
 
 ### 2.1 飞书主动扫描（V1）
@@ -138,7 +138,7 @@ http://127.0.0.1:8787/feishu/oauth/callback
 然后通过 SSH 端口转发在服务器上执行一次用户授权：
 
 ```bash
-ssh -L 8787:127.0.0.1:8787 lzh 'cd ~/finance_qa && ./financeqa feishu oauth-login --token-file ~/finance_qa/secrets/feishu_user_token.json'
+ssh -L 8787:127.0.0.1:8787 lzh 'cd ~/finance_qa && ./bin/financeqa feishu oauth-login --token-file ~/finance_qa/secrets/feishu_user_token.json'
 ```
 
 命令会打印授权链接，在本机浏览器打开并同意授权；回调会通过 SSH 隧道写入服务器 token file。授权后服务器 `.env` 配置：
@@ -183,16 +183,16 @@ FEISHU_SYNC_SOURCES_FILE=~/finance_qa/secrets/feishu_sources.json
 
 ```bash
 # 1. 写入已配置的飞书来源
-./financeqa feishu seed-sources
+./bin/financeqa feishu seed-sources
 
 # 2. 查看来源状态
-./financeqa feishu sources
+./bin/financeqa feishu sources
 
 # 3. 扫描全部来源
-./financeqa feishu scan --company "南京优集数据科技有限公司"
+./bin/financeqa feishu scan --company "南京优集数据科技有限公司"
 
 # 4. 只扫描一个来源
-./financeqa feishu sync-once --source-token replace_with_source_token
+./bin/financeqa feishu sync-once --source-token replace_with_source_token
 ```
 
 PDF 扫描规则：扫描器会递归遍历飞书来源文件夹，按“来源根目录 + 相对路径 + 文件名”识别同一业务位置，内容 hash 变化才重新进入待 OCR 状态；合同 PDF 写入 `contract_main`，发票 PDF 写入 `contract_invoices`，云盘中消失的文件会在对应表标记为 `sync_status='deleted'`，不会硬删除 OCR 记录。路径中包含 `发票`、`开票` 或 `invoice` 的 PDF 会标记为发票，关系 key 取去掉发票目录后的业务目录；同一关系 key 下的发票通过 `contract_invoices.contract_id` 关联到合同，支持发票晚于合同上传。未匹配到合同的发票不会猜测落库，会等待下一轮扫描。财务表格按整份 `.xlsx` 快照导入，hash 未变则跳过，hash 变化则复用现有导入链路做整表刷新；导出的 Excel 批注/单元格备注会按单元格坐标保存到 `source_cell_notes`，覆盖 `fin_fund_income`、`fin_cost_settlements` 及对应合并组表；收入明细里可见的“备注”列会单独保存到 `fin_fund_income.remarks` 和 `fin_fund_income_groups.remarks`。如果某一行只有“备注”列有内容、没有任何金额列，导入器会保留一条当季末月的 0 金额 `fin_fund_income` 记录，便于查询谈判状态或备注金额，但不会影响收入、收款、开票合计。
@@ -239,24 +239,24 @@ journalctl -u financeqa-feishu-scan.service -n 100 --no-pager
 
 ```bash
 # 处理待 OCR 的 PDF
-./financeqa ocr process-pending --limit 10 --concurrency 2
+./bin/financeqa ocr process-pending --limit 10 --concurrency 2
 
 # 使用 ikuncode 时不需要 GEMINI_PROXY；只有直连官方 Gemini 且网络需要时才设置代理
 
 # 调试单个 PDF，不写数据库
-./financeqa ocr process-file --file "/path/to/sample.pdf"
+./bin/financeqa ocr process-file --file "/path/to/sample.pdf"
 
 # 也可以直接处理 contract_main.storage_key 中的 OSS 相对路径 PDF
-./financeqa ocr process-file --file "tenant/uhub/contract/优集客户合同/合同A.pdf"
+./bin/financeqa ocr process-file --file "tenant/uhub/contract/优集客户合同/合同A.pdf"
 
 # 调试单个 PDF，并写回指定 contract_main.id
-./financeqa ocr process-file --file "/path/to/sample.pdf" --contract-id 123
+./bin/financeqa ocr process-file --file "/path/to/sample.pdf" --contract-id 123
 ```
 
 OCR worker 的 timer 使用 `deploy/systemd/financeqa-ocr-worker.*`。默认命令会读取 `.env` 中的 `OCR_WORKER_LIMIT` 和 `OCR_WORKER_CONCURRENCY`；也可以直接手动运行：
 
 ```bash
-./financeqa ocr process-pending --limit 10 --concurrency 2
+./bin/financeqa ocr process-pending --limit 10 --concurrency 2
 systemctl status financeqa-ocr-worker.service
 journalctl -u financeqa-ocr-worker.service -n 100 --no-pager
 ```
@@ -265,11 +265,11 @@ journalctl -u financeqa-ocr-worker.service -n 100 --no-pager
 
 ```bash
 go test ./... -count=1
-go build -o financeqa ./cmd/financeqa/...
+go build -o bin/financeqa ./cmd/financeqa/...
 RUN_LIVE_OSS_SMOKE=1 go test ./internal/storage -run TestLiveOSSUploadDownloadSmoke -count=1 -v
-./financeqa feishu seed-sources
-./financeqa feishu scan --company "南京优集数据科技有限公司"
-./financeqa ocr process-pending --limit 10 --concurrency 2
+./bin/financeqa feishu seed-sources
+./bin/financeqa feishu scan --company "南京优集数据科技有限公司"
+./bin/financeqa ocr process-pending --limit 10 --concurrency 2
 ```
 
 飞书审核通过前，最后两步真实扫描可能失败；这时只代表飞书访问尚未完成，不代表 OSS、OCR 或数据库下游不可用。
@@ -294,10 +294,10 @@ go test ./internal/accounting/ -v
 
 ```bash
 # 方式 1：加载规则文件
-FINANCEQA_RULES_PATH=./config/rules.json ./financeqa query --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
+FINANCEQA_RULES_PATH=./config/rules.json ./bin/financeqa query --company "南京优集数据科技有限公司" "2026年2月收入/成本/利润分别是多少"
 
 # 方式 2：直接覆盖 stopwords
-FINANCEQA_METRIC_STOPWORDS="收入,成本,利润,经营状况" ./financeqa query --company "南京优集数据科技有限公司" "飞未2月收入多少"
+FINANCEQA_METRIC_STOPWORDS="收入,成本,利润,经营状况" ./bin/financeqa query --company "南京优集数据科技有限公司" "飞未2月收入多少"
 ```
 
 当前默认 schema 为 `schema_version = 2`，按词典域组织：
@@ -570,7 +570,7 @@ Go MCP 层（`financeqa serve`）会额外补充：
 
 ## 七、MCP 模式部署（推荐）
 
-系统已支持 **MCP (Model Context Protocol)** 模式，OpenClaw 可直接通过 stdio 调用 `financeqa serve`，无需 Python bridge 脚本。
+系统已支持 **MCP (Model Context Protocol)** 模式。当前线上 OpenClaw 不通过 `openclaw.json.mcpServers` 注册独立 server，而是加载 `openclaw-finance` extension；extension 内部作为 MCP client，通过 stdio 启动 `~/finance_qa/bin/financeqa serve`，无需 Python bridge 脚本。
 
 ### 1. MCP 架构
 
@@ -613,25 +613,47 @@ scp bin/financeqa lzh:/root/finance_qa/bin/
 SERVER=root@8.129.14.124 KEY_PATH="$HOME/Downloads/未命名文件夹 2/lzh-key.pem" \
   tests/scripts/sync_openclaw_bridge_and_skill.sh
 
-# 4. 更新 openclaw.json 配置（版本 >= 2.0.0）
-#    确保 skills.load.extraDirs 包含 ~/.openclaw/skills/finance，plugins.entries.openclaw-finance.enabled=true
+# 4. 核验 openclaw.json 运行配置，并同步 OpenClaw install metadata 版本
+#    脚本只读校验 skill 路径和 openclaw-finance 插件开关；只写 plugins.installs.openclaw-finance.version/installedAt。
 ```
 
 线上 `~/.openclaw/openclaw.json` 关键配置：
 
 ```json
 {
-  "version": "2.0.0",
-  "skills": ["finance"],
-  "extensions": ["openclaw-finance"]
+  "skills": {
+    "load": {
+      "extraDirs": ["/root/.openclaw/skills/finance"]
+    }
+  },
+  "plugins": {
+    "entries": {
+      "openclaw-finance": {
+        "enabled": true,
+        "hooks": {
+          "allowPromptInjection": true
+        }
+      }
+    },
+    "installs": {
+      "openclaw-finance": {
+        "source": "path",
+        "sourcePath": "/root/.openclaw/extensions/openclaw-finance",
+        "installPath": "/root/.openclaw/extensions/openclaw-finance",
+        "version": "2.0.1"
+      }
+    }
+  }
 }
 ```
+
+说明：`plugin/openclaw-finance/server/README.md` 里的旧 `mcpServers` 示例已废弃；当前 extension 会自行启动 Go MCP。
 
 ### 3. 构建优化
 
 **开发构建**（本地调试，含符号表）：
 ```bash
-go build -o financeqa ./cmd/financeqa
+go build -o bin/financeqa ./cmd/financeqa
 # 约 28MB（含 DWARF 调试信息）
 ```
 
@@ -656,11 +678,11 @@ go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
 
 ### 5. 版本兼容性
 
-- finance_qa / Go MCP: `financeqa --version`（当前 `2.0.0`）
-- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`（当前 `2.0.0`）
-- OpenClaw Config: `~/.openclaw/openclaw.json`（当前 `2.0.0+`）
+- finance_qa / Go MCP: `~/finance_qa/bin/financeqa version`（当前 `2.0.1`）
+- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`（当前 `2.0.1`）
+- OpenClaw Config: `~/.openclaw/openclaw.json` 的 `plugins.installs.openclaw-finance.version` 需与插件版本同步；运行配置只校验 `skills.load.extraDirs`、`plugins.entries.openclaw-finance.enabled` 和 `hooks.allowPromptInjection`
 
-三处主版本号需要保持同步以避免混淆。
+Go MCP、OpenClaw Plugin metadata 与 `openclaw.json` 中的 OpenClaw install metadata semver 需要保持同步；`plugins.entries` 运行开关只做启用配置校验。
 
 ## 八、Agent 对接能力矩阵
 

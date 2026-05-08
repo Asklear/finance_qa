@@ -51,8 +51,9 @@ def mcp_payload(stdout):
 
 
 def run_local(root, question, timeout):
+    financeqa_bin = root / "bin" / "financeqa"
     proc = subprocess.run(
-        [str(root / "financeqa"), "query", question],
+        [str(financeqa_bin), "query", question],
         cwd=str(root),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -64,7 +65,7 @@ def run_local(root, question, timeout):
 
 def run_mcp(root, question, timeout):
     env = os.environ.copy()
-    env.setdefault("FINANCEQA_BIN", str(root / "financeqa"))
+    env.setdefault("FINANCEQA_BIN", str(root / "bin" / "financeqa"))
     env.setdefault("FINANCEQA_SKILL_PATH", str(root / "SKILL.md"))
     env.setdefault("FINANCEQA_APPENDIX_PATH", str(root / "docs/SKILL_APPENDIX_FULL.md"))
     requests = [
