@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 func (e *Engine) collectCustomerContractSummary(summary contractDimensionSummary, like string, hasSubPeriod bool, subPeriod string) (contractDimensionSummary, error) {
@@ -13,11 +14,15 @@ func (e *Engine) collectCustomerContractSummary(summary contractDimensionSummary
 
 	settlementAmount := round2(totals.Settlement)
 	invoiceAmount := round2(totals.Invoice)
+	unattributedInvoiceAmount := round2(totals.UnattributedInvoice)
 	cashReceived := round2(totals.Received)
 	summary.Data["book_view"] = map[string]any{
-		"settlement_amount": settlementAmount,
-		"invoice_amount":    invoiceAmount,
-		"view":              "contract_ledger",
+		"settlement_amount":              settlementAmount,
+		"invoice_amount":                 invoiceAmount,
+		"unattributed_invoice_amount":    unattributedInvoiceAmount,
+		"unattributed_invoice_contracts": contractDimensionRowsToMaps(totals.UnattributedInvoiceContracts),
+		"invoice_attribution_note":       contractInvoiceAttributionNote(unattributedInvoiceAmount, totals.UnattributedInvoiceContracts),
+		"view":                           "contract_ledger",
 	}
 	summary.Data["cash_view"] = map[string]any{
 		"received_amount": cashReceived,
@@ -41,4 +46,47 @@ func (e *Engine) collectCustomerContractSummary(summary contractDimensionSummary
 		"customer_contract_cash: SELECT SUM(received_amount) FROM fin_fund_income + fin_fund_income_groups ... WHERE year_month BETWEEN ? AND ?",
 	)
 	return summary, nil
+}
+
+func contractInvoiceAttributionNote(unattributedInvoiceAmount float64, contracts []contractDimensionRow) string {
+	if round2(unattributedInvoiceAmount) <= 0 {
+		return ""
+	}
+	contractList := contractDimensionContentList(contracts)
+	if contractList == "" {
+		return fmt.Sprintf("另有合并开票 %.2f 元覆盖多个合同，不能归属到当前单个合同。", round2(unattributedInvoiceAmount))
+	}
+	return fmt.Sprintf("另有合并开票 %.2f 元覆盖多个合同（%s），不能归属到当前单个合同。", round2(unattributedInvoiceAmount), contractList)
+}
+
+func contractDimensionRowsToMaps(rows []contractDimensionRow) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, map[string]any{
+			"contract_id":      row.ContractID,
+			"customer_name":    row.CustomerName,
+			"contract_content": row.ContractContent,
+		})
+	}
+	return out
+}
+
+func contractDimensionContentList(rows []contractDimensionRow) string {
+	seen := map[string]struct{}{}
+	contents := make([]string, 0, len(rows))
+	for _, row := range rows {
+		content := strings.TrimSpace(row.ContractContent)
+		if content == "" {
+			content = strings.TrimSpace(row.ContractID)
+		}
+		if content == "" {
+			continue
+		}
+		if _, ok := seen[content]; ok {
+			continue
+		}
+		seen[content] = struct{}{}
+		contents = append(contents, content)
+	}
+	return strings.Join(contents, "、")
 }

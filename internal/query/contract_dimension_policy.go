@@ -15,6 +15,8 @@ func inferContractAskedTopic(question string) string {
 		return "cost"
 	case containsAny(q, []string{"回款", "到账", "收款"}):
 		return "receipts"
+	case containsAny(q, []string{"开票", "发票"}):
+		return "invoice"
 	case containsAny(q, []string{"付款", "支付"}):
 		return "payments"
 	default:

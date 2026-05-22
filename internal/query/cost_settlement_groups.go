@@ -3,14 +3,16 @@ package query
 import "context"
 
 type costSettlementTotals struct {
-	Settlement    float64
-	Paid          float64
-	Invoice       float64
-	Payable       float64
-	InvoiceOpen   float64
-	RowCount      int
-	MonthCount    int
-	ContractCount int
+	Settlement                   float64
+	Paid                         float64
+	Invoice                      float64
+	UnattributedInvoice          float64
+	UnattributedInvoiceContracts []contractDimensionRow
+	Payable                      float64
+	InvoiceOpen                  float64
+	RowCount                     int
+	MonthCount                   int
+	ContractCount                int
 }
 
 func (e *Engine) collectCostSettlementTotals(ctx context.Context, periodFrom, periodTo, like string) (costSettlementTotals, error) {
@@ -19,14 +21,16 @@ func (e *Engine) collectCostSettlementTotals(ctx context.Context, periodFrom, pe
 		return costSettlementTotals{}, err
 	}
 	return costSettlementTotals{
-		Settlement:    totals.Settlement,
-		Paid:          totals.Movement,
-		Invoice:       totals.Invoice,
-		Payable:       totals.SettlementOpen,
-		InvoiceOpen:   totals.InvoiceOpen,
-		RowCount:      totals.RowCount,
-		MonthCount:    totals.MonthCount,
-		ContractCount: totals.ContractCount,
+		Settlement:                   totals.Settlement,
+		Paid:                         totals.Movement,
+		Invoice:                      totals.Invoice,
+		UnattributedInvoice:          totals.UnattributedInvoice,
+		UnattributedInvoiceContracts: totals.UnattributedInvoiceContracts,
+		Payable:                      totals.SettlementOpen,
+		InvoiceOpen:                  totals.InvoiceOpen,
+		RowCount:                     totals.RowCount,
+		MonthCount:                   totals.MonthCount,
+		ContractCount:                totals.ContractCount,
 	}, nil
 }
 

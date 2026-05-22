@@ -7,14 +7,16 @@ import (
 )
 
 type contractFinanceTotals struct {
-	Settlement     float64
-	Movement       float64
-	Invoice        float64
-	SettlementOpen float64
-	InvoiceOpen    float64
-	RowCount       int
-	MonthCount     int
-	ContractCount  int
+	Settlement                   float64
+	Movement                     float64
+	Invoice                      float64
+	UnattributedInvoice          float64
+	UnattributedInvoiceContracts []contractDimensionRow
+	SettlementOpen               float64
+	InvoiceOpen                  float64
+	RowCount                     int
+	MonthCount                   int
+	ContractCount                int
 }
 
 type contractFinanceTotalsSpec struct {
@@ -97,28 +99,30 @@ WHERE d.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.DirectTable)
 		return totals, nil
 	}
 
-	groupAmountFilter := `g.year_month BETWEEN ? AND ?`
-	groupAmountArgs := []any{periodFrom, periodTo}
-	if like != "" {
-		groupAmountFilter += ` AND g.customer_name LIKE ?`
-		groupAmountArgs = append(groupAmountArgs, like)
-	}
+	groupAmountFilter, groupAmountArgs := e.contractFinanceGroupAmountFilter(spec, periodFrom, periodTo, like)
 
+	groupInvoicePredicate, groupInvoiceArgs := e.contractFinanceGroupInvoiceAttributionPredicate(spec, like)
 	groupSQL := fmt.Sprintf(`
 SELECT COALESCE(SUM(g.settlement_amount), 0),
        COALESCE(SUM(g.%[1]s), 0),
-       COALESCE(SUM(g.invoice_amount), 0),
+       COALESCE(SUM(CASE WHEN %[3]s THEN g.invoice_amount ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN NOT (%[3]s) THEN g.invoice_amount ELSE 0 END), 0),
        COALESCE(SUM(CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.%[1]s, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.%[1]s, 0) ELSE 0 END), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(g.invoice_amount, 0) > COALESCE(g.%[1]s, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.%[1]s, 0) ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN %[3]s AND COALESCE(g.invoice_amount, 0) > COALESCE(g.%[1]s, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.%[1]s, 0) ELSE 0 END), 0),
        COUNT(*)
 FROM %[2]s g
-WHERE `+groupAmountFilter, spec.MovementColumn, spec.GroupTable)
-	var groupSettlement, groupMovement, groupInvoice, groupSettlementOpen, groupInvoiceOpen float64
+WHERE `+groupAmountFilter, spec.MovementColumn, spec.GroupTable, groupInvoicePredicate)
+	groupQueryArgs := append([]any{}, groupInvoiceArgs...)
+	groupQueryArgs = append(groupQueryArgs, groupInvoiceArgs...)
+	groupQueryArgs = append(groupQueryArgs, groupInvoiceArgs...)
+	groupQueryArgs = append(groupQueryArgs, groupAmountArgs...)
+	var groupSettlement, groupMovement, groupInvoice, groupUnattributedInvoice, groupSettlementOpen, groupInvoiceOpen float64
 	var groupRows int
-	if err := e.db.QueryRowContext(ctx, groupSQL, groupAmountArgs...).Scan(
+	if err := e.db.QueryRowContext(ctx, groupSQL, groupQueryArgs...).Scan(
 		&groupSettlement,
 		&groupMovement,
 		&groupInvoice,
+		&groupUnattributedInvoice,
 		&groupSettlementOpen,
 		&groupInvoiceOpen,
 		&groupRows,
@@ -128,6 +132,14 @@ WHERE `+groupAmountFilter, spec.MovementColumn, spec.GroupTable)
 	totals.Settlement += groupSettlement
 	totals.Movement += groupMovement
 	totals.Invoice += groupInvoice
+	totals.UnattributedInvoice += groupUnattributedInvoice
+	if groupUnattributedInvoice > 0 {
+		contracts, err := e.collectContractFinanceUnattributedInvoiceContracts(ctx, spec, periodFrom, periodTo, like)
+		if err != nil {
+			return contractFinanceTotals{}, err
+		}
+		totals.UnattributedInvoiceContracts = contracts
+	}
 	totals.SettlementOpen += groupSettlementOpen
 	totals.InvoiceOpen += groupInvoiceOpen
 	if like == "" {
@@ -161,23 +173,101 @@ func (e *Engine) hasContractFinanceGroupTables(spec contractFinanceTotalsSpec) b
 		memberCols["contract_id"]
 }
 
-func (e *Engine) countContractFinanceGroupCoverageRows(ctx context.Context, spec contractFinanceTotalsSpec, periodFrom, periodTo, like string) (int, error) {
-	sqlText := fmt.Sprintf(`
-SELECT COUNT(*)
-FROM %[1]s g
-WHERE g.year_month BETWEEN ? AND ?
-  AND (
+func (e *Engine) contractFinanceGroupOwnerPredicate(spec contractFinanceTotalsSpec) string {
+	if e.hasContractFinanceGroupOwnerColumns(spec) {
+		return "gm.source_row_number = g.source_start_row"
+	}
+	return "1=1"
+}
+
+func (e *Engine) hasContractFinanceGroupOwnerColumns(spec contractFinanceTotalsSpec) bool {
+	groupCols := e.tableColumns(spec.GroupTable)
+	memberCols := e.tableColumns(spec.GroupMemberTable)
+	return groupCols["source_start_row"] && memberCols["source_row_number"]
+}
+
+func (e *Engine) contractFinanceGroupAmountFilter(spec contractFinanceTotalsSpec, periodFrom, periodTo, like string) (string, []any) {
+	filter := `g.year_month BETWEEN ? AND ?`
+	args := []any{periodFrom, periodTo}
+	if strings.TrimSpace(like) == "" {
+		return filter, args
+	}
+
+	filter += fmt.Sprintf(` AND (
     g.customer_name LIKE ?
     OR EXISTS (
       SELECT 1
-      FROM %[2]s gm
+      FROM %[1]s gm
       JOIN fin_contracts c ON c.contract_id = gm.contract_id
       WHERE gm.group_id = g.id
+        AND %[2]s
         AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)
     )
-  )`, spec.GroupTable, spec.GroupMemberTable)
+  )`, spec.GroupMemberTable, e.contractFinanceGroupOwnerPredicate(spec))
+	args = append(args, like, like, like)
+	return filter, args
+}
+
+func (e *Engine) contractFinanceGroupInvoiceAttributionPredicate(spec contractFinanceTotalsSpec, like string) (string, []any) {
+	if strings.TrimSpace(like) == "" {
+		return "1=1", nil
+	}
+	return fmt.Sprintf(`(g.customer_name LIKE ? OR (SELECT COUNT(*) FROM %[1]s gm_attr WHERE gm_attr.group_id = g.id) <= 1)`, spec.GroupMemberTable), []any{like}
+}
+
+func (e *Engine) collectContractFinanceUnattributedInvoiceContracts(ctx context.Context, spec contractFinanceTotalsSpec, periodFrom, periodTo, like string) ([]contractDimensionRow, error) {
+	like = strings.TrimSpace(like)
+	if like == "" {
+		return nil, nil
+	}
+	groupAmountFilter, groupAmountArgs := e.contractFinanceGroupAmountFilter(spec, periodFrom, periodTo, like)
+	groupInvoicePredicate, groupInvoiceArgs := e.contractFinanceGroupInvoiceAttributionPredicate(spec, like)
+	sourceRowExpr := "0"
+	orderExpr := "source_row_order"
+	if e.tableColumns(spec.GroupMemberTable)["source_row_number"] {
+		sourceRowExpr = "MIN(COALESCE(gm.source_row_number, 0))"
+	}
+	sqlText := fmt.Sprintf(`
+SELECT c.contract_id, c.customer_name, c.contract_content, %[3]s AS source_row_order
+FROM %[1]s g
+JOIN %[2]s gm ON gm.group_id = g.id
+JOIN fin_contracts c ON c.contract_id = gm.contract_id
+WHERE `+groupAmountFilter+`
+  AND NOT (`+groupInvoicePredicate+`)
+  AND COALESCE(g.invoice_amount, 0) > 0
+GROUP BY c.contract_id, c.customer_name, c.contract_content
+ORDER BY %[4]s, c.contract_id`, spec.GroupTable, spec.GroupMemberTable, sourceRowExpr, orderExpr)
+	args := append([]any{}, groupAmountArgs...)
+	args = append(args, groupInvoiceArgs...)
+	rows, err := e.db.QueryContext(ctx, sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]contractDimensionRow, 0)
+	for rows.Next() {
+		var row contractDimensionRow
+		var sourceRowOrder int
+		if err := rows.Scan(&row.ContractID, &row.CustomerName, &row.ContractContent, &sourceRowOrder); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (e *Engine) countContractFinanceGroupCoverageRows(ctx context.Context, spec contractFinanceTotalsSpec, periodFrom, periodTo, like string) (int, error) {
+	groupAmountFilter, args := e.contractFinanceGroupAmountFilter(spec, periodFrom, periodTo, like)
+	sqlText := fmt.Sprintf(`
+SELECT COUNT(*)
+FROM %[1]s g
+WHERE `+groupAmountFilter, spec.GroupTable)
 	var count int
-	if err := e.db.QueryRowContext(ctx, sqlText, periodFrom, periodTo, like, like, like).Scan(&count); err != nil {
+	if err := e.db.QueryRowContext(ctx, sqlText, args...).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -204,7 +294,7 @@ JOIN fin_contracts c ON c.contract_id = gm.contract_id
 WHERE g.year_month BETWEEN ? AND ?`, spec.GroupTable, spec.GroupMemberTable)
 	args = append(args, periodFrom, periodTo)
 	if like != "" {
-		groupSQL += ` AND (g.customer_name LIKE ? OR c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		groupSQL += fmt.Sprintf(` AND (g.customer_name LIKE ? OR (%s AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)))`, e.contractFinanceGroupOwnerPredicate(spec))
 		args = append(args, like, like, like)
 	}
 

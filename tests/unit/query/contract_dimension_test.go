@@ -317,6 +317,49 @@ func TestCompoundCustomerContractQuestionDoesNotRequireUnpaidMetric(t *testing.T
 	}
 }
 
+func TestCompoundCustomerUnpaidQuestionReturnsProjectDetails(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	seedCompoundCustomerMergedRevenueOwnerRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("帮我整理下四川其妙和辽宁金程 2025Q4和2026Q1 已结算未付款的项目和对应金额，另外拆开具体项目明细")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["query_pipeline"]; got != "compound_source_query" {
+		t.Fatalf("query_pipeline = %v, want compound_source_query", got)
+	}
+	details, ok := res.Data["detail_items"].([]map[string]any)
+	if !ok || len(details) == 0 {
+		t.Fatalf("detail_items missing or empty: %#v", res.Data["detail_items"])
+	}
+	assertCompoundDetailItem(t, details, "四川其妙科技有限公司", "2026年Q1", "四川其妙数据服务合同", 3200, 1600, 1600)
+	assertCompoundDetailItem(t, details, "辽宁金程信息科技有限公司", "2025年Q4", "行业商品数据采购合同-A01", 3000, 2734, 266)
+	assertNoCompoundDetailItem(t, details, "四川其妙科技有限公司", "2025年Q4")
+	assertNoCompoundDetailItem(t, details, "辽宁金程信息科技有限公司", "2026年Q1")
+
+	items, ok := res.Data["items"].([]map[string]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %#v", res.Data["items"])
+	}
+	for _, item := range items {
+		if item["entity"] == "四川其妙科技有限公司" && item["period_label"] == "2026年Q1" {
+			if nested, ok := item["detail_items"].([]map[string]any); !ok || len(nested) != 1 {
+				t.Fatalf("四川其妙 2026Q1 nested detail_items = %#v, want one item", item["detail_items"])
+			}
+			return
+		}
+	}
+	t.Fatalf("missing 四川其妙 2026Q1 aggregate item in %#v", items)
+}
+
 func TestCompoundPlannerSupportsContractCostTableMetrics(t *testing.T) {
 	runParallelHeavyQueryTest(t)
 
@@ -522,6 +565,35 @@ func assertCompoundContractMetricItem(t *testing.T, items []map[string]any, enti
 	t.Fatalf("missing item entity=%s period=%s in %#v", entity, periodLabel, items)
 }
 
+func assertCompoundDetailItem(t *testing.T, items []map[string]any, entity, periodLabel, content string, wantSettlement, wantReceived, wantUnpaid float64) {
+	t.Helper()
+	for _, item := range items {
+		if item["entity"] != entity || item["period_label"] != periodLabel || item["contract_content"] != content {
+			continue
+		}
+		if got := item["settlement_amount"]; got != wantSettlement {
+			t.Fatalf("%s %s %s settlement_amount = %v, want %.2f", entity, periodLabel, content, got, wantSettlement)
+		}
+		if got := item["received_amount"]; got != wantReceived {
+			t.Fatalf("%s %s %s received_amount = %v, want %.2f", entity, periodLabel, content, got, wantReceived)
+		}
+		if got := item["unpaid_amount"]; got != wantUnpaid {
+			t.Fatalf("%s %s %s unpaid_amount = %v, want %.2f", entity, periodLabel, content, got, wantUnpaid)
+		}
+		return
+	}
+	t.Fatalf("missing detail item entity=%s period=%s content=%s in %#v", entity, periodLabel, content, items)
+}
+
+func assertNoCompoundDetailItem(t *testing.T, items []map[string]any, entity, periodLabel string) {
+	t.Helper()
+	for _, item := range items {
+		if item["entity"] == entity && item["period_label"] == periodLabel {
+			t.Fatalf("unexpected detail item for %s %s: %#v", entity, periodLabel, item)
+		}
+	}
+}
+
 func seedCompoundCustomerUnpaidRows(t *testing.T, dbPath string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", dbPath)
@@ -555,6 +627,26 @@ func seedCompoundCustomerUnpaidRows(t *testing.T, dbPath string) {
 	}
 }
 
+func seedCompoundCustomerMergedRevenueOwnerRows(t *testing.T, dbPath string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	inserts := []string{
+		`INSERT INTO fin_fund_income_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES (401, '2026-01', 'contract_fund_income', '26年Q1收入明细', 40, 41, '四川其妙科技有限公司', '/', 700, 700, '是', 1200)`,
+		`INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number) VALUES (401, 'C030', 40), (401, 'C031', 41)`,
+	}
+	for _, stmt := range inserts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert compound merged revenue seed data failed: %v", err)
+		}
+	}
+}
+
 func TestContractMemberQuestionDoesNotAttributeWholeMergedFundIncomeGroup(t *testing.T) {
 	runParallelHeavyQueryTest(t)
 
@@ -565,16 +657,15 @@ func TestContractMemberQuestionDoesNotAttributeWholeMergedFundIncomeGroup(t *tes
 	}
 	defer engine.Close()
 
-	res := engine.Query("数据采购合同-快手2026年Q1收入是多少？")
+	res := engine.Query("数据采购合同-抖音2026年Q1收入是多少？")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	bookView, ok := res.Data["book_view"].(map[string]any)
-	if !ok {
-		t.Fatalf("book_view missing: %+v", res.Data)
+	if got := res.Data["contract_answer_status"]; got != "missing" {
+		t.Fatalf("contract_answer_status = %v, want missing because merged customer-level amount is not attributable to one member contract", got)
 	}
-	if got := bookView["settlement_amount"]; got != float64(0) {
-		t.Fatalf("settlement_amount = %v, want 0 because merged customer-level amount is not attributable to one member contract", got)
+	if _, ok := res.Data["book_view"]; ok {
+		t.Fatalf("book_view should be absent for unattributed member contract, got: %+v", res.Data["book_view"])
 	}
 }
 
@@ -588,16 +679,15 @@ func TestContractMemberQuestionDoesNotAttributeWholeMergedCostSettlementGroup(t 
 	}
 	defer engine.Close()
 
-	res := engine.Query("外包服务合同-A2026年Q1成本是多少？")
+	res := engine.Query("外包服务合同-B2026年Q1成本是多少？")
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	bookView, ok := res.Data["book_view"].(map[string]any)
-	if !ok {
-		t.Fatalf("book_view missing: %+v", res.Data)
+	if got := res.Data["contract_answer_status"]; got != "missing" {
+		t.Fatalf("contract_answer_status = %v, want missing because merged supplier-level amount is not attributable to one member contract", got)
 	}
-	if got := bookView["contract_cost"]; got != float64(0) {
-		t.Fatalf("contract_cost = %v, want 0 because merged supplier-level amount is not attributable to one member contract", got)
+	if _, ok := res.Data["book_view"]; ok {
+		t.Fatalf("book_view should be absent for unattributed member contract, got: %+v", res.Data["book_view"])
 	}
 }
 

@@ -207,8 +207,28 @@ WHERE f.year_month BETWEEN ? AND ?`
 		args = append(args, like, like)
 	}
 	if e.hasFundIncomeGroupTables() {
-		groupContent := e.mergedGroupContractContentSQL("fin_fund_income_group_members", "g")
-		unionSQL += `
+		if e.hasContractFinanceGroupOwnerColumns(fundIncomeTotalsSpec()) {
+			groupMemberCount := `(SELECT COUNT(*) FROM fin_fund_income_group_members gm_attr WHERE gm_attr.group_id = g.id)`
+			unionSQL += fmt.Sprintf(`
+UNION ALL
+SELECT c.customer_name,
+       c.contract_content,
+       COALESCE(g.settlement_amount, 0) AS settlement_amount,
+       CASE WHEN %[1]s <= 1 THEN COALESCE(g.invoice_amount, 0) ELSE 0 END AS invoice_amount,
+       COALESCE(g.received_amount, 0) AS received_amount,
+       CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.received_amount, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.received_amount, 0) ELSE 0 END AS open_amount
+FROM fin_fund_income_groups g
+JOIN fin_fund_income_group_members gm ON gm.group_id = g.id AND %[2]s
+JOIN fin_contracts c ON c.contract_id = gm.contract_id
+WHERE g.year_month BETWEEN ? AND ?`, groupMemberCount, e.contractFinanceGroupOwnerPredicate(fundIncomeTotalsSpec()))
+			args = append(args, periodFrom, periodTo)
+			if strings.TrimSpace(like) != "" {
+				unionSQL += ` AND (g.customer_name LIKE ? OR c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+				args = append(args, like, like, like)
+			}
+		} else {
+			groupContent := e.mergedGroupContractContentSQL("fin_fund_income_group_members", "g")
+			unionSQL += `
 UNION ALL
 SELECT g.customer_name,
        ` + groupContent + ` AS contract_content,
@@ -218,10 +238,11 @@ SELECT g.customer_name,
        CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.received_amount, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.received_amount, 0) ELSE 0 END AS open_amount
 FROM fin_fund_income_groups g
 WHERE g.year_month BETWEEN ? AND ?`
-		args = append(args, periodFrom, periodTo)
-		if strings.TrimSpace(like) != "" {
-			unionSQL += ` AND g.customer_name LIKE ?`
-			args = append(args, like)
+			args = append(args, periodFrom, periodTo)
+			if strings.TrimSpace(like) != "" {
+				unionSQL += ` AND g.customer_name LIKE ?`
+				args = append(args, like)
+			}
 		}
 	}
 	sqlText := `
@@ -230,7 +251,9 @@ SELECT customer_name,
        COALESCE(SUM(settlement_amount), 0),
        COALESCE(SUM(invoice_amount), 0),
        COALESCE(SUM(received_amount), 0),
-       COALESCE(SUM(open_amount), 0)
+       CASE WHEN COALESCE(SUM(settlement_amount), 0) > COALESCE(SUM(received_amount), 0)
+            THEN COALESCE(SUM(settlement_amount), 0) - COALESCE(SUM(received_amount), 0)
+            ELSE 0 END
 FROM (` + unionSQL + `) revenue_items
 GROUP BY customer_name, contract_content
 ORDER BY 3 DESC, customer_name, contract_content`
@@ -254,8 +277,28 @@ WHERE cs.year_month BETWEEN ? AND ?`
 		args = append(args, like, like)
 	}
 	if e.hasCostSettlementGroupTables() {
-		groupContent := e.mergedGroupContractContentSQL("fin_cost_settlement_group_members", "g")
-		unionSQL += `
+		if e.hasContractFinanceGroupOwnerColumns(costSettlementTotalsSpec()) {
+			groupMemberCount := `(SELECT COUNT(*) FROM fin_cost_settlement_group_members gm_attr WHERE gm_attr.group_id = g.id)`
+			unionSQL += fmt.Sprintf(`
+UNION ALL
+SELECT c.customer_name,
+       c.contract_content,
+       COALESCE(g.settlement_amount, 0) AS settlement_amount,
+       CASE WHEN %[1]s <= 1 THEN COALESCE(g.invoice_amount, 0) ELSE 0 END AS invoice_amount,
+       COALESCE(g.paid_amount, 0) AS paid_amount,
+       CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.paid_amount, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.paid_amount, 0) ELSE 0 END AS open_amount
+FROM fin_cost_settlement_groups g
+JOIN fin_cost_settlement_group_members gm ON gm.group_id = g.id AND %[2]s
+JOIN fin_contracts c ON c.contract_id = gm.contract_id
+WHERE g.year_month BETWEEN ? AND ?`, groupMemberCount, e.contractFinanceGroupOwnerPredicate(costSettlementTotalsSpec()))
+			args = append(args, periodFrom, periodTo)
+			if strings.TrimSpace(like) != "" {
+				unionSQL += ` AND (g.customer_name LIKE ? OR c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+				args = append(args, like, like, like)
+			}
+		} else {
+			groupContent := e.mergedGroupContractContentSQL("fin_cost_settlement_group_members", "g")
+			unionSQL += `
 UNION ALL
 SELECT g.customer_name,
        ` + groupContent + ` AS contract_content,
@@ -265,10 +308,11 @@ SELECT g.customer_name,
        CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.paid_amount, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.paid_amount, 0) ELSE 0 END AS open_amount
 FROM fin_cost_settlement_groups g
 WHERE g.year_month BETWEEN ? AND ?`
-		args = append(args, periodFrom, periodTo)
-		if strings.TrimSpace(like) != "" {
-			unionSQL += ` AND g.customer_name LIKE ?`
-			args = append(args, like)
+			args = append(args, periodFrom, periodTo)
+			if strings.TrimSpace(like) != "" {
+				unionSQL += ` AND g.customer_name LIKE ?`
+				args = append(args, like)
+			}
 		}
 	}
 	sqlText := `
@@ -277,7 +321,9 @@ SELECT customer_name,
        COALESCE(SUM(settlement_amount), 0),
        COALESCE(SUM(invoice_amount), 0),
        COALESCE(SUM(paid_amount), 0),
-       COALESCE(SUM(open_amount), 0)
+       CASE WHEN COALESCE(SUM(settlement_amount), 0) > COALESCE(SUM(paid_amount), 0)
+            THEN COALESCE(SUM(settlement_amount), 0) - COALESCE(SUM(paid_amount), 0)
+            ELSE 0 END
 FROM (` + unionSQL + `) cost_items
 GROUP BY customer_name, contract_content
 ORDER BY 3 DESC, customer_name, contract_content`

@@ -137,6 +137,307 @@ func TestCollectContractFinanceTotalsSupportsRevenueAndCostGroupRows(t *testing.
 	}
 }
 
+func TestCollectFundIncomeTotalsAttributesMergedGroupAmountToOwnerContract(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "contract-finance-owner-row.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			invoice_amount REAL
+		)`,
+		`CREATE TABLE fin_fund_income_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT,
+			year_month TEXT,
+			source_start_row INTEGER,
+			source_end_row INTEGER,
+			merge_range TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			invoice_amount REAL
+		)`,
+		`CREATE TABLE fin_fund_income_group_members (
+			group_id INTEGER,
+			contract_id TEXT,
+			source_row_number INTEGER
+		)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES
+			('C048', '四川其妙科技有限公司', '行业商品数据采购合同-A01'),
+			('C049', '四川其妙科技有限公司', '行业商品数据采购合同-A02'),
+			('C050', '四川其妙科技有限公司', '行业商品数据采购合同-A03')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, settlement_amount, received_amount, invoice_amount) VALUES
+			('C048', '2026-03', 1604085.34, 0, 0),
+			('C049', '2026-03', 583271.29, 0, 0)`,
+		`INSERT INTO fin_fund_income_groups(id, customer_name, year_month, source_start_row, source_end_row, merge_range, settlement_amount, received_amount, invoice_amount) VALUES
+			(287, '四川其妙科技有限公司', '2026-01', 3, 5, 'J3:J5', 883796.76, 0, 1668149.01),
+			(288, '四川其妙科技有限公司', '2026-02', 3, 5, 'O3:O5', 1189200.60, 0, 1895935.02)`,
+		`INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number) VALUES
+			(287, 'C048', 3), (287, 'C049', 4), (287, 'C050', 5),
+			(288, 'C048', 3), (288, 'C049', 4), (288, 'C050', 5)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt: %v", err)
+		}
+	}
+
+	engine := &Engine{
+		db:                db,
+		dbPath:            dbPath,
+		tableColumnCache:  map[string]map[string]bool{},
+		latestAnchorCache: map[string]time.Time{},
+		availablePeriod:   map[string]string{},
+	}
+
+	a01, err := engine.collectFundIncomeTotals(context.Background(), "2026-01", "2026-03", "%行业商品数据采购合同-A01%")
+	if err != nil {
+		t.Fatalf("collect A01 income totals: %v", err)
+	}
+	if got, want := round2(a01.Settlement), 3677082.70; got != want {
+		t.Fatalf("A01 settlement = %.2f, want %.2f", got, want)
+	}
+	if a01.RowCount != 3 || a01.MonthCount != 3 || a01.ContractCount != 1 {
+		t.Fatalf("A01 coverage = %+v, want row=3 month=3 contract=1", a01)
+	}
+	if got := round2(a01.Invoice); got != 0 {
+		t.Fatalf("A01 invoice = %.2f, want 0 because group invoice covers A01/A02/A03 and is not contract-attributable", got)
+	}
+	if got, want := round2(a01.UnattributedInvoice), 3564084.03; got != want {
+		t.Fatalf("A01 unattributed invoice = %.2f, want merged group invoice %.2f", got, want)
+	}
+	if got, want := contractFinanceTestContents(a01.UnattributedInvoiceContracts), []string{
+		"行业商品数据采购合同-A01",
+		"行业商品数据采购合同-A02",
+		"行业商品数据采购合同-A03",
+	}; !stringSlicesEqual(got, want) {
+		t.Fatalf("A01 unattributed invoice contracts = %#v, want %#v", got, want)
+	}
+
+	a02, err := engine.collectFundIncomeTotals(context.Background(), "2026-01", "2026-03", "%行业商品数据采购合同-A02%")
+	if err != nil {
+		t.Fatalf("collect A02 income totals: %v", err)
+	}
+	if got, want := round2(a02.Settlement), 583271.29; got != want {
+		t.Fatalf("A02 settlement = %.2f, want only direct row %.2f", got, want)
+	}
+	if a02.RowCount != 1 || a02.MonthCount != 1 || a02.ContractCount != 1 {
+		t.Fatalf("A02 coverage = %+v, want row=1 month=1 contract=1", a02)
+	}
+
+	customer, err := engine.collectFundIncomeTotals(context.Background(), "2026-01", "2026-03", "%四川其妙%")
+	if err != nil {
+		t.Fatalf("collect customer income totals: %v", err)
+	}
+	if got, want := round2(customer.Invoice), 3564084.03; got != want {
+		t.Fatalf("customer invoice = %.2f, want merged group invoice %.2f", got, want)
+	}
+	if got := round2(customer.UnattributedInvoice); got != 0 {
+		t.Fatalf("customer unattributed invoice = %.2f, want 0 because customer-level query can include merged invoice", got)
+	}
+}
+
+func contractFinanceTestContents(rows []contractDimensionRow) []string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.ContractContent)
+	}
+	return out
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestCollectRevenueItemsAttributesMergedAmountsToOwnerRow(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "revenue-items-owner.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (contract_id TEXT PRIMARY KEY, customer_name TEXT, contract_content TEXT)`,
+		`CREATE TABLE fin_fund_income (id INTEGER PRIMARY KEY AUTOINCREMENT, contract_id TEXT, year_month TEXT, settlement_amount REAL, received_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_fund_income_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT, year_month TEXT, source_start_row INTEGER, source_end_row INTEGER, settlement_amount REAL, received_amount REAL, invoice_amount REAL)`,
+		`CREATE TABLE fin_fund_income_group_members (group_id INTEGER, contract_id TEXT, source_row_number INTEGER)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES
+			('C1', '四川其妙科技有限公司', '行业商品数据采购合同-A01'),
+			('C2', '四川其妙科技有限公司', '行业商品数据采购合同-A02')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, settlement_amount, received_amount, invoice_amount) VALUES
+			('C1', '2026-03', 1600, 0, 0)`,
+		`INSERT INTO fin_fund_income_groups(id, customer_name, year_month, source_start_row, source_end_row, settlement_amount, received_amount, invoice_amount) VALUES
+			(1, '四川其妙科技有限公司', '2026-01', 3, 4, 900, 900, 1200)`,
+		`INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number) VALUES
+			(1, 'C1', 3), (1, 'C2', 4)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt: %v", err)
+		}
+	}
+
+	engine := &Engine{
+		db:                db,
+		dbPath:            dbPath,
+		tableColumnCache:  map[string]map[string]bool{},
+		latestAnchorCache: map[string]time.Time{},
+		availablePeriod:   map[string]string{},
+	}
+	items, err := engine.collectRevenueItems("2026-01", "2026-03", "%四川其妙%")
+	if err != nil {
+		t.Fatalf("collect revenue items: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %#v, want one owner-row item", items)
+	}
+	if got, want := items[0].ContractContent, "行业商品数据采购合同-A01"; got != want {
+		t.Fatalf("contract_content = %q, want %q", got, want)
+	}
+	if got, want := items[0].SettlementAmount, float64(2500); got != want {
+		t.Fatalf("settlement = %.2f, want %.2f; items=%#v", got, want, items)
+	}
+	if got, want := items[0].ReceivedAmount, float64(900); got != want {
+		t.Fatalf("received = %.2f, want %.2f; items=%#v", got, want, items)
+	}
+	if got := items[0].InvoiceAmount; got != 0 {
+		t.Fatalf("invoice = %.2f, want 0 because merged invoice covers multiple contracts", got)
+	}
+}
+
+func TestResolveContractSubjectKeepsContractSuffixWhenContractWordMissing(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "contract-subject-suffix.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT
+		)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES
+			('C048', '四川其妙科技有限公司', '行业商品数据采购合同-A01'),
+			('C049', '四川其妙科技有限公司', '行业商品数据采购合同-A02'),
+			('C050', '四川其妙科技有限公司', '行业商品数据采购合同-A03')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt: %v", err)
+		}
+	}
+
+	engine := &Engine{
+		db:                db,
+		dbPath:            dbPath,
+		tableColumnCache:  map[string]map[string]bool{},
+		latestAnchorCache: map[string]time.Time{},
+		availablePeriod:   map[string]string{},
+	}
+
+	entity := engine.resolveContractSubject("四川其妙的行业商品数据采购-A01 的 26Q1 结算金额是多少？", "")
+	if entity != "行业商品数据采购合同-A01" {
+		t.Fatalf("resolved entity = %q, want 行业商品数据采购合同-A01", entity)
+	}
+
+	contracts := engine.queryMatchingContracts(entity)
+	if len(contracts) != 1 || contracts[0].ContractID != "C048" {
+		t.Fatalf("matching contracts = %#v, want only C048", contracts)
+	}
+}
+
+func TestCollectContractDimensionSummaryScopesContractContentByMentionedCustomer(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "contract-content-customer-scope.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			invoice_amount REAL
+		)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES
+			('C001', '辽宁金程信息科技有限公司', '行业商品数据采购合同-A01'),
+			('C048', '四川其妙科技有限公司', '行业商品数据采购合同-A01'),
+			('C049', '四川其妙科技有限公司', '行业商品数据采购合同-A02')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, settlement_amount, received_amount, invoice_amount) VALUES
+			('C048', '2026-03', 1604085.34, 0, 0)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt: %v", err)
+		}
+	}
+
+	engine := &Engine{
+		db:                db,
+		dbPath:            dbPath,
+		tableColumnCache:  map[string]map[string]bool{},
+		latestAnchorCache: map[string]time.Time{},
+		availablePeriod:   map[string]string{},
+	}
+
+	question := "四川其妙的行业商品数据采购-A01 的 26Q1 结算金额是多少？"
+	if got := engine.mentionedContractCustomers(question); len(got) != 1 || got[0] != "四川其妙科技有限公司" {
+		t.Fatalf("mentioned customers = %#v, want 四川其妙科技有限公司", got)
+	}
+	summary, err := engine.collectContractDimensionSummaryForPeriod(question, "", "2026-01", "2026-03")
+	if err != nil {
+		t.Fatalf("collect summary: %v", err)
+	}
+	if got := summary.Data["contract_count"]; got != 1 {
+		t.Fatalf("contract_count = %v, want 1; contracts=%#v", got, summary.Contracts)
+	}
+	if len(summary.Contracts) != 1 || summary.Contracts[0]["contract_id"] != "C048" {
+		t.Fatalf("contracts = %#v, want only C048", summary.Contracts)
+	}
+}
+
 func TestCompoundRevenueUnpaidNetsGroupedOverReceipts(t *testing.T) {
 	t.Parallel()
 

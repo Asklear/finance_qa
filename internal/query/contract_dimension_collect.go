@@ -24,7 +24,7 @@ func (e *Engine) collectContractDimensionSummaryForPeriod(question, entity, from
 		return contractDimensionSummary{}, errors.New("contract entity not found")
 	}
 
-	contracts := e.queryMatchingContracts(entity)
+	contracts := e.queryMatchingContractsForQuestion(question, entity)
 	if len(contracts) == 0 {
 		return contractDimensionSummary{}, errors.New("contract not found")
 	}

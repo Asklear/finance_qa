@@ -19,12 +19,26 @@ func buildContractDimensionMessage(summary contractDimensionSummary) string {
 
 	switch summary.Role {
 	case "customer_contract":
-		return fmt.Sprintf("[%s] %s 先看现金口径：%s。再看财务口径：合同台账结算 %.2f 元，开票 %.2f 元。",
+		invoiceNote := anyToString(bookView["invoice_attribution_note"])
+		if invoiceNote != "" && askedTopic == "invoice" {
+			return fmt.Sprintf("[%s] %s 财务口径：可归属到当前合同的开票 %.2f 元。%s合同台账结算 %.2f 元。现金口径：%s。",
+				summary.Entity,
+				summary.Period,
+				anyToFloat64(bookView["invoice_amount"]),
+				invoiceNote,
+				anyToFloat64(bookView["settlement_amount"]),
+				buildCustomerContractCashSummary(anyToFloat64(cashView["received_amount"]), summary.SubPeriod, anyToFloat64(summary.Data["sub_period_receipts"])))
+		}
+		message := fmt.Sprintf("[%s] %s 先看现金口径：%s。再看财务口径：合同台账结算 %.2f 元，开票 %.2f 元。",
 			summary.Entity,
 			summary.Period,
 			buildCustomerContractCashSummary(anyToFloat64(cashView["received_amount"]), summary.SubPeriod, anyToFloat64(summary.Data["sub_period_receipts"])),
 			anyToFloat64(bookView["settlement_amount"]),
 			anyToFloat64(bookView["invoice_amount"]))
+		if invoiceNote != "" {
+			message += invoiceNote
+		}
+		return message
 	case "supplier_contract":
 		return fmt.Sprintf("[%s] %s 先看现金口径：实际付款 %.2f 元。再看财务口径：合同成本 %.2f 元。",
 			summary.Entity,

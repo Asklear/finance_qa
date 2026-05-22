@@ -53,6 +53,8 @@ func (e *Engine) tryCompoundSourceQuery(ctx queryExecutionContext) (Result, Quer
 	}
 
 	items := make([]map[string]any, 0, len(entities)*len(periods))
+	wantDetailItems := contractAggregateWantsDetailItems(ctx.q)
+	detailItems := []map[string]any{}
 	lines := []string{"按复合口径统计："}
 	executedSQL := compoundMetricExecutedSQL(metrics)
 	logs := make([]string, 0, len(entities)*len(periods))
@@ -78,6 +80,14 @@ func (e *Engine) tryCompoundSourceQuery(ctx queryExecutionContext) (Result, Quer
 				"coverage_status":  coverage,
 			}
 			applyCompoundLegacyItemFields(item, metricValues)
+			if wantDetailItems {
+				itemDetails, err := e.collectCompoundDetailItems(metrics, period, entity, like)
+				if err != nil {
+					return Result{}, ctx.spec, false
+				}
+				item["detail_items"] = itemDetails
+				detailItems = append(detailItems, itemDetails...)
+			}
 			items = append(items, item)
 			if coverage == "missing" {
 				lines = append(lines, fmt.Sprintf("- %s %s：未匹配到相关记录。", entity, period.Label))
@@ -126,6 +136,7 @@ func (e *Engine) tryCompoundSourceQuery(ctx queryExecutionContext) (Result, Quer
 			"entities":                 entities,
 			"periods":                  compoundPeriodsData(periods),
 			"items":                    items,
+			"detail_items":             detailItems,
 			"source_primary_tables":    compoundPrimaryTables(metrics),
 			"source_supporting_tables": compoundSupportingTables(metrics),
 		},
@@ -204,6 +215,88 @@ func detectCompoundSourceMetrics(q string) []compoundSourceMetric {
 		add(compoundSourceContractRevenue, "contract_revenue.unpaid", "未付款")
 	}
 	return metrics
+}
+
+func (e *Engine) collectCompoundDetailItems(metrics []compoundSourceMetric, period compoundPeriodRange, entity, like string) ([]map[string]any, error) {
+	details := []map[string]any{}
+	if hasCompoundMetricSource(metrics, compoundSourceContractRevenue) {
+		items, err := e.collectRevenueItems(period.From, period.To, like)
+		if err != nil {
+			return nil, err
+		}
+		onlyOpen := hasCompoundMetricKey(metrics, "contract_revenue.unpaid")
+		for _, item := range items {
+			if onlyOpen && item.OpenAmount <= 0 {
+				continue
+			}
+			details = append(details, buildCompoundRevenueDetailItem(period, entity, item))
+		}
+	}
+	if hasCompoundMetricSource(metrics, compoundSourceContractCost) {
+		var (
+			items []contractAggregateOpenItem
+			err   error
+		)
+		onlyOpen := hasCompoundMetricKey(metrics, "contract_cost.unpaid") || hasCompoundMetricKey(metrics, "contract_cost.invoiced_unpaid")
+		if hasCompoundMetricKey(metrics, "contract_cost.invoiced_unpaid") && !hasCompoundMetricKey(metrics, "contract_cost.unpaid") {
+			items, err = e.collectCostInvoiceOpenItems(period.From, period.To, like)
+		} else {
+			items, err = e.collectCostItems(period.From, period.To, like)
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			if onlyOpen && item.OpenAmount <= 0 {
+				continue
+			}
+			details = append(details, buildCompoundCostDetailItem(period, entity, item))
+		}
+	}
+	return details, nil
+}
+
+func buildCompoundRevenueDetailItem(period compoundPeriodRange, entity string, item contractAggregateOpenItem) map[string]any {
+	return map[string]any{
+		"source":             compoundSourceContractRevenue,
+		"entity":             entity,
+		"period_label":       period.Label,
+		"period_from":        period.From,
+		"period_to":          period.To,
+		"customer_name":      item.CustomerName,
+		"contract_content":   item.ContractContent,
+		"settlement_amount":  round2(item.SettlementAmount),
+		"invoice_amount":     round2(item.InvoiceAmount),
+		"received_amount":    round2(item.ReceivedAmount),
+		"unreceived_amount":  round2(item.OpenAmount),
+		"unpaid_amount":      round2(item.OpenAmount),
+		"unpaid_metric_note": "settlement_amount - received_amount, floored at 0",
+	}
+}
+
+func buildCompoundCostDetailItem(period compoundPeriodRange, entity string, item contractAggregateOpenItem) map[string]any {
+	return map[string]any{
+		"source":            compoundSourceContractCost,
+		"entity":            entity,
+		"period_label":      period.Label,
+		"period_from":       period.From,
+		"period_to":         period.To,
+		"supplier_name":     item.CustomerName,
+		"contract_content":  item.ContractContent,
+		"settlement_amount": round2(item.SettlementAmount),
+		"invoice_amount":    round2(item.InvoiceAmount),
+		"paid_amount":       round2(item.ReceivedAmount),
+		"unpaid_amount":     round2(item.OpenAmount),
+	}
+}
+
+func hasCompoundMetricKey(metrics []compoundSourceMetric, key string) bool {
+	for _, metric := range metrics {
+		if metric.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func looksLikeCustomerContractUnpaidQuestion(q string) bool {
