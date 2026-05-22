@@ -165,7 +165,19 @@ rl.on("line", (line) => {
     const payload = {
       success: true,
       final_answer: "FINAL:2026年3月应收账款\n来源：《测试表》",
-      data: { internal_detail: "SHOULD_NOT_BE_VISIBLE_TO_OPENCLAW_MODEL" }
+      data: {
+        internal_detail: "SHOULD_NOT_BE_VISIBLE_TO_OPENCLAW_MODEL",
+        detail_items: [
+          {
+            entity: "四川其妙科技有限公司",
+            period_label: "2026年Q1",
+            contract_content: "行业商品数据采购合同-A01",
+            settlement_amount: 3677082.70,
+            received_amount: 2072997.36,
+            unpaid_amount: 1604085.34
+          }
+        ]
+      }
     };
     process.stdout.write(JSON.stringify({
       jsonrpc: "2.0",
@@ -237,6 +249,12 @@ if (Object.prototype.hasOwnProperty.call(directHookResult, "prependContext")) {
 }
 if (!directHookResult?.prependSystemContext?.includes("FINAL:2026年3月应收账款")) {
   console.error("direct finance prompt should inject current finance-query facts into hidden system context:", JSON.stringify(directHookResult));
+  process.exit(1);
+}
+if (!directHookResult?.prependSystemContext?.includes("行业商品数据采购合同-A01") ||
+    !directHookResult?.prependSystemContext?.includes("3677082.7") ||
+    !directHookResult?.prependSystemContext?.includes("1604085.34")) {
+  console.error("direct finance prompt should inject compound detail_items for detailed questions:", JSON.stringify(directHookResult));
   process.exit(1);
 }
 for (const forbidden of ["Current authoritative finance-query result", "Use these current facts", "You may rephrase the final wording", "Latest finance question that MUST"]) {

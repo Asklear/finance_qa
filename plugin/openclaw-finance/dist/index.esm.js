@@ -332,10 +332,37 @@ function compactFinancePayload(payload) {
     supplier_summary: data.supplier_summary,
     tax_summary: data.tax_summary,
     source_documents: data.source_documents,
+    items: data.items,
+    detail_items: data.detail_items,
     source_cell_notes: data.source_cell_notes,
     remarks: data.remarks,
     contract_continuity_candidates: data.contract_continuity_candidates
   };
+}
+
+function compactFinanceRows(rows, maxRows = 20) {
+  if (!Array.isArray(rows)) return [];
+  return rows.slice(0, maxRows).map((row) => {
+    if (!row || typeof row !== "object") return row;
+    const out = {};
+    for (const [key, label] of [
+      ["entity", "主体"],
+      ["period_label", "期间"],
+      ["contract_content", "合同/项目"],
+      ["settlement_amount", "结算金额"],
+      ["received_amount", "已回款"],
+      ["paid_amount", "已付款"],
+      ["invoice_amount", "开票金额"],
+      ["unpaid_amount", "未付款"],
+      ["unreceived_amount", "未回款"],
+      ["coverage_status", "覆盖状态"]
+    ]) {
+      if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+        out[label] = row[key];
+      }
+    }
+    return Object.keys(out).length ? out : row;
+  });
 }
 
 async function financeQuerySystemFacts(question) {
@@ -351,6 +378,10 @@ async function financeQuerySystemFacts(question) {
   if (payload.source_update_note) lines.push(`来源更新时间：${payload.source_update_note}`);
   if (payload.period) lines.push(`期间：${payload.period}`);
   if (payload.requested_metrics) lines.push(`指标：${JSON.stringify(payload.requested_metrics)}`);
+  const itemRows = compactFinanceRows(payload.items);
+  if (itemRows.length) lines.push(`分主体/期间汇总：${JSON.stringify(itemRows)}`);
+  const detailRows = compactFinanceRows(payload.detail_items);
+  if (detailRows.length) lines.push(`合同/项目明细：${JSON.stringify(detailRows)}`);
   if (!payload.final_answer) lines.push(`结果摘要：${payload.message || payload.error || "finance-query 未返回老板答案"}`);
   return lines.join("\n");
 }
