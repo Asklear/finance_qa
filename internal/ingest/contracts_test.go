@@ -43,6 +43,119 @@ func TestParseFundIncomeQuarterRowsCapturesRemarksColumn(t *testing.T) {
 	}
 }
 
+func TestParseFundIncomeQuarterRowsSupportsSettlementReceivedLayout(t *testing.T) {
+	rows := [][]string{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "10月", "", "11月", "", "12月", "", "Q4 ", "备注"},
+		{"", "", "", "", "", "", "结算金额", "收款金额", "结算金额", "收款金额", "结算金额", "收款金额", "总收入", ""},
+		{"辽宁金程信息科技有限公司", "行业商品数据采购合同-A01", "2025-08-26", "2026-08-25", "月度", "0.504", "100", "90", "200", "180", "300", "0", "600", "Q4新结构"},
+	}
+
+	out, groups, cleanup := parseFundIncomeQuarterRows("25年Q4收入明细", rows, nil, nil)
+	if len(cleanup) != 0 {
+		t.Fatalf("cleanup = %#v", cleanup)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("groups = %#v", groups)
+	}
+	if len(out) != 3 {
+		t.Fatalf("out length = %d, want 3: %#v", len(out), out)
+	}
+
+	got := map[string]contractFundIncomeRow{}
+	for _, row := range out {
+		got[row.YearMonth] = row
+		if row.IsInvoiced != "否" {
+			t.Fatalf("%s is_invoiced = %q, want default 否", row.YearMonth, row.IsInvoiced)
+		}
+		if row.InvoiceAmount != 0 {
+			t.Fatalf("%s invoice_amount = %v, want 0", row.YearMonth, row.InvoiceAmount)
+		}
+		if row.Quantity != "" {
+			t.Fatalf("%s quantity = %q, want empty", row.YearMonth, row.Quantity)
+		}
+	}
+	assertFundIncomeAmounts(t, got["2025-10"], 100, 90)
+	assertFundIncomeAmounts(t, got["2025-11"], 200, 180)
+	assertFundIncomeAmounts(t, got["2025-12"], 300, 0)
+}
+
+func TestParseFundIncomeQuarterRowsSupportsFutureQ4FullMetricLayout(t *testing.T) {
+	rows := [][]string{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "10月", "", "", "", "", "11月", "", "", "", "", "12月", "", "", "", "", "25年Q4合计", "备注"},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "", ""},
+		{"辽宁金程信息科技有限公司", "行业商品数据采购合同-A01", "2025-08-26", "2026-08-25", "月度", "0.504", "10", "100", "是", "100", "90", "20", "200", "否", "0", "180", "30", "300", "是", "300", "0", "600", "未来Q4完整结构"},
+	}
+
+	out, groups, cleanup := parseFundIncomeQuarterRows("25年Q4收入明细", rows, nil, nil)
+	if len(cleanup) != 0 {
+		t.Fatalf("cleanup = %#v", cleanup)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("groups = %#v", groups)
+	}
+	if len(out) != 3 {
+		t.Fatalf("out length = %d, want 3: %#v", len(out), out)
+	}
+
+	got := map[string]contractFundIncomeRow{}
+	for _, row := range out {
+		got[row.YearMonth] = row
+		if row.Remarks != "未来Q4完整结构" {
+			t.Fatalf("%s remarks = %q", row.YearMonth, row.Remarks)
+		}
+	}
+	assertFundIncomeFullMetricRow(t, got["2025-10"], "10", 100, "是", 100, 90)
+	assertFundIncomeFullMetricRow(t, got["2025-11"], "20", 200, "否", 0, 180)
+	assertFundIncomeFullMetricRow(t, got["2025-12"], "30", 300, "是", 300, 0)
+}
+
+func TestParseFundIncomeQuarterRowsSupportsSettlementReceivedLayoutMergedGroups(t *testing.T) {
+	rows := [][]string{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "10月", "", "11月", "", "12月", "", "Q4 ", "备注"},
+		{"", "", "", "", "", "", "结算金额", "收款金额", "结算金额", "收款金额", "结算金额", "收款金额", "总收入", ""},
+		{"Yipit,LLC", "数据采购合同-快手", "2025-10-01", "2026-09-30", "季度", "固定金额", "100", "90", "200", "180", "300", "0", "600", ""},
+		{"Yipit,LLC", "数据采购合同-抖音", "2025-10-10", "2026-10-09", "季度", "固定金额", "", "", "", "", "", "", "", ""},
+		{"Yipit,LLC", "数据采购合同-shopee", "2025-09-21", "2026-09-20", "季度", "固定金额", "", "", "", "", "", "", "", ""},
+		{"Yipit,LLC", "数据采购合同-Tmal", "2025-10-13", "2026-10-12", "季度", "固定金额", "", "", "", "", "", "", "", ""},
+	}
+	mergedRanges := []contractMergedCellRange{
+		{StartRow: 2, EndRow: 5, StartCol: 6, EndCol: 6},
+		{StartRow: 2, EndRow: 5, StartCol: 7, EndCol: 7},
+		{StartRow: 2, EndRow: 5, StartCol: 8, EndCol: 8},
+		{StartRow: 2, EndRow: 5, StartCol: 9, EndCol: 9},
+		{StartRow: 2, EndRow: 5, StartCol: 10, EndCol: 10},
+		{StartRow: 2, EndRow: 5, StartCol: 11, EndCol: 11},
+	}
+
+	out, groups, cleanup := parseFundIncomeQuarterRows("25年Q4收入明细", rows, mergedRanges, nil)
+	if len(out) != 0 {
+		t.Fatalf("out = %#v, want only grouped rows", out)
+	}
+	if len(groups) != 3 {
+		t.Fatalf("groups length = %d, want 3: %#v", len(groups), groups)
+	}
+	if len(cleanup) != 12 {
+		t.Fatalf("cleanup length = %d, want 12: %#v", len(cleanup), cleanup)
+	}
+
+	got := map[string]contractFundIncomeGroupRow{}
+	for _, row := range groups {
+		got[row.YearMonth] = row
+		if row.IsInvoiced != "否" {
+			t.Fatalf("%s is_invoiced = %q, want default 否", row.YearMonth, row.IsInvoiced)
+		}
+		if row.InvoiceAmount != 0 {
+			t.Fatalf("%s invoice_amount = %v, want 0", row.YearMonth, row.InvoiceAmount)
+		}
+		if len(row.Members) != 4 {
+			t.Fatalf("%s members length = %d, want 4: %#v", row.YearMonth, len(row.Members), row.Members)
+		}
+	}
+	assertFundIncomeGroupAmounts(t, got["2025-10"], 100, 90)
+	assertFundIncomeGroupAmounts(t, got["2025-11"], 200, 180)
+	assertFundIncomeGroupAmounts(t, got["2025-12"], 300, 0)
+}
+
 func TestParseFundIncomeQuarterRowsKeepsRemarksOnlyRows(t *testing.T) {
 	rows := [][]string{
 		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "1月", "", "", "", "", "2月", "", "", "", "", "3月", "", "", "", "", "26年Q1合计", "备注"},
@@ -83,6 +196,29 @@ func TestParseFundIncomeQuarterRowsKeepsRemarksOnlyRows(t *testing.T) {
 	}
 }
 
+func assertFundIncomeAmounts(t *testing.T, row contractFundIncomeRow, settlement, received float64) {
+	t.Helper()
+	if row.SettlementAmount != settlement || row.ReceivedAmount != received {
+		t.Fatalf("%s amounts settlement=%v received=%v, want settlement=%v received=%v", row.YearMonth, row.SettlementAmount, row.ReceivedAmount, settlement, received)
+	}
+}
+
+func assertFundIncomeGroupAmounts(t *testing.T, row contractFundIncomeGroupRow, settlement, received float64) {
+	t.Helper()
+	if row.SettlementAmount != settlement || row.ReceivedAmount != received {
+		t.Fatalf("%s group amounts settlement=%v received=%v, want settlement=%v received=%v", row.YearMonth, row.SettlementAmount, row.ReceivedAmount, settlement, received)
+	}
+}
+
+func assertFundIncomeFullMetricRow(t *testing.T, row contractFundIncomeRow, quantity string, settlement float64, isInvoiced string, invoice float64, received float64) {
+	t.Helper()
+	if row.Quantity != quantity || row.SettlementAmount != settlement || row.IsInvoiced != isInvoiced || row.InvoiceAmount != invoice || row.ReceivedAmount != received {
+		t.Fatalf("%s row = quantity=%q settlement=%v is_invoiced=%q invoice=%v received=%v, want quantity=%q settlement=%v is_invoiced=%q invoice=%v received=%v",
+			row.YearMonth, row.Quantity, row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.ReceivedAmount,
+			quantity, settlement, isInvoiced, invoice, received)
+	}
+}
+
 func TestImportContractWorkbookPersistsFundIncomeRemarksAndCellNotes(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "fund-income-remarks.sqlite")
@@ -120,6 +256,59 @@ WHERE year_month = '2026-03'
 	}
 }
 
+func TestImportContractWorkbookPersistsFutureQ4FullMetricLayout(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "future-q4-full-layout.sqlite")
+	workbookPath := filepath.Join(t.TempDir(), "future-q4-full-layout.xlsx")
+	writeFutureQ4FullMetricFundWorkbook(t, workbookPath)
+
+	importer := NewImporter(dimensions.NewManager(nil))
+	summary, err := importer.ImportFileWithOptions(ctx, dbPath, workbookPath, ImportOptions{})
+	if err != nil {
+		t.Fatalf("ImportFileWithOptions: %v", err)
+	}
+	if summary.RecordCount != 3 {
+		t.Fatalf("record count = %d, want 3", summary.RecordCount)
+	}
+	if summary.PeriodStart != "2025-10" || summary.PeriodEnd != "2025-12" {
+		t.Fatalf("period = %s~%s, want 2025-10~2025-12", summary.PeriodStart, summary.PeriodEnd)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	rows, err := db.QueryContext(ctx, `
+SELECT year_month, quantity, settlement_amount, is_invoiced, invoice_amount, received_amount
+FROM fin_fund_income
+ORDER BY year_month
+`)
+	if err != nil {
+		t.Fatalf("query fin_fund_income: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	got := map[string]contractFundIncomeRow{}
+	for rows.Next() {
+		var row contractFundIncomeRow
+		if err := rows.Scan(&row.YearMonth, &row.Quantity, &row.SettlementAmount, &row.IsInvoiced, &row.InvoiceAmount, &row.ReceivedAmount); err != nil {
+			t.Fatalf("scan fin_fund_income: %v", err)
+		}
+		got[row.YearMonth] = row
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate fin_fund_income: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("row count = %d, want 3: %#v", len(got), got)
+	}
+	assertFundIncomeFullMetricRow(t, got["2025-10"], "10", 100, "是", 100, 90)
+	assertFundIncomeFullMetricRow(t, got["2025-11"], "20", 200, "否", 0, 180)
+	assertFundIncomeFullMetricRow(t, got["2025-12"], "30", 300, "是", 300, 0)
+}
+
 func writeFundIncomeRemarksWorkbook(t *testing.T, path string) {
 	t.Helper()
 	f := excelize.NewFile()
@@ -147,6 +336,36 @@ func writeFundIncomeRemarksWorkbook(t *testing.T, path string) {
 	}
 	if err := f.AddComment(sheet, excelize.Comment{Cell: "F3", Author: "李旭", Text: "批注仍要保留"}); err != nil {
 		t.Fatalf("AddComment: %v", err)
+	}
+	if err := f.SaveAs(path); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+}
+
+func writeFutureQ4FullMetricFundWorkbook(t *testing.T, path string) {
+	t.Helper()
+	f := excelize.NewFile()
+	defer func() { _ = f.Close() }()
+	const sheet = "25年Q4收入明细"
+	defaultSheet := f.GetSheetName(0)
+	if err := f.SetSheetName(defaultSheet, sheet); err != nil {
+		t.Fatalf("SetSheetName: %v", err)
+	}
+	rows := [][]any{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "10月", "", "", "", "", "11月", "", "", "", "", "12月", "", "", "", "", "25年Q4合计", "备注"},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "", ""},
+		{"辽宁金程信息科技有限公司", "行业商品数据采购合同-A01", "2025-08-26", "2026-08-25", "月度", "0.504", "10", "100", "是", "100", "90", "20", "200", "否", "0", "180", "30", "300", "是", "300", "0", "600", "未来Q4完整结构"},
+	}
+	for rIdx, row := range rows {
+		for cIdx, value := range row {
+			cell, err := excelize.CoordinatesToCellName(cIdx+1, rIdx+1)
+			if err != nil {
+				t.Fatalf("CoordinatesToCellName: %v", err)
+			}
+			if err := f.SetCellValue(sheet, cell, value); err != nil {
+				t.Fatalf("SetCellValue %s: %v", cell, err)
+			}
+		}
 	}
 	if err := f.SaveAs(path); err != nil {
 		t.Fatalf("SaveAs: %v", err)

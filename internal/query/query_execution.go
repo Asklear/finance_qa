@@ -1,6 +1,15 @@
 package query
 
 func (e *Engine) executeQuery(ctx queryExecutionContext) Result {
+	if result, spec, ok := e.tryCompoundSourceQuery(ctx); ok {
+		ctx.spec = spec
+		ctx.from = spec.PeriodFrom
+		ctx.to = spec.PeriodTo
+		ctx.entity = spec.Entity
+		ctx.hasRealEntity = true
+		return ctx.finalize(result)
+	}
+
 	var last Result
 	for _, stage := range buildExecutionPlan(ctx) {
 		result, ok := e.executeStage(stage, ctx)

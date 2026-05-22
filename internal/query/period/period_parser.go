@@ -80,9 +80,9 @@ func extractHalfYearRange(q string, anchorYear, anchorMonth int) (string, string
 }
 
 func extractQuarterRange(q string, anchorYear, anchorMonth int) (string, string, bool) {
-	explicitQuarterRe := regexp.MustCompile(`(20\d{2})年\s*(?:第?\s*([一二三四1234])\s*季度|Q\s*([1-4]))`)
+	explicitQuarterRe := regexp.MustCompile(`(?i)(20\d{2}|\d{2})\s*年?\s*(?:第?\s*([一二三四1234])\s*季度|Q\s*([1-4]))`)
 	if m := explicitQuarterRe.FindStringSubmatch(q); len(m) == 4 {
-		y := mustAtoi(m[1])
+		y := normalizeYearToken(m[1])
 		token := m[2]
 		if token == "" {
 			token = m[3]
@@ -109,17 +109,29 @@ func extractQuarterRange(q string, anchorYear, anchorMonth int) (string, string,
 func extractExplicitMonthRange(q string) (string, string, bool) {
 	rangeRe := regexp.MustCompile(`(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?\s*(?:到|至|-|~)\s*(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月`)
 	m := rangeRe.FindStringSubmatch(q)
-	if len(m) != 5 {
-		return "", "", false
+	if len(m) == 5 {
+		y1, _ := strconv.Atoi(m[1])
+		y2, _ := strconv.Atoi(m[3])
+		m1 := parseChineseOrDigitMonth(m[2])
+		m2 := parseChineseOrDigitMonth(m[4])
+		if !validMonth(m1) || !validMonth(m2) {
+			return "", "", false
+		}
+		return formatPeriodValue(y1, m1), formatPeriodValue(y2, m2), true
 	}
-	y1, _ := strconv.Atoi(m[1])
-	y2, _ := strconv.Atoi(m[3])
-	m1 := parseChineseOrDigitMonth(m[2])
-	m2 := parseChineseOrDigitMonth(m[4])
-	if !validMonth(m1) || !validMonth(m2) {
-		return "", "", false
+
+	sameYearRangeRe := regexp.MustCompile(`(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})\s*月?\s*(?:到|至|-|~)\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月`)
+	if m := sameYearRangeRe.FindStringSubmatch(q); len(m) == 4 {
+		y := mustAtoi(m[1])
+		m1 := parseChineseOrDigitMonth(m[2])
+		m2 := parseChineseOrDigitMonth(m[3])
+		if !validMonth(m1) || !validMonth(m2) {
+			return "", "", false
+		}
+		return formatPeriodValue(y, m1), formatPeriodValue(y, m2), true
 	}
-	return formatPeriodValue(y1, m1), formatPeriodValue(y2, m2), true
+
+	return "", "", false
 }
 
 func extractYearCumulativeRange(q string, anchorYear, anchorMonth int) (string, string, bool) {

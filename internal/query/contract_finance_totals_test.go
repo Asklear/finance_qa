@@ -136,3 +136,72 @@ func TestCollectContractFinanceTotalsSupportsRevenueAndCostGroupRows(t *testing.
 		t.Fatalf("cost coverage = %+v, want row=2 month=1 contract=1", cost)
 	}
 }
+
+func TestCompoundRevenueUnpaidNetsGroupedOverReceipts(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "compound-revenue-unpaid-net.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			invoice_amount REAL
+		)`,
+		`CREATE TABLE fin_fund_income_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT,
+			year_month TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			invoice_amount REAL
+		)`,
+		`CREATE TABLE fin_fund_income_group_members (
+			group_id INTEGER,
+			contract_id TEXT
+		)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES
+			('C1', '四川其妙科技有限公司', '行业商品数据服务')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, settlement_amount, received_amount, invoice_amount) VALUES
+			('C1', '2026-01', 500, 100, 100)`,
+		`INSERT INTO fin_fund_income_groups(id, customer_name, year_month, settlement_amount, received_amount, invoice_amount) VALUES
+			(1, '四川其妙科技有限公司', '2026-02', 300, 500, 500)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt: %v", err)
+		}
+	}
+
+	engine := &Engine{
+		db:                db,
+		dbPath:            dbPath,
+		tableColumnCache:  map[string]map[string]bool{},
+		latestAnchorCache: map[string]time.Time{},
+		availablePeriod:   map[string]string{},
+	}
+	metrics := []compoundSourceMetric{{Key: "contract_revenue.unpaid", Label: "未付款", Source: compoundSourceContractRevenue}}
+	values, rows, err := engine.collectCompoundMetricValues(context.Background(), metrics, "2026-01", "2026-03", "%四川其妙%")
+	if err != nil {
+		t.Fatalf("collect compound values: %v", err)
+	}
+	if got := rows[compoundSourceContractRevenue]; got != 2 {
+		t.Fatalf("contract revenue row count = %d, want 2", got)
+	}
+	if got := anyToFloat64(values["contract_revenue.unpaid"]); got != 200 {
+		t.Fatalf("compound revenue unpaid = %.2f, want net unpaid 200.00", got)
+	}
+}

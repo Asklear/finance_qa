@@ -164,6 +164,17 @@ type contractMetricMergeGroup struct {
 	Metrics map[string]bool
 }
 
+type fundIncomeMonthLayout struct {
+	Month          monthColumn
+	QuantityCol    int
+	SettlementCol  int
+	IsInvoicedCol  int
+	InvoiceCol     int
+	ReceivedCol    int
+	SourceStartCol int
+	SourceEndCol   int
+}
+
 type contractImportBundle struct {
 	Kind                 contractWorkbookKind
 	RevenueRows          []contractRevenueSettlementRow
@@ -979,7 +990,7 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 	if len(monthCols) == 0 {
 		return nil, nil, nil
 	}
-	simpleAmountLayout := strings.Contains(cellValue(rows[1], monthCols[0].Index), "收入金额")
+	monthLayouts := fundIncomeMonthLayouts(header, rows[1], monthCols, maxContractRowLength(rows))
 	for idx := 2; idx < len(rows); idx++ {
 		row := rows[idx]
 		name := strings.TrimSpace(cellValue(row, 0))
@@ -993,20 +1004,21 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 		settlementUnitPrice := strings.TrimSpace(cellValue(row, 5))
 		remarks := strings.TrimSpace(cellValue(row, remarkColumnIndex(header)))
 		rowFacts := 0
-		for _, monthCol := range monthCols {
+		for _, layout := range monthLayouts {
+			monthCol := layout.Month
 			yearMonth := normalizeContractYearMonth(monthCol.Label, year)
 			if yearMonth == "" {
 				continue
 			}
-			metricRanges := fundMergedAmountRanges(mergedRanges, idx, monthCol, simpleAmountLayout)
+			metricRanges := fundMergedAmountRanges(mergedRanges, idx, layout)
 			if len(metricRanges) > 0 {
 				metricGroups := contractMetricMergeGroups(metricRanges)
 				if len(metricGroups) == 1 {
-					metricGroups[0].Metrics = fundAmountMetricSet(simpleAmountLayout)
+					metricGroups[0].Metrics = fundAmountMetricSet(layout)
 				}
 				for _, metricGroup := range metricGroups {
 					cleanup = append(cleanup, mergedFundIncomeCleanupRows(sheetName, rows, metricGroup.Range, yearMonth)...)
-					mergedRow, ok := buildMergedFundIncomeGroupRow(sheetName, rows, idx, metricGroup.Range, monthCol, yearMonth, remarks, simpleAmountLayout, metricGroup.Metrics, mergedRanges, cellNotes)
+					mergedRow, ok := buildMergedFundIncomeGroupRow(sheetName, rows, idx, metricGroup.Range, layout, yearMonth, remarks, metricGroup.Metrics, mergedRanges, cellNotes)
 					if ok {
 						groups = append(groups, mergedRow)
 						rowFacts++
@@ -1014,13 +1026,9 @@ func parseFundIncomeQuarterRows(sheetName string, rows [][]string, mergedRanges 
 				}
 				continue
 			}
-			directMetricRanges := fundMergedAmountContainingRanges(mergedRanges, idx, monthCol, simpleAmountLayout)
-			metricEnd := monthCol.Index
-			if !simpleAmountLayout {
-				metricEnd = monthCol.Index + 4
-			}
-			sourceNotes := sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 5), intRange(monthCol.Index, metricEnd)...)...))
-			if directRow, ok := buildDirectFundIncomeRow(sheetName, row, monthCol, yearMonth, contractKey{Name: name, Content: content}, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks, simpleAmountLayout, directMetricRanges, sourceNotes); ok {
+			directMetricRanges := fundMergedAmountContainingRanges(mergedRanges, idx, layout)
+			sourceNotes := sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 5), intRange(layout.SourceStartCol, layout.SourceEndCol)...)...))
+			if directRow, ok := buildDirectFundIncomeRow(sheetName, row, layout, yearMonth, contractKey{Name: name, Content: content}, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks, directMetricRanges, sourceNotes); ok {
 				out = append(out, directRow)
 				rowFacts++
 			}
@@ -1058,57 +1066,117 @@ func buildRemarksOnlyFundIncomeRow(sheetName string, row, header []string, rowId
 	}, true
 }
 
-func buildDirectFundIncomeRow(sheetName string, row []string, monthCol monthColumn, yearMonth string, key contractKey, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks string, simpleAmountLayout bool, metricRanges map[string]contractMergedCellRange, sourceCellNotes string) (contractFundIncomeRow, bool) {
-	if simpleAmountLayout {
-		if _, merged := metricRanges["settlement"]; merged {
-			return contractFundIncomeRow{}, false
+func fundIncomeMonthLayouts(header, metricHeader []string, monthCols []monthColumn, maxCols int) []fundIncomeMonthLayout {
+	layouts := make([]fundIncomeMonthLayout, 0, len(monthCols))
+	for idx, monthCol := range monthCols {
+		layout := fundIncomeMonthLayout{
+			Month:          monthCol,
+			QuantityCol:    -1,
+			SettlementCol:  -1,
+			IsInvoicedCol:  -1,
+			InvoiceCol:     -1,
+			ReceivedCol:    -1,
+			SourceStartCol: monthCol.Index,
+			SourceEndCol:   fundIncomeMonthBlockEnd(header, metricHeader, monthCols, idx, maxCols),
 		}
-		if _, merged := metricRanges["received"]; merged {
-			return contractFundIncomeRow{}, false
+		for col := layout.SourceStartCol; col <= layout.SourceEndCol; col++ {
+			switch label := normalizeFundMetricHeader(cellValue(metricHeader, col)); {
+			case strings.Contains(label, "收入金额"):
+				layout.SettlementCol = col
+				layout.ReceivedCol = col
+			case strings.Contains(label, "结算金额"):
+				layout.SettlementCol = col
+			case strings.Contains(label, "收款金额"):
+				layout.ReceivedCol = col
+			case strings.Contains(label, "是否开票"):
+				layout.IsInvoicedCol = col
+			case strings.Contains(label, "开票金额"):
+				layout.InvoiceCol = col
+			case strings.Contains(label, "数量"):
+				layout.QuantityCol = col
+			}
 		}
-		amount := parseContractFloat(cellValue(row, monthCol.Index))
-		if amount <= 0 {
-			return contractFundIncomeRow{}, false
+		if layout.SettlementCol < 0 && layout.ReceivedCol < 0 && layout.InvoiceCol < 0 && layout.SourceEndCol-layout.SourceStartCol >= 4 {
+			layout.QuantityCol = layout.SourceStartCol
+			layout.SettlementCol = layout.SourceStartCol + 1
+			layout.IsInvoicedCol = layout.SourceStartCol + 2
+			layout.InvoiceCol = layout.SourceStartCol + 3
+			layout.ReceivedCol = layout.SourceStartCol + 4
 		}
-		return contractFundIncomeRow{
-			contractKey:         key,
-			SourceSheetName:     strings.TrimSpace(sheetName),
-			YearMonth:           yearMonth,
-			SettlementAmount:    amount,
-			ReceivedAmount:      amount,
-			IsInvoiced:          "否",
-			Remarks:             remarks,
-			ContractStartDate:   contractStartDate,
-			ContractEndDate:     contractEndDate,
-			SettlementCycle:     settlementCycle,
-			SettlementUnitPrice: settlementUnitPrice,
-			SourceCellNotes:     sourceCellNotes,
-		}, true
+		layouts = append(layouts, layout)
 	}
+	return layouts
+}
 
-	settlement := 0.0
-	if _, merged := metricRanges["settlement"]; !merged {
-		settlement = parseContractFloat(cellValue(row, monthCol.Index+1))
+func fundIncomeMonthBlockEnd(header, metricHeader []string, monthCols []monthColumn, monthIdx int, maxCols int) int {
+	start := monthCols[monthIdx].Index
+	limit := len(header)
+	if len(metricHeader) > limit {
+		limit = len(metricHeader)
 	}
-	invoice := 0.0
-	if _, merged := metricRanges["invoice"]; !merged {
-		invoice = parseContractFloat(cellValue(row, monthCol.Index+3))
+	if maxCols > limit {
+		limit = maxCols
 	}
-	received := 0.0
-	if _, merged := metricRanges["received"]; !merged {
-		received = parseContractFloat(cellValue(row, monthCol.Index+4))
+	if limit == 0 {
+		return start
 	}
+	if monthIdx+1 < len(monthCols) {
+		return monthCols[monthIdx+1].Index - 1
+	}
+	for col := start + 1; col < limit; col++ {
+		label := strings.TrimSpace(cellValue(header, col))
+		if label == "" {
+			continue
+		}
+		if _, ok := parseYearMonthHeader(label); ok {
+			return col - 1
+		}
+		if _, ok := parseMonthHeader(label); ok {
+			return col - 1
+		}
+		return col - 1
+	}
+	return limit - 1
+}
+
+func maxContractRowLength(rows [][]string) int {
+	maxLen := 0
+	for _, row := range rows {
+		if len(row) > maxLen {
+			maxLen = len(row)
+		}
+	}
+	return maxLen
+}
+
+func normalizeFundMetricHeader(label string) string {
+	replacer := strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "")
+	return replacer.Replace(strings.TrimSpace(label))
+}
+
+func buildDirectFundIncomeRow(sheetName string, row []string, layout fundIncomeMonthLayout, yearMonth string, key contractKey, contractStartDate, contractEndDate, settlementCycle, settlementUnitPrice, remarks string, metricRanges map[string]contractMergedCellRange, sourceCellNotes string) (contractFundIncomeRow, bool) {
+	settlement := fundMetricAmount(row, layout.SettlementCol, "settlement", metricRanges)
+	invoice := fundMetricAmount(row, layout.InvoiceCol, "invoice", metricRanges)
+	received := fundMetricAmount(row, layout.ReceivedCol, "received", metricRanges)
 	if settlement <= 0 && received <= 0 && invoice <= 0 {
 		return contractFundIncomeRow{}, false
+	}
+	quantity := ""
+	if layout.QuantityCol >= 0 {
+		quantity = strings.TrimSpace(cellValue(row, layout.QuantityCol))
+	}
+	isInvoiced := "否"
+	if layout.IsInvoicedCol >= 0 {
+		isInvoiced = defaultContractText(cellValue(row, layout.IsInvoicedCol), "否")
 	}
 	return contractFundIncomeRow{
 		contractKey:         key,
 		SourceSheetName:     strings.TrimSpace(sheetName),
 		YearMonth:           yearMonth,
-		Quantity:            strings.TrimSpace(cellValue(row, monthCol.Index)),
+		Quantity:            quantity,
 		SettlementAmount:    settlement,
 		ReceivedAmount:      received,
-		IsInvoiced:          defaultContractText(cellValue(row, monthCol.Index+2), "否"),
+		IsInvoiced:          isInvoiced,
 		InvoiceAmount:       invoice,
 		Remarks:             remarks,
 		ContractStartDate:   contractStartDate,
@@ -1119,46 +1187,44 @@ func buildDirectFundIncomeRow(sheetName string, row []string, monthCol monthColu
 	}, true
 }
 
-func fundMergedAmountRanges(mergedRanges []contractMergedCellRange, rowIdx int, monthCol monthColumn, simpleAmountLayout bool) map[string]contractMergedCellRange {
-	if simpleAmountLayout {
-		return contractMergedAmountRanges(mergedRanges, rowIdx, map[string]int{
-			"settlement": monthCol.Index,
-			"received":   monthCol.Index,
-		})
+func fundMetricAmount(row []string, col int, metric string, metricRanges map[string]contractMergedCellRange) float64 {
+	if col < 0 {
+		return 0
 	}
-	return contractMergedAmountRanges(mergedRanges, rowIdx, map[string]int{
-		"settlement": monthCol.Index + 1,
-		"invoice":    monthCol.Index + 3,
-		"received":   monthCol.Index + 4,
-	})
+	if _, merged := metricRanges[metric]; merged {
+		return 0
+	}
+	return parseContractFloat(cellValue(row, col))
 }
 
-func fundMergedAmountContainingRanges(mergedRanges []contractMergedCellRange, rowIdx int, monthCol monthColumn, simpleAmountLayout bool) map[string]contractMergedCellRange {
-	if simpleAmountLayout {
-		return contractMergedAmountContainingRanges(mergedRanges, rowIdx, map[string]int{
-			"settlement": monthCol.Index,
-			"received":   monthCol.Index,
-		})
-	}
-	return contractMergedAmountContainingRanges(mergedRanges, rowIdx, map[string]int{
-		"settlement": monthCol.Index + 1,
-		"invoice":    monthCol.Index + 3,
-		"received":   monthCol.Index + 4,
-	})
+func fundMergedAmountRanges(mergedRanges []contractMergedCellRange, rowIdx int, layout fundIncomeMonthLayout) map[string]contractMergedCellRange {
+	return contractMergedAmountRanges(mergedRanges, rowIdx, fundAmountMetricColumns(layout))
 }
 
-func fundAmountMetricSet(simpleAmountLayout bool) map[string]bool {
-	if simpleAmountLayout {
-		return map[string]bool{
-			"settlement": true,
-			"received":   true,
-		}
+func fundMergedAmountContainingRanges(mergedRanges []contractMergedCellRange, rowIdx int, layout fundIncomeMonthLayout) map[string]contractMergedCellRange {
+	return contractMergedAmountContainingRanges(mergedRanges, rowIdx, fundAmountMetricColumns(layout))
+}
+
+func fundAmountMetricColumns(layout fundIncomeMonthLayout) map[string]int {
+	cols := map[string]int{}
+	if layout.SettlementCol >= 0 {
+		cols["settlement"] = layout.SettlementCol
 	}
-	return map[string]bool{
-		"settlement": true,
-		"invoice":    true,
-		"received":   true,
+	if layout.InvoiceCol >= 0 {
+		cols["invoice"] = layout.InvoiceCol
 	}
+	if layout.ReceivedCol >= 0 {
+		cols["received"] = layout.ReceivedCol
+	}
+	return cols
+}
+
+func fundAmountMetricSet(layout fundIncomeMonthLayout) map[string]bool {
+	out := map[string]bool{}
+	for metric := range fundAmountMetricColumns(layout) {
+		out[metric] = true
+	}
+	return out
 }
 
 func mergedFundIncomeCleanupRows(sheetName string, rows [][]string, mergeRange contractMergedCellRange, yearMonth string) []contractFundIncomeCleanupRow {
@@ -1187,7 +1253,7 @@ func mergedFundIncomeCleanupRows(sheetName string, rows [][]string, mergeRange c
 	return out
 }
 
-func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int, mergeRange contractMergedCellRange, monthCol monthColumn, yearMonth, remarks string, simpleAmountLayout bool, metrics map[string]bool, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) (contractFundIncomeGroupRow, bool) {
+func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int, mergeRange contractMergedCellRange, layout fundIncomeMonthLayout, yearMonth, remarks string, metrics map[string]bool, mergedRanges []contractMergedCellRange, cellNotes contractSourceCellNotes) (contractFundIncomeGroupRow, bool) {
 	if rowIdx < 0 || rowIdx >= len(rows) {
 		return contractFundIncomeGroupRow{}, false
 	}
@@ -1202,63 +1268,37 @@ func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int
 	settlementUnitPrice := strings.TrimSpace(cellValue(row, 5))
 	members, memberSourceRows := mergedFundIncomeGroupMembers(rows, mergeRange)
 
-	if simpleAmountLayout {
-		amount := parseContractFloat(cellValue(row, monthCol.Index))
-		settlement := 0.0
-		if metrics["settlement"] {
-			settlement = amount
-		}
-		received := 0.0
-		if metrics["received"] {
-			received = amount
-		}
-		if settlement <= 0 && received <= 0 {
-			return contractFundIncomeGroupRow{}, false
-		}
-		return contractFundIncomeGroupRow{
-			CustomerName:        name,
-			SourceSheetName:     strings.TrimSpace(sheetName),
-			YearMonth:           yearMonth,
-			SettlementAmount:    settlement,
-			ReceivedAmount:      received,
-			IsInvoiced:          "否",
-			Remarks:             remarks,
-			ContractStartDate:   contractStartDate,
-			ContractEndDate:     contractEndDate,
-			SettlementCycle:     settlementCycle,
-			SettlementUnitPrice: settlementUnitPrice,
-			SourceStartRow:      mergeRange.StartRow + 1,
-			SourceEndRow:        mergeRange.EndRow + 1,
-			MergeRange:          mergeRangeLabel(mergeRange),
-			SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 5), monthCol.Index)...)),
-			Members:             members,
-			MemberSourceRows:    memberSourceRows,
-		}, true
-	}
-
 	settlement := 0.0
 	if metrics["settlement"] {
-		settlement = parseContractFloat(cellValue(row, monthCol.Index+1))
+		settlement = parseContractFloat(cellValue(row, layout.SettlementCol))
 	}
 	received := 0.0
 	if metrics["received"] {
-		received = parseContractFloat(cellValue(row, monthCol.Index+4))
+		received = parseContractFloat(cellValue(row, layout.ReceivedCol))
 	}
 	invoice := 0.0
 	if metrics["invoice"] {
-		invoice = parseContractFloat(cellValue(row, monthCol.Index+3))
+		invoice = parseContractFloat(cellValue(row, layout.InvoiceCol))
 	}
 	if settlement <= 0 && received <= 0 && invoice <= 0 {
 		return contractFundIncomeGroupRow{}, false
+	}
+	quantity := ""
+	if layout.QuantityCol >= 0 {
+		quantity = strings.TrimSpace(cellValue(row, layout.QuantityCol))
+	}
+	isInvoiced := "否"
+	if layout.IsInvoicedCol >= 0 {
+		isInvoiced = defaultContractText(cellValue(row, layout.IsInvoicedCol), "否")
 	}
 	return contractFundIncomeGroupRow{
 		CustomerName:        name,
 		SourceSheetName:     strings.TrimSpace(sheetName),
 		YearMonth:           yearMonth,
-		Quantity:            strings.TrimSpace(cellValue(row, monthCol.Index)),
+		Quantity:            quantity,
 		SettlementAmount:    settlement,
 		ReceivedAmount:      received,
-		IsInvoiced:          defaultContractText(cellValue(row, monthCol.Index+2), "否"),
+		IsInvoiced:          isInvoiced,
 		InvoiceAmount:       invoice,
 		Remarks:             remarks,
 		ContractStartDate:   contractStartDate,
@@ -1268,7 +1308,7 @@ func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int
 		SourceStartRow:      mergeRange.StartRow + 1,
 		SourceEndRow:        mergeRange.EndRow + 1,
 		MergeRange:          mergeRangeLabel(mergeRange),
-		SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 5), intRange(monthCol.Index, monthCol.Index+4)...)...)),
+		SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 5), intRange(layout.SourceStartCol, layout.SourceEndCol)...)...)),
 		Members:             members,
 		MemberSourceRows:    memberSourceRows,
 	}, true

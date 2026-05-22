@@ -183,6 +183,378 @@ func TestContractDimensionQueryScenarios(t *testing.T) {
 	})
 }
 
+func TestCompoundCustomerUnpaidQuestionUsesRevenueSideForAllEntitiesAndPeriods(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("给我统计一下四川其妙和辽宁金程25年Q4以及26Q1 未付款的金额")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["query_family"]; got != query.QueryFamilyContractDimension {
+		t.Fatalf("query_family = %v, want %s", got, query.QueryFamilyContractDimension)
+	}
+	if got := spec["metric_kind"]; got != query.MetricKindReceipts {
+		t.Fatalf("metric_kind = %v, want %s", got, query.MetricKindReceipts)
+	}
+	route, ok := res.Data["route_decision"].(map[string]any)
+	if !ok {
+		t.Fatalf("route_decision missing: %+v", res.Data)
+	}
+	primary, ok := route["primary_tables"].([]string)
+	if !ok {
+		t.Fatalf("route primary_tables missing: %#v", route["primary_tables"])
+	}
+	if !containsString(primary, "fin_fund_income") || containsString(primary, "fin_cost_settlements") {
+		t.Fatalf("primary_tables = %#v, want revenue-side fund income only", primary)
+	}
+
+	items, ok := res.Data["items"].([]map[string]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %#v", res.Data["items"])
+	}
+	if len(items) != 4 {
+		t.Fatalf("items len = %d, want 4: %#v", len(items), items)
+	}
+	assertCompoundUnpaidItem(t, items, "四川其妙科技有限公司", "2026年Q1", "matched", 1600)
+	assertCompoundUnpaidItem(t, items, "辽宁金程信息科技有限公司", "2025年Q4", "matched", 266)
+	assertCompoundUnpaidItem(t, items, "四川其妙科技有限公司", "2025年Q4", "missing", 0)
+	assertCompoundUnpaidItem(t, items, "辽宁金程信息科技有限公司", "2026年Q1", "missing", 0)
+
+	if !strings.Contains(res.Message, "四川其妙科技有限公司 2026年Q1") ||
+		!strings.Contains(res.Message, "辽宁金程信息科技有限公司 2025年Q4") ||
+		strings.Contains(res.Message, "成本合同口径") {
+		t.Fatalf("message should answer deterministically from revenue-side contract income, got: %s", res.Message)
+	}
+}
+
+func TestCompoundCustomerContractQuestionSupportsMultipleRevenueMetrics(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("给我统计一下四川其妙和辽宁金程25年Q4以及26Q1 结算金额、收款金额、开票金额、未付款金额")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["query_pipeline"]; got != "compound_source_query" {
+		t.Fatalf("query_pipeline = %v, want compound_source_query", got)
+	}
+	metrics, ok := res.Data["requested_metrics"].([]string)
+	if !ok {
+		t.Fatalf("requested_metrics missing: %#v", res.Data["requested_metrics"])
+	}
+	for _, want := range []string{"contract_revenue.settlement", "contract_revenue.received", "contract_revenue.invoice", "contract_revenue.unpaid"} {
+		if !containsString(metrics, want) {
+			t.Fatalf("requested_metrics missing %s, got %#v", want, metrics)
+		}
+	}
+	items, ok := res.Data["items"].([]map[string]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %#v", res.Data["items"])
+	}
+	assertCompoundContractMetricItem(t, items, "四川其妙科技有限公司", "2026年Q1", map[string]float64{
+		"contract_revenue.settlement": 2500,
+		"contract_revenue.received":   900,
+		"contract_revenue.invoice":    500,
+		"contract_revenue.unpaid":     1600,
+	})
+	assertCompoundContractMetricItem(t, items, "辽宁金程信息科技有限公司", "2025年Q4", map[string]float64{
+		"contract_revenue.settlement": 3000,
+		"contract_revenue.received":   2734,
+		"contract_revenue.invoice":    3000,
+		"contract_revenue.unpaid":     266,
+	})
+	if !strings.Contains(res.Message, "已开票 500.00 元") || !strings.Contains(res.Message, "未付款 1600.00 元") {
+		t.Fatalf("message should include requested invoice and unpaid metrics, got: %s", res.Message)
+	}
+}
+
+func TestCompoundCustomerContractQuestionDoesNotRequireUnpaidMetric(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("给我统计一下四川其妙和辽宁金程25年Q4以及26Q1 结算金额和收款金额")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["query_pipeline"]; got != "compound_source_query" {
+		t.Fatalf("query_pipeline = %v, want compound_source_query", got)
+	}
+	metrics, ok := res.Data["requested_metrics"].([]string)
+	if !ok {
+		t.Fatalf("requested_metrics missing: %#v", res.Data["requested_metrics"])
+	}
+	if !containsString(metrics, "contract_revenue.settlement") || !containsString(metrics, "contract_revenue.received") || containsString(metrics, "contract_revenue.unpaid") {
+		t.Fatalf("requested_metrics = %#v, want settlement and received only", metrics)
+	}
+	if strings.Contains(res.Message, "未付款") {
+		t.Fatalf("message should not include unrequested unpaid metric, got: %s", res.Message)
+	}
+}
+
+func TestCompoundPlannerSupportsContractCostTableMetrics(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("北京成本供应商和上海合并供应商25年Q4以及26Q1 合同成本、已付款、已收票未付款")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["query_pipeline"]; got != "compound_source_query" {
+		t.Fatalf("query_pipeline = %v, want compound_source_query", got)
+	}
+	items, ok := res.Data["items"].([]map[string]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %#v", res.Data["items"])
+	}
+	assertCompoundContractMetricItem(t, items, "北京成本供应商科技有限公司", "2025年Q4", map[string]float64{
+		"contract_cost.settlement":      1000,
+		"contract_cost.paid":            300,
+		"contract_cost.invoiced_unpaid": 500,
+	})
+	assertCompoundContractMetricItem(t, items, "上海合并供应商科技有限公司", "2026年Q1", map[string]float64{
+		"contract_cost.settlement":      600,
+		"contract_cost.paid":            570,
+		"contract_cost.invoiced_unpaid": 30,
+	})
+	primary, ok := res.Data["primary_source_tables"].([]string)
+	if !ok || !containsString(primary, "fin_cost_settlements") || !containsString(primary, "fin_cost_settlement_groups") {
+		t.Fatalf("primary_source_tables = %#v, want cost settlement tables", res.Data["primary_source_tables"])
+	}
+}
+
+func TestCompoundPlannerSupportsBankStatementMetrics(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("北京成本供应商和上海合并供应商25年Q4以及26Q1 银行流水付款金额")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	items, ok := res.Data["items"].([]map[string]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %#v", res.Data["items"])
+	}
+	assertCompoundContractMetricItem(t, items, "北京成本供应商科技有限公司", "2025年Q4", map[string]float64{
+		"bank_statement.paid": 444,
+	})
+	assertCompoundContractMetricItem(t, items, "上海合并供应商科技有限公司", "2026年Q1", map[string]float64{
+		"bank_statement.paid": 555,
+	})
+	primary, ok := res.Data["primary_source_tables"].([]string)
+	if !ok || !containsString(primary, "fin_bank_statement") {
+		t.Fatalf("primary_source_tables = %#v, want bank statement", res.Data["primary_source_tables"])
+	}
+}
+
+func TestCompoundPlannerSupportsJournalMetrics(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("北京成本供应商和上海合并供应商25年Q4以及26Q1 序时账借方金额和贷方金额")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	items, ok := res.Data["items"].([]map[string]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %#v", res.Data["items"])
+	}
+	assertCompoundContractMetricItem(t, items, "北京成本供应商科技有限公司", "2025年Q4", map[string]float64{
+		"journal.debit":  1000,
+		"journal.credit": 0,
+	})
+	assertCompoundContractMetricItem(t, items, "上海合并供应商科技有限公司", "2026年Q1", map[string]float64{
+		"journal.debit":  0,
+		"journal.credit": 200,
+	})
+	primary, ok := res.Data["primary_source_tables"].([]string)
+	if !ok || !containsString(primary, "fin_journal") {
+		t.Fatalf("primary_source_tables = %#v, want journal", res.Data["primary_source_tables"])
+	}
+}
+
+func TestCompoundPlannerSupportsMixedSourceMetricsInOneQuestion(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildContractQueryTestDB(t)
+	seedCompoundCustomerUnpaidRows(t, dbPath)
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("四川其妙和北京成本供应商25年Q4以及26Q1 合同收入结算金额、合同成本、银行流水付款金额、序时账借方金额")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	if got := res.Data["query_pipeline"]; got != "compound_source_query" {
+		t.Fatalf("query_pipeline = %v, want compound_source_query", got)
+	}
+	metrics, ok := res.Data["requested_metrics"].([]string)
+	if !ok {
+		t.Fatalf("requested_metrics missing: %#v", res.Data["requested_metrics"])
+	}
+	for _, want := range []string{
+		"contract_revenue.settlement",
+		"contract_cost.settlement",
+		"bank_statement.paid",
+		"journal.debit",
+	} {
+		if !containsString(metrics, want) {
+			t.Fatalf("requested_metrics missing %s, got %#v", want, metrics)
+		}
+	}
+	if containsString(metrics, "bank_statement.received") {
+		t.Fatalf("requested_metrics = %#v, should not treat 合同收入 as bank received", metrics)
+	}
+	primary, ok := res.Data["primary_source_tables"].([]string)
+	if !ok {
+		t.Fatalf("primary_source_tables missing: %#v", res.Data["primary_source_tables"])
+	}
+	for _, want := range []string{
+		"fin_fund_income",
+		"fin_cost_settlements",
+		"fin_bank_statement",
+		"fin_journal",
+	} {
+		if !containsString(primary, want) {
+			t.Fatalf("primary_source_tables missing %s, got %#v", want, primary)
+		}
+	}
+	items, ok := res.Data["items"].([]map[string]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %#v", res.Data["items"])
+	}
+	assertCompoundContractMetricItem(t, items, "四川其妙科技有限公司", "2026年Q1", map[string]float64{
+		"contract_revenue.settlement": 2500,
+		"contract_cost.settlement":    0,
+		"bank_statement.paid":         0,
+		"journal.debit":               0,
+	})
+	assertCompoundContractMetricItem(t, items, "北京成本供应商科技有限公司", "2025年Q4", map[string]float64{
+		"contract_revenue.settlement": 0,
+		"contract_cost.settlement":    1000,
+		"bank_statement.paid":         444,
+		"journal.debit":               1000,
+	})
+}
+
+func assertCompoundUnpaidItem(t *testing.T, items []map[string]any, entity, periodLabel, status string, wantUnpaid float64) {
+	t.Helper()
+	for _, item := range items {
+		if item["entity"] == entity && item["period_label"] == periodLabel {
+			if got := item["coverage_status"]; got != status {
+				t.Fatalf("%s %s coverage_status = %v, want %s", entity, periodLabel, got, status)
+			}
+			if got := item["unpaid_amount"]; got != wantUnpaid {
+				t.Fatalf("%s %s unpaid_amount = %v, want %.2f", entity, periodLabel, got, wantUnpaid)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing item entity=%s period=%s in %#v", entity, periodLabel, items)
+}
+
+func assertCompoundContractMetricItem(t *testing.T, items []map[string]any, entity, periodLabel string, want map[string]float64) {
+	t.Helper()
+	for _, item := range items {
+		if item["entity"] != entity || item["period_label"] != periodLabel {
+			continue
+		}
+		metrics, ok := item["metrics"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s %s metrics missing: %#v", entity, periodLabel, item["metrics"])
+		}
+		for key, wantValue := range want {
+			if got := metrics[key]; got != wantValue {
+				t.Fatalf("%s %s metrics[%s] = %v, want %.2f", entity, periodLabel, key, got, wantValue)
+			}
+		}
+		return
+	}
+	t.Fatalf("missing item entity=%s period=%s in %#v", entity, periodLabel, items)
+}
+
+func seedCompoundCustomerUnpaidRows(t *testing.T, dbPath string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	inserts := []string{
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C030', '四川其妙科技有限公司', '四川其妙数据服务合同')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C031', '四川尧皆圭瑶科技有限公司', '四川尧皆圭瑶数据服务合同')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C032', '北京成本供应商科技有限公司', '北京成本供应商服务合同')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C030', '2026-01', 'contract_fund_income', '26年Q1收入明细', 1000, 400, '否', 0)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C030', '2026-02', 'contract_fund_income', '26年Q1收入明细', 500, 500, '是', 500)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C030', '2026-03', 'contract_fund_income', '26年Q1收入明细', 1000, 0, '否', 0)`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C031', '2026-03', 'contract_fund_income', '26年Q1收入明细', 900, 900, '是', 900)`,
+		`INSERT INTO fin_cost_settlement_groups(id, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, customer_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code)
+		 VALUES (301, '2025-10', 'contract_revenue_cost', '成本-月度结算', 30, 30, '北京成本供应商科技有限公司', '1项', 1000, '是', 800, 300, '640101')`,
+		`INSERT INTO fin_cost_settlement_group_members(group_id, contract_id, source_row_number) VALUES (301, 'C032', 30)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount) VALUES ('南京优集数据科技有限公司', '2025-10-20', '北京成本供应商科技有限公司', '银行付款', 444, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount) VALUES ('南京优集数据科技有限公司', '2026-02-20', '上海合并供应商科技有限公司', '银行付款', 555, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2025-10', '2025-10-20', 'J-COST-1', '640101', '主营业务成本', '借', 1000, '成本确认', '北京成本供应商科技有限公司', 1000, 0)`,
+		`INSERT INTO journal(company, period, voucher_date, voucher_no, account_code, account_name, direction, amount, summary, counterparty, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-02', '2026-02-20', 'J-COST-2', '220201', '应付账款', '贷', 200, '应付确认', '上海合并供应商科技有限公司', 0, 200)`,
+	}
+	for _, stmt := range inserts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert compound customer seed data failed: %v", err)
+		}
+	}
+}
+
 func TestContractMemberQuestionDoesNotAttributeWholeMergedFundIncomeGroup(t *testing.T) {
 	runParallelHeavyQueryTest(t)
 

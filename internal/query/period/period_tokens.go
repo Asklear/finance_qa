@@ -85,6 +85,14 @@ func validMonth(m int) bool {
 	return m >= 1 && m <= 12
 }
 
+func normalizeYearToken(raw string) int {
+	y := mustAtoi(strings.TrimSpace(raw))
+	if y >= 0 && y < 100 {
+		return 2000 + y
+	}
+	return y
+}
+
 func MustAtoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
