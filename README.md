@@ -642,7 +642,7 @@ SERVER="$SERVER" tests/scripts/sync_openclaw_bridge_and_skill.sh
         "source": "path",
         "sourcePath": "/root/.openclaw/extensions/openclaw-finance",
         "installPath": "/root/.openclaw/extensions/openclaw-finance",
-        "version": "2.0.11"
+        "version": "2.0.12"
       }
     }
   }
@@ -680,8 +680,8 @@ go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
 
 ### 5. 版本兼容性
 
-- finance_qa / Go MCP: `~/finance_qa/bin/financeqa version`（当前 `2.0.11`）
-- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`（当前 `2.0.11`，且 `openclaw.extensions` 必须包含 `./dist/index.esm.js` 才能被 OpenClaw 发现）
+- finance_qa / Go MCP: `~/finance_qa/bin/financeqa version`（当前 `2.0.12`）
+- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`（当前 `2.0.12`，且 `openclaw.extensions` 必须包含 `./dist/index.esm.js` 才能被 OpenClaw 发现）
 - OpenClaw Config: `~/.openclaw/openclaw.json` 的 `plugins.installs.openclaw-finance.version` 需与插件版本同步；运行配置只校验 `skills.load.extraDirs`、`plugins.entries.openclaw-finance.enabled` 和 `hooks.allowPromptInjection`
 
 Go MCP、OpenClaw Plugin metadata 与 `openclaw.json` 中的 OpenClaw install metadata semver 需要保持同步；`plugins.entries` 运行开关只做启用配置校验。
