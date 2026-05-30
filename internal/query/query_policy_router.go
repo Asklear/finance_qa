@@ -72,6 +72,8 @@ func isAuthoritativeSourceQuestion(q string) bool {
 func isARAPQuestion(q string) bool {
 	return containsAny(q, []string{
 		"应收账款", "应付账款", "应收/应付", "应收", "应付",
+		"应收未收", "客户未付款", "客户没付款", "客户未支付",
+		"含未开票未付款", "未开票未付款", "未开票未回款",
 		"已收发票未付款", "已收票未付款", "收到发票未付款",
 		"已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款",
 	})

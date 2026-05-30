@@ -29,6 +29,16 @@ func buildContractDimensionMessage(summary contractDimensionSummary) string {
 				anyToFloat64(bookView["settlement_amount"]),
 				buildCustomerContractCashSummary(anyToFloat64(cashView["received_amount"]), summary.SubPeriod, anyToFloat64(summary.Data["sub_period_receipts"])))
 		}
+		if askedTopic == "receivable" {
+			return fmt.Sprintf("[%s] %s 应收未收 %.2f 元（按各账期结算金额减到账金额后的未收部分汇总）。补充合同台账结算 %.2f 元、实际到账 %.2f 元；其中已开票未回款 %.2f 元，开票 %.2f 元。",
+				summary.Entity,
+				summary.Period,
+				anyToFloat64(bookView["receivable_amount"]),
+				anyToFloat64(bookView["settlement_amount"]),
+				anyToFloat64(cashView["received_amount"]),
+				anyToFloat64(bookView["invoice_open_amount"]),
+				anyToFloat64(bookView["invoice_amount"]))
+		}
 		message := fmt.Sprintf("[%s] %s 先看现金口径：%s。再看财务口径：合同台账结算 %.2f 元，开票 %.2f 元。",
 			summary.Entity,
 			summary.Period,

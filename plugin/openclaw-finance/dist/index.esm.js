@@ -248,13 +248,15 @@ function isFinanceQuestion(rawText) {
   return FINANCE_KEYWORDS.some((keyword) => text.includes(keyword));
 }
 
-function latestFinanceQuestionFromMessages(messages) {
+function latestFinanceQuestionFromMessages(messages, excludeText = "") {
   if (!Array.isArray(messages)) return "";
+  const excluded = userVisibleText(excludeText);
   for (let i = messages.length - 1; i >= 0 && i >= messages.length - 12; i--) {
     const entry = messages[i];
     const message = entry?.message && typeof entry.message === "object" ? entry.message : entry;
     if (message?.role !== "user") continue;
     const text = userVisibleText(messageContentText(message.content));
+    if (excluded && text === excluded) continue;
     if (isFinanceQuestion(text)) return text;
   }
   return "";
@@ -275,11 +277,30 @@ function isRetryOrContinuation(rawText) {
   return /(continue where you left off|previous model attempt failed|timed out|继续|接着)/i.test(String(rawText || ""));
 }
 
+function hasExplicitFinancePeriod(rawText) {
+  const text = userVisibleText(rawText);
+  return /(20\d{2}年|\d{2}年|今年|本年|去年|上个月|下个月|本月|这个月|当月|[0-1]?\d月|[一二三四五六七八九十两]{1,3}月|Q\s*[1-4]|季度|全年|年度|上半年|下半年)/i.test(text);
+}
+
+function isContextDependentFinanceFollowup(rawText) {
+  const text = userVisibleText(rawText);
+  if (!isFinanceQuestion(text) || hasExplicitFinancePeriod(text)) return false;
+  return /^(那|其中|含|包括|包含|加上|还有)/.test(text) || /(含未开票|未开票未付款|未开票未回款)/.test(text);
+}
+
+function contextualFinanceQuestion(currentQuestion, messages) {
+  const current = userVisibleText(currentQuestion);
+  if (!isContextDependentFinanceFollowup(current)) return current;
+  const previous = latestFinanceQuestionFromMessages(messages, current);
+  if (!previous) return current;
+  return `${previous}；${current}`;
+}
+
 function financeQuestionForPromptEvent(event) {
   const prompt = userVisibleText(event?.prompt || "");
-  if (isFinanceQuestion(prompt)) return prompt;
+  if (isFinanceQuestion(prompt)) return contextualFinanceQuestion(prompt, event?.messages);
   const latestUserText = latestUserTextFromMessages(event?.messages);
-  if (isFinanceQuestion(latestUserText)) return latestUserText;
+  if (isFinanceQuestion(latestUserText)) return contextualFinanceQuestion(latestUserText, event?.messages);
   if (isRetryOrContinuation(prompt) || isRetryOrContinuation(latestUserText)) {
     return latestFinanceQuestionFromMessages(event?.messages);
   }

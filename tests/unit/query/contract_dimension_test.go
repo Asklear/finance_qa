@@ -131,6 +131,23 @@ func TestContractDimensionQueryScenarios(t *testing.T) {
 			},
 		},
 		{
+			Name:     "customer_contract_receivable_question_answers_unreceived_amount",
+			Question: "辽宁金程信息科技有限公司去年应收未收是多少？",
+			DBPath:   buildContractQueryTestDB,
+			Assert: func(t *testing.T, res query.Result) {
+				if !strings.Contains(res.Message, "应收未收 500.00 元") {
+					t.Fatalf("message should directly answer unreceived receivable, got: %s", res.Message)
+				}
+				bookView, ok := res.Data["book_view"].(map[string]any)
+				if !ok {
+					t.Fatalf("book_view missing: %+v", res.Data)
+				}
+				if got := bookView["receivable_amount"]; got != float64(500) {
+					t.Fatalf("receivable_amount = %v, want 500", got)
+				}
+			},
+		},
+		{
 			Name:     "alias_revenue_uses_contract_dimension",
 			Question: "飞未云科2026年累计销售额多少？",
 			DBPath:   buildContractQueryTestDB,

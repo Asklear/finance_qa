@@ -41,35 +41,39 @@ type contractDimensionMeta struct {
 
 type contractRevenueSettlementRow struct {
 	contractKey
-	SourceSheetName     string
-	YearMonth           string
-	Quantity            string
-	SettlementAmount    float64
-	IsInvoiced          string
-	InvoiceAmount       float64
-	Remarks             string
-	ContractStartDate   string
-	ContractEndDate     string
-	SettlementCycle     string
-	SettlementUnitPrice string
-	SourceCellNotes     string
+	SourceSheetName         string
+	YearMonth               string
+	Quantity                string
+	SettlementAmount        float64
+	IsInvoiced              string
+	InvoiceAmount           float64
+	Remarks                 string
+	InvoiceOpenOffsetAmount float64
+	InvoiceOpenOffsetReason string
+	ContractStartDate       string
+	ContractEndDate         string
+	SettlementCycle         string
+	SettlementUnitPrice     string
+	SourceCellNotes         string
 }
 
 type contractCostSettlementRow struct {
 	contractKey
-	SourceSheetName     string
-	YearMonth           string
-	Quantity            string
-	SettlementAmount    float64
-	IsInvoiced          string
-	InvoiceAmount       float64
-	PaidAmount          float64
-	AccountCode         string
-	ContractStartDate   string
-	ContractEndDate     string
-	SettlementCycle     string
-	SettlementUnitPrice string
-	SourceCellNotes     string
+	SourceSheetName         string
+	YearMonth               string
+	Quantity                string
+	SettlementAmount        float64
+	IsInvoiced              string
+	InvoiceAmount           float64
+	PaidAmount              float64
+	InvoiceOpenOffsetAmount float64
+	InvoiceOpenOffsetReason string
+	AccountCode             string
+	ContractStartDate       string
+	ContractEndDate         string
+	SettlementCycle         string
+	SettlementUnitPrice     string
+	SourceCellNotes         string
 }
 
 type contractCostSettlementCleanupRow struct {
@@ -79,42 +83,46 @@ type contractCostSettlementCleanupRow struct {
 }
 
 type contractCostSettlementGroupRow struct {
-	CustomerName        string
-	SourceSheetName     string
-	YearMonth           string
-	Quantity            string
-	SettlementAmount    float64
-	IsInvoiced          string
-	InvoiceAmount       float64
-	PaidAmount          float64
-	AccountCode         string
-	ContractStartDate   string
-	ContractEndDate     string
-	SettlementCycle     string
-	SettlementUnitPrice string
-	SourceStartRow      int
-	SourceEndRow        int
-	MergeRange          string
-	SourceCellNotes     string
-	Members             []contractKey
-	MemberSourceRows    map[contractKey]int
+	CustomerName            string
+	SourceSheetName         string
+	YearMonth               string
+	Quantity                string
+	SettlementAmount        float64
+	IsInvoiced              string
+	InvoiceAmount           float64
+	PaidAmount              float64
+	InvoiceOpenOffsetAmount float64
+	InvoiceOpenOffsetReason string
+	AccountCode             string
+	ContractStartDate       string
+	ContractEndDate         string
+	SettlementCycle         string
+	SettlementUnitPrice     string
+	SourceStartRow          int
+	SourceEndRow            int
+	MergeRange              string
+	SourceCellNotes         string
+	Members                 []contractKey
+	MemberSourceRows        map[contractKey]int
 }
 
 type contractFundIncomeRow struct {
 	contractKey
-	SourceSheetName     string
-	YearMonth           string
-	Quantity            string
-	SettlementAmount    float64
-	ReceivedAmount      float64
-	IsInvoiced          string
-	InvoiceAmount       float64
-	Remarks             string
-	ContractStartDate   string
-	ContractEndDate     string
-	SettlementCycle     string
-	SettlementUnitPrice string
-	SourceCellNotes     string
+	SourceSheetName         string
+	YearMonth               string
+	Quantity                string
+	SettlementAmount        float64
+	ReceivedAmount          float64
+	IsInvoiced              string
+	InvoiceAmount           float64
+	Remarks                 string
+	InvoiceOpenOffsetAmount float64
+	InvoiceOpenOffsetReason string
+	ContractStartDate       string
+	ContractEndDate         string
+	SettlementCycle         string
+	SettlementUnitPrice     string
+	SourceCellNotes         string
 }
 
 type contractFundIncomeCleanupRow struct {
@@ -124,25 +132,27 @@ type contractFundIncomeCleanupRow struct {
 }
 
 type contractFundIncomeGroupRow struct {
-	CustomerName        string
-	SourceSheetName     string
-	YearMonth           string
-	Quantity            string
-	SettlementAmount    float64
-	ReceivedAmount      float64
-	IsInvoiced          string
-	InvoiceAmount       float64
-	Remarks             string
-	ContractStartDate   string
-	ContractEndDate     string
-	SettlementCycle     string
-	SettlementUnitPrice string
-	SourceStartRow      int
-	SourceEndRow        int
-	MergeRange          string
-	SourceCellNotes     string
-	Members             []contractKey
-	MemberSourceRows    map[contractKey]int
+	CustomerName            string
+	SourceSheetName         string
+	YearMonth               string
+	Quantity                string
+	SettlementAmount        float64
+	ReceivedAmount          float64
+	IsInvoiced              string
+	InvoiceAmount           float64
+	Remarks                 string
+	InvoiceOpenOffsetAmount float64
+	InvoiceOpenOffsetReason string
+	ContractStartDate       string
+	ContractEndDate         string
+	SettlementCycle         string
+	SettlementUnitPrice     string
+	SourceStartRow          int
+	SourceEndRow            int
+	MergeRange              string
+	SourceCellNotes         string
+	Members                 []contractKey
+	MemberSourceRows        map[contractKey]int
 }
 
 type contractSourceCellNote struct {
@@ -613,6 +623,64 @@ func sourceCellNotesJSON(notes contractSourceCellNotes) string {
 	return string(data)
 }
 
+type contractInvoiceOpenOffset struct {
+	Amount float64
+	Reason string
+}
+
+var contractInvoiceOpenOffsetAmountPattern = regexp.MustCompile(`([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*元`)
+
+func contractInvoiceOpenOffsetFromSerializedNotes(remarks, sourceCellNotes string) contractInvoiceOpenOffset {
+	var notes contractSourceCellNotes
+	if strings.TrimSpace(sourceCellNotes) != "" {
+		_ = json.Unmarshal([]byte(sourceCellNotes), &notes)
+	}
+	return contractInvoiceOpenOffsetFromNotes(remarks, notes)
+}
+
+func contractInvoiceOpenOffsetFromNotes(remarks string, notes contractSourceCellNotes) contractInvoiceOpenOffset {
+	texts := make([]string, 0, len(notes)+1)
+	if remark := strings.TrimSpace(remarks); remark != "" {
+		texts = append(texts, remark)
+	}
+	for _, note := range notes {
+		if text := strings.TrimSpace(note.Text); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	combined := strings.TrimSpace(strings.Join(texts, "；"))
+	if combined == "" {
+		return contractInvoiceOpenOffset{}
+	}
+	if !containsAnyContractKeyword(combined, "已收到", "已经收到", "已回款", "已收款") {
+		return contractInvoiceOpenOffset{}
+	}
+	if !containsAnyContractKeyword(combined, "未开票", "当时未开票", "先收款后开票", "先收后开票") {
+		return contractInvoiceOpenOffset{}
+	}
+	match := contractInvoiceOpenOffsetAmountPattern.FindStringSubmatch(combined)
+	if len(match) < 2 {
+		return contractInvoiceOpenOffset{}
+	}
+	amount := parseContractFloat(match[1])
+	if amount <= 0 {
+		return contractInvoiceOpenOffset{}
+	}
+	return contractInvoiceOpenOffset{
+		Amount: amount,
+		Reason: combined,
+	}
+}
+
+func containsAnyContractKeyword(text string, keywords ...string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
 func intRange(start, end int) []int {
 	if end < start {
 		return nil
@@ -653,20 +721,24 @@ func parseRevenueSettlementRows(sheetName string, rows [][]string, mergedRanges 
 			if amount <= 0 {
 				continue
 			}
+			sourceNotes := sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 5), intRange(monthCol.Index, monthCol.Index+3)...)...))
+			offset := contractInvoiceOpenOffsetFromSerializedNotes(remarks, sourceNotes)
 			out = append(out, contractRevenueSettlementRow{
-				contractKey:         contractKey{Name: name, Content: content},
-				SourceSheetName:     strings.TrimSpace(sheetName),
-				YearMonth:           yearMonth,
-				Quantity:            strings.TrimSpace(cellValue(row, monthCol.Index)),
-				SettlementAmount:    amount,
-				IsInvoiced:          defaultContractText(cellValue(row, monthCol.Index+2), "否"),
-				InvoiceAmount:       parseContractFloat(cellValue(row, monthCol.Index+3)),
-				Remarks:             remarks,
-				ContractStartDate:   contractStartDate,
-				ContractEndDate:     contractEndDate,
-				SettlementCycle:     settlementCycle,
-				SettlementUnitPrice: settlementUnitPrice,
-				SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowColumns(cellNotes, mergedRanges, idx, append(intRange(0, 5), intRange(monthCol.Index, monthCol.Index+3)...)...)),
+				contractKey:             contractKey{Name: name, Content: content},
+				SourceSheetName:         strings.TrimSpace(sheetName),
+				YearMonth:               yearMonth,
+				Quantity:                strings.TrimSpace(cellValue(row, monthCol.Index)),
+				SettlementAmount:        amount,
+				IsInvoiced:              defaultContractText(cellValue(row, monthCol.Index+2), "否"),
+				InvoiceAmount:           parseContractFloat(cellValue(row, monthCol.Index+3)),
+				Remarks:                 remarks,
+				ContractStartDate:       contractStartDate,
+				ContractEndDate:         contractEndDate,
+				SettlementCycle:         settlementCycle,
+				SettlementUnitPrice:     settlementUnitPrice,
+				InvoiceOpenOffsetAmount: offset.Amount,
+				InvoiceOpenOffsetReason: offset.Reason,
+				SourceCellNotes:         sourceNotes,
 			})
 		}
 	}
@@ -747,21 +819,24 @@ func buildDirectCostSettlementRow(sheetName string, row []string, monthCol month
 	if settlement <= 0 && invoice <= 0 && paid <= 0 {
 		return contractCostSettlementRow{}, false
 	}
+	offset := contractInvoiceOpenOffsetFromSerializedNotes("", sourceCellNotes)
 	return contractCostSettlementRow{
-		contractKey:         key,
-		SourceSheetName:     strings.TrimSpace(sheetName),
-		YearMonth:           yearMonth,
-		Quantity:            defaultContractText(cellValue(row, monthCol.Index), "/"),
-		SettlementAmount:    settlement,
-		IsInvoiced:          defaultContractText(cellValue(row, monthCol.Index+2), "否"),
-		InvoiceAmount:       invoice,
-		PaidAmount:          paid,
-		AccountCode:         accountCode,
-		ContractStartDate:   contractStartDate,
-		ContractEndDate:     contractEndDate,
-		SettlementCycle:     settlementCycle,
-		SettlementUnitPrice: settlementUnitPrice,
-		SourceCellNotes:     sourceCellNotes,
+		contractKey:             key,
+		SourceSheetName:         strings.TrimSpace(sheetName),
+		YearMonth:               yearMonth,
+		Quantity:                defaultContractText(cellValue(row, monthCol.Index), "/"),
+		SettlementAmount:        settlement,
+		IsInvoiced:              defaultContractText(cellValue(row, monthCol.Index+2), "否"),
+		InvoiceAmount:           invoice,
+		PaidAmount:              paid,
+		InvoiceOpenOffsetAmount: offset.Amount,
+		InvoiceOpenOffsetReason: offset.Reason,
+		AccountCode:             accountCode,
+		ContractStartDate:       contractStartDate,
+		ContractEndDate:         contractEndDate,
+		SettlementCycle:         settlementCycle,
+		SettlementUnitPrice:     settlementUnitPrice,
+		SourceCellNotes:         sourceCellNotes,
 	}, true
 }
 
@@ -781,23 +856,26 @@ func buildCustomerLevelCostSettlementGroupRow(sheetName string, row []string, ro
 	if settlement <= 0 && invoice <= 0 && paid <= 0 {
 		return contractCostSettlementGroupRow{}, false
 	}
+	offset := contractInvoiceOpenOffsetFromSerializedNotes("", sourceCellNotes)
 	return contractCostSettlementGroupRow{
-		CustomerName:        strings.TrimSpace(customerName),
-		SourceSheetName:     strings.TrimSpace(sheetName),
-		YearMonth:           yearMonth,
-		Quantity:            defaultContractText(cellValue(row, monthCol.Index), "/"),
-		SettlementAmount:    settlement,
-		IsInvoiced:          defaultContractText(cellValue(row, monthCol.Index+2), "否"),
-		InvoiceAmount:       invoice,
-		PaidAmount:          paid,
-		AccountCode:         accountCode,
-		ContractStartDate:   contractStartDate,
-		ContractEndDate:     contractEndDate,
-		SettlementCycle:     settlementCycle,
-		SettlementUnitPrice: settlementUnitPrice,
-		SourceStartRow:      rowIdx + 1,
-		SourceEndRow:        rowIdx + 1,
-		SourceCellNotes:     sourceCellNotes,
+		CustomerName:            strings.TrimSpace(customerName),
+		SourceSheetName:         strings.TrimSpace(sheetName),
+		YearMonth:               yearMonth,
+		Quantity:                defaultContractText(cellValue(row, monthCol.Index), "/"),
+		SettlementAmount:        settlement,
+		IsInvoiced:              defaultContractText(cellValue(row, monthCol.Index+2), "否"),
+		InvoiceAmount:           invoice,
+		PaidAmount:              paid,
+		InvoiceOpenOffsetAmount: offset.Amount,
+		InvoiceOpenOffsetReason: offset.Reason,
+		AccountCode:             accountCode,
+		ContractStartDate:       contractStartDate,
+		ContractEndDate:         contractEndDate,
+		SettlementCycle:         settlementCycle,
+		SettlementUnitPrice:     settlementUnitPrice,
+		SourceStartRow:          rowIdx + 1,
+		SourceEndRow:            rowIdx + 1,
+		SourceCellNotes:         sourceCellNotes,
 	}, true
 }
 
@@ -950,26 +1028,30 @@ func buildMergedCostSettlementGroupRow(sheetName string, rows [][]string, rowIdx
 		return contractCostSettlementGroupRow{}, false
 	}
 	members, memberSourceRows := mergedContractGroupMembers(rows, mergeRange)
+	sourceNotes := sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 6), intRange(monthCol.Index, monthCol.Index+4)...)...))
+	offset := contractInvoiceOpenOffsetFromSerializedNotes("", sourceNotes)
 	return contractCostSettlementGroupRow{
-		CustomerName:        name,
-		SourceSheetName:     strings.TrimSpace(sheetName),
-		YearMonth:           yearMonth,
-		Quantity:            defaultContractText(cellValue(row, monthCol.Index), "/"),
-		SettlementAmount:    settlement,
-		IsInvoiced:          defaultContractText(cellValue(row, monthCol.Index+2), "否"),
-		InvoiceAmount:       invoice,
-		PaidAmount:          paid,
-		AccountCode:         strings.TrimSpace(cellValue(row, 6)),
-		ContractStartDate:   normalizeContractDateString(cellValue(row, 2)),
-		ContractEndDate:     normalizeContractDateString(cellValue(row, 3)),
-		SettlementCycle:     strings.TrimSpace(cellValue(row, 4)),
-		SettlementUnitPrice: strings.TrimSpace(cellValue(row, 5)),
-		SourceStartRow:      mergeRange.StartRow + 1,
-		SourceEndRow:        mergeRange.EndRow + 1,
-		MergeRange:          mergeRangeLabel(mergeRange),
-		SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 6), intRange(monthCol.Index, monthCol.Index+4)...)...)),
-		Members:             members,
-		MemberSourceRows:    memberSourceRows,
+		CustomerName:            name,
+		SourceSheetName:         strings.TrimSpace(sheetName),
+		YearMonth:               yearMonth,
+		Quantity:                defaultContractText(cellValue(row, monthCol.Index), "/"),
+		SettlementAmount:        settlement,
+		IsInvoiced:              defaultContractText(cellValue(row, monthCol.Index+2), "否"),
+		InvoiceAmount:           invoice,
+		PaidAmount:              paid,
+		InvoiceOpenOffsetAmount: offset.Amount,
+		InvoiceOpenOffsetReason: offset.Reason,
+		AccountCode:             strings.TrimSpace(cellValue(row, 6)),
+		ContractStartDate:       normalizeContractDateString(cellValue(row, 2)),
+		ContractEndDate:         normalizeContractDateString(cellValue(row, 3)),
+		SettlementCycle:         strings.TrimSpace(cellValue(row, 4)),
+		SettlementUnitPrice:     strings.TrimSpace(cellValue(row, 5)),
+		SourceStartRow:          mergeRange.StartRow + 1,
+		SourceEndRow:            mergeRange.EndRow + 1,
+		MergeRange:              mergeRangeLabel(mergeRange),
+		SourceCellNotes:         sourceNotes,
+		Members:                 members,
+		MemberSourceRows:        memberSourceRows,
 	}, true
 }
 
@@ -1169,21 +1251,24 @@ func buildDirectFundIncomeRow(sheetName string, row []string, layout fundIncomeM
 	if layout.IsInvoicedCol >= 0 {
 		isInvoiced = defaultContractText(cellValue(row, layout.IsInvoicedCol), "否")
 	}
+	offset := contractInvoiceOpenOffsetFromSerializedNotes(remarks, sourceCellNotes)
 	return contractFundIncomeRow{
-		contractKey:         key,
-		SourceSheetName:     strings.TrimSpace(sheetName),
-		YearMonth:           yearMonth,
-		Quantity:            quantity,
-		SettlementAmount:    settlement,
-		ReceivedAmount:      received,
-		IsInvoiced:          isInvoiced,
-		InvoiceAmount:       invoice,
-		Remarks:             remarks,
-		ContractStartDate:   contractStartDate,
-		ContractEndDate:     contractEndDate,
-		SettlementCycle:     settlementCycle,
-		SettlementUnitPrice: settlementUnitPrice,
-		SourceCellNotes:     sourceCellNotes,
+		contractKey:             key,
+		SourceSheetName:         strings.TrimSpace(sheetName),
+		YearMonth:               yearMonth,
+		Quantity:                quantity,
+		SettlementAmount:        settlement,
+		ReceivedAmount:          received,
+		IsInvoiced:              isInvoiced,
+		InvoiceAmount:           invoice,
+		Remarks:                 remarks,
+		InvoiceOpenOffsetAmount: offset.Amount,
+		InvoiceOpenOffsetReason: offset.Reason,
+		ContractStartDate:       contractStartDate,
+		ContractEndDate:         contractEndDate,
+		SettlementCycle:         settlementCycle,
+		SettlementUnitPrice:     settlementUnitPrice,
+		SourceCellNotes:         sourceCellNotes,
 	}, true
 }
 
@@ -1291,26 +1376,30 @@ func buildMergedFundIncomeGroupRow(sheetName string, rows [][]string, rowIdx int
 	if layout.IsInvoicedCol >= 0 {
 		isInvoiced = defaultContractText(cellValue(row, layout.IsInvoicedCol), "否")
 	}
+	sourceNotes := sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 5), intRange(layout.SourceStartCol, layout.SourceEndCol)...)...))
+	offset := contractInvoiceOpenOffsetFromSerializedNotes(remarks, sourceNotes)
 	return contractFundIncomeGroupRow{
-		CustomerName:        name,
-		SourceSheetName:     strings.TrimSpace(sheetName),
-		YearMonth:           yearMonth,
-		Quantity:            quantity,
-		SettlementAmount:    settlement,
-		ReceivedAmount:      received,
-		IsInvoiced:          isInvoiced,
-		InvoiceAmount:       invoice,
-		Remarks:             remarks,
-		ContractStartDate:   contractStartDate,
-		ContractEndDate:     contractEndDate,
-		SettlementCycle:     settlementCycle,
-		SettlementUnitPrice: settlementUnitPrice,
-		SourceStartRow:      mergeRange.StartRow + 1,
-		SourceEndRow:        mergeRange.EndRow + 1,
-		MergeRange:          mergeRangeLabel(mergeRange),
-		SourceCellNotes:     sourceCellNotesJSON(cellNotesForRowRangeColumns(cellNotes, mergedRanges, mergeRange.StartRow, mergeRange.EndRow, append(intRange(0, 5), intRange(layout.SourceStartCol, layout.SourceEndCol)...)...)),
-		Members:             members,
-		MemberSourceRows:    memberSourceRows,
+		CustomerName:            name,
+		SourceSheetName:         strings.TrimSpace(sheetName),
+		YearMonth:               yearMonth,
+		Quantity:                quantity,
+		SettlementAmount:        settlement,
+		ReceivedAmount:          received,
+		IsInvoiced:              isInvoiced,
+		InvoiceAmount:           invoice,
+		Remarks:                 remarks,
+		InvoiceOpenOffsetAmount: offset.Amount,
+		InvoiceOpenOffsetReason: offset.Reason,
+		ContractStartDate:       contractStartDate,
+		ContractEndDate:         contractEndDate,
+		SettlementCycle:         settlementCycle,
+		SettlementUnitPrice:     settlementUnitPrice,
+		SourceStartRow:          mergeRange.StartRow + 1,
+		SourceEndRow:            mergeRange.EndRow + 1,
+		MergeRange:              mergeRangeLabel(mergeRange),
+		SourceCellNotes:         sourceNotes,
+		Members:                 members,
+		MemberSourceRows:        memberSourceRows,
 	}, true
 }
 
@@ -1478,10 +1567,10 @@ func replaceRevenueCostSettlements(ctx context.Context, tx *sql.Tx, bundle contr
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO fin_fund_income(
 	contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount,
-	remarks, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
+	remarks, invoice_open_offset_amount, invoice_open_offset_reason, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, 0, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.Remarks), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, 0, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.Remarks), nullableContractFloat(row.InvoiceOpenOffsetAmount), nullableContractValue(row.InvoiceOpenOffsetReason), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
 			return fmt.Errorf("insert fin_fund_income from revenue workbook: %w", err)
 		}
 	}
@@ -1492,10 +1581,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO fin_cost_settlements(
 	contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code,
-	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
+	invoice_open_offset_amount, invoice_open_offset_reason, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractFloat(row.InvoiceOpenOffsetAmount), nullableContractValue(row.InvoiceOpenOffsetReason), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
 			return fmt.Errorf("insert fin_cost_settlements: %w", err)
 		}
 	}
@@ -1766,10 +1855,10 @@ func replaceFundIncomeRows(ctx context.Context, tx *sql.Tx, bundle contractImpor
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO fin_fund_income(
 	contract_id, year_month, source_report_type, source_sheet_name, quantity, settlement_amount, received_amount, is_invoiced, invoice_amount,
-	remarks, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
+	remarks, invoice_open_offset_amount, invoice_open_offset_reason, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.Remarks), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+`, contractIDs[row.contractKey], row.YearMonth, string(bundle.Kind), nullableContractValue(row.SourceSheetName), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.Remarks), nullableContractFloat(row.InvoiceOpenOffsetAmount), nullableContractValue(row.InvoiceOpenOffsetReason), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)); err != nil {
 			return fmt.Errorf("insert fin_fund_income: %w", err)
 		}
 	}
@@ -1800,11 +1889,11 @@ func insertFundIncomeGroup(ctx context.Context, tx *sql.Tx, reportType contractW
 INSERT INTO fin_fund_income_groups(
 	customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range,
 	quantity, settlement_amount, received_amount, is_invoiced, invoice_amount,
-	remarks, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
+	remarks, invoice_open_offset_amount, invoice_open_offset_reason, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 RETURNING id
-`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.Remarks), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)).Scan(&groupID); err != nil {
+`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.ReceivedAmount, row.IsInvoiced, row.InvoiceAmount, nullableContractValue(row.Remarks), nullableContractFloat(row.InvoiceOpenOffsetAmount), nullableContractValue(row.InvoiceOpenOffsetReason), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)).Scan(&groupID); err != nil {
 		return 0, fmt.Errorf("insert fin_fund_income_groups: %w", err)
 	}
 	return groupID, nil
@@ -1816,11 +1905,11 @@ func insertCostSettlementGroup(ctx context.Context, tx *sql.Tx, reportType contr
 INSERT INTO fin_cost_settlement_groups(
 	customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, merge_range,
 	quantity, settlement_amount, is_invoiced, invoice_amount, paid_amount, account_code,
-	contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
+	invoice_open_offset_amount, invoice_open_offset_reason, contract_start_date, contract_end_date, settlement_cycle, settlement_unit_price, source_cell_notes, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 RETURNING id
-`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)).Scan(&groupID); err != nil {
+`, row.CustomerName, row.YearMonth, string(reportType), nullableContractValue(row.SourceSheetName), row.SourceStartRow, row.SourceEndRow, nullableContractValue(row.MergeRange), nullableContractValue(row.Quantity), row.SettlementAmount, row.IsInvoiced, row.InvoiceAmount, row.PaidAmount, nullableContractValue(row.AccountCode), nullableContractFloat(row.InvoiceOpenOffsetAmount), nullableContractValue(row.InvoiceOpenOffsetReason), nullableContractValue(row.ContractStartDate), nullableContractValue(row.ContractEndDate), nullableContractValue(row.SettlementCycle), nullableContractValue(row.SettlementUnitPrice), nullableContractValue(row.SourceCellNotes)).Scan(&groupID); err != nil {
 		return 0, fmt.Errorf("insert fin_cost_settlement_groups: %w", err)
 	}
 	return groupID, nil
@@ -1971,6 +2060,13 @@ func nullableContractValue(v string) any {
 		return nil
 	}
 	return strings.TrimSpace(v)
+}
+
+func nullableContractFloat(v float64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
 }
 
 func nullContractString(v sql.NullString) string {

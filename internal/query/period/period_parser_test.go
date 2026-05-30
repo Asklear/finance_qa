@@ -67,3 +67,43 @@ func TestExtractPeriodWithNowSupportsCompactTwoDigitQuarter(t *testing.T) {
 		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2025-10,2025-12)", from, to)
 	}
 }
+
+func TestExtractPeriodWithNowSupportsMixedRelativeYearMonthRange(t *testing.T) {
+	anchor := time.Date(2026, time.May, 30, 0, 0, 0, 0, time.UTC)
+
+	from, to := ExtractPeriodWithNow("从25年10月到今年4月底 客户未付款金额多少", anchor)
+
+	if from != "2025-10" || to != "2026-04" {
+		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2025-10,2026-04)", from, to)
+	}
+}
+
+func TestExtractPeriodWithNowSupportsAdjacentChineseMonthRange(t *testing.T) {
+	anchor := time.Date(2026, time.May, 30, 0, 0, 0, 0, time.UTC)
+
+	from, to := ExtractPeriodWithNow("那其妙三四月份的应收未收账款是多少", anchor)
+
+	if from != "2026-03" || to != "2026-04" {
+		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2026-03,2026-04)", from, to)
+	}
+}
+
+func TestExtractPeriodWithNowSupportsLastYearWithoutExplicitMonth(t *testing.T) {
+	anchor := time.Date(2026, time.May, 30, 0, 0, 0, 0, time.UTC)
+
+	from, to := ExtractPeriodWithNow("那去年辽宁金程应收未收是多少", anchor)
+
+	if from != "2025-01" || to != "2025-12" {
+		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2025-01,2025-12)", from, to)
+	}
+}
+
+func TestExtractPeriodWithNowSupportsCutoffRelativeYearMonth(t *testing.T) {
+	anchor := time.Date(2026, time.May, 30, 0, 0, 0, 0, time.UTC)
+
+	from, to := ExtractPeriodWithNow("那截止今年4月，一共应收未收多少", anchor)
+
+	if from != "2026-01" || to != "2026-04" {
+		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2026-01,2026-04)", from, to)
+	}
+}

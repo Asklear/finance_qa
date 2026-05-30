@@ -14,11 +14,15 @@ func (e *Engine) collectCustomerContractSummary(summary contractDimensionSummary
 
 	settlementAmount := round2(totals.Settlement)
 	invoiceAmount := round2(totals.Invoice)
+	invoiceOpenAmount := round2(totals.InvoiceOpen)
 	unattributedInvoiceAmount := round2(totals.UnattributedInvoice)
 	cashReceived := round2(totals.Received)
+	receivableAmount := round2(totals.Receivable)
 	summary.Data["book_view"] = map[string]any{
 		"settlement_amount":              settlementAmount,
 		"invoice_amount":                 invoiceAmount,
+		"invoice_open_amount":            invoiceOpenAmount,
+		"receivable_amount":              receivableAmount,
 		"unattributed_invoice_amount":    unattributedInvoiceAmount,
 		"unattributed_invoice_contracts": contractDimensionRowsToMaps(totals.UnattributedInvoiceContracts),
 		"invoice_attribution_note":       contractInvoiceAttributionNote(unattributedInvoiceAmount, totals.UnattributedInvoiceContracts),

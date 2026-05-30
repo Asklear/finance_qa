@@ -2,7 +2,6 @@ package period
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -22,7 +21,10 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 	if from, to, ok := extractQuarterRange(q, year, anchorMonth); ok {
 		return from, to
 	}
-	if from, to, ok := extractExplicitMonthRange(q); ok {
+	if from, to, ok := extractExplicitMonthRange(q, year); ok {
+		return from, to
+	}
+	if from, to, ok := extractRelativeYearMonthRange(q, year); ok {
 		return from, to
 	}
 	if from, to, ok := extractYearCumulativeRange(q, year, anchorMonth); ok {
@@ -32,6 +34,9 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 		return from, to
 	}
 	if from, to, ok := extractRelativeNamedRange(q, anchor); ok {
+		return from, to
+	}
+	if from, to, ok := extractAdjacentMonthRange(q, year, anchorMonth); ok {
 		return from, to
 	}
 	if from, to, ok := extractRelativeMonthRange(q, year, anchorMonth); ok {
@@ -106,12 +111,15 @@ func extractQuarterRange(q string, anchorYear, anchorMonth int) (string, string,
 	return "", "", false
 }
 
-func extractExplicitMonthRange(q string) (string, string, bool) {
-	rangeRe := regexp.MustCompile(`(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?\s*(?:到|至|-|~)\s*(20\d{2})年\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月`)
+func extractExplicitMonthRange(q string, anchorYear int) (string, string, bool) {
+	rangeRe := regexp.MustCompile(`(?:从)?\s*(20\d{2}|\d{2}|今年|本年|去年)\s*年?\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?(?:底|末)?\s*(?:到|至|-|~)\s*(20\d{2}|\d{2}|今年|本年|去年)?\s*年?\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?(?:底|末)?`)
 	m := rangeRe.FindStringSubmatch(q)
 	if len(m) == 5 {
-		y1, _ := strconv.Atoi(m[1])
-		y2, _ := strconv.Atoi(m[3])
+		y1 := resolveRelativeYearToken(m[1], anchorYear)
+		y2 := y1
+		if strings.TrimSpace(m[3]) != "" {
+			y2 = resolveRelativeYearToken(m[3], anchorYear)
+		}
 		m1 := parseChineseOrDigitMonth(m[2])
 		m2 := parseChineseOrDigitMonth(m[4])
 		if !validMonth(m1) || !validMonth(m2) {
@@ -131,6 +139,23 @@ func extractExplicitMonthRange(q string) (string, string, bool) {
 		return formatPeriodValue(y, m1), formatPeriodValue(y, m2), true
 	}
 
+	return "", "", false
+}
+
+func extractRelativeYearMonthRange(q string, anchorYear int) (string, string, bool) {
+	re := regexp.MustCompile(`(今年|本年|去年)\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?(?:底|末)?`)
+	if m := re.FindStringSubmatch(q); len(m) == 3 {
+		y := resolveRelativeYearToken(m[1], anchorYear)
+		month := parseChineseOrDigitMonth(m[2])
+		if !validMonth(month) {
+			return "", "", false
+		}
+		if containsAnyPeriodKeyword(q, "截止", "截至") {
+			return formatPeriodValue(y, 1), formatPeriodValue(y, month), true
+		}
+		p := formatPeriodValue(y, month)
+		return p, p, true
+	}
 	return "", "", false
 }
 
@@ -183,6 +208,9 @@ func extractRelativeNamedRange(q string, anchor time.Time) (string, string, bool
 	switch {
 	case strings.Contains(q, "今年") || strings.Contains(q, "本年"):
 		return formatPeriodValue(anchor.Year(), 1), anchor.Format("2006-01"), true
+	case strings.Contains(q, "去年"):
+		y := anchor.Year() - 1
+		return formatPeriodValue(y, 1), formatPeriodValue(y, 12), true
 	case strings.Contains(q, "上个月"):
 		t := anchor.AddDate(0, -1, 0)
 		p := t.Format("2006-01")
@@ -194,6 +222,23 @@ func extractRelativeNamedRange(q string, anchor time.Time) (string, string, bool
 	case strings.Contains(q, "本月") || strings.Contains(q, "这个月") || strings.Contains(q, "当月"):
 		p := anchor.Format("2006-01")
 		return p, p, true
+	}
+	return "", "", false
+}
+
+func extractAdjacentMonthRange(q string, anchorYear, anchorMonth int) (string, string, bool) {
+	re := regexp.MustCompile(`([一二三四五六七八九十两])([一二三四五六七八九十两])月(?:份)?`)
+	if m := re.FindStringSubmatch(q); len(m) == 3 {
+		m1 := parseChineseOrDigitMonth(m[1])
+		m2 := parseChineseOrDigitMonth(m[2])
+		if !validMonth(m1) || !validMonth(m2) || m1 > m2 {
+			return "", "", false
+		}
+		y := anchorYear
+		if m1 > anchorMonth && (m1-anchorMonth) >= 6 {
+			y = anchorYear - 1
+		}
+		return formatPeriodValue(y, m1), formatPeriodValue(y, m2), true
 	}
 	return "", "", false
 }
@@ -212,4 +257,24 @@ func extractRelativeMonthRange(q string, anchorYear, anchorMonth int) (string, s
 		}
 	}
 	return "", "", false
+}
+
+func resolveRelativeYearToken(raw string, anchorYear int) int {
+	token := strings.TrimSpace(raw)
+	switch token {
+	case "今年", "本年":
+		return anchorYear
+	case "去年":
+		return anchorYear - 1
+	}
+	return normalizeYearToken(token)
+}
+
+func containsAnyPeriodKeyword(text string, keywords ...string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
 }

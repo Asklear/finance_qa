@@ -54,6 +54,10 @@ func detectContractARAPMetric(q string) string {
 	switch {
 	case looksLikeSupplierInvoiceUnpaidQuestion(q):
 		return "已收票未付款"
+	case containsAny(q, []string{"含未开票未付款", "未开票未付款", "未开票未回款", "应收未收"}):
+		return "应收"
+	case containsAny(q, []string{"客户未付款", "客户没付款", "客户未支付"}):
+		return "已开票未回款"
 	case containsAny(q, []string{"已收发票未付款", "已收票未付款", "收到发票未付款", "供应商发票未付款"}):
 		return "已收票未付款"
 	case containsAny(q, []string{"已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款"}):

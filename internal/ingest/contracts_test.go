@@ -43,6 +43,72 @@ func TestParseFundIncomeQuarterRowsCapturesRemarksColumn(t *testing.T) {
 	}
 }
 
+func TestParseFundIncomeQuarterRowsExtractsInvoiceOpenOffsetFromCellNotes(t *testing.T) {
+	rows := [][]string{
+		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "1月", "", "", "", "", "2月", "", "", "", "", "3月", "", "", "", "", "26年Q1合计", "备注"},
+		{"", "", "", "", "", "", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "数量", "结算金额", "是否开票", "开票金额", "收款金额", "", ""},
+		{"倍壮（上海）信息技术有限公司", "信息服务协议", "2025-11-01", "2026-10-31", "月度", "0.05", "117085", "8854.25", "是", "11854.25", "8854.25", "", "", "", "", "", "", "", "", "", "", "12593.05", "合同2026年10月到期"},
+	}
+	cellNotes := contractSourceCellNotes{
+		"J3": {Author: "28527", Text: "3000元2025年11月已经收到但当时未开票"},
+	}
+
+	out, groups, cleanup := parseFundIncomeQuarterRows("26年Q1收入明细", rows, nil, cellNotes)
+	if len(cleanup) != 0 || len(groups) != 0 {
+		t.Fatalf("groups=%#v cleanup=%#v", groups, cleanup)
+	}
+	if len(out) != 1 {
+		t.Fatalf("out length = %d, want 1: %#v", len(out), out)
+	}
+	if got, want := out[0].InvoiceOpenOffsetAmount, float64(3000); got != want {
+		t.Fatalf("invoice_open_offset_amount = %.2f, want %.2f", got, want)
+	}
+	if !strings.Contains(out[0].InvoiceOpenOffsetReason, "3000元2025年11月已经收到但当时未开票") {
+		t.Fatalf("invoice_open_offset_reason = %q", out[0].InvoiceOpenOffsetReason)
+	}
+}
+
+func TestContractInvoiceOpenOffsetIgnoresNonOffsetNumericComments(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "payment terms",
+			text: "季度结束甲方5个工作日内提交结算单，5个工作日内进行确认，开票15个工作日内进行付款",
+		},
+		{
+			name: "settlement schedule",
+			text: "分两次结算，首次1,261,208.00元，第二次204,792.00元。具体付款节奏以吴总通知为准。",
+		},
+		{
+			name: "fx estimate",
+			text: "首期40%按照汇率6.8结算，剩余60%按6.8暂估；首期相当收到4.8个月",
+		},
+		{
+			name: "received date without amount",
+			text: "1月15日已收到",
+		},
+		{
+			name: "cost payable difference",
+			text: "付款金额与已开票差额 应付：876127.10",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			offset := contractInvoiceOpenOffsetFromNotes("", contractSourceCellNotes{
+				"A1": {Text: tc.text},
+			})
+			if offset.Amount != 0 || offset.Reason != "" {
+				t.Fatalf("offset = %#v, want no invoice-open offset for %q", offset, tc.text)
+			}
+		})
+	}
+}
+
 func TestParseFundIncomeQuarterRowsSupportsSettlementReceivedLayout(t *testing.T) {
 	rows := [][]string{
 		{"客户名称", "合同内容", "合同开始时间", "合同终止时间", "结算周期", "结算单价（含税/元）", "10月", "", "11月", "", "12月", "", "Q4 ", "备注"},

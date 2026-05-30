@@ -364,47 +364,125 @@ func (e *Engine) collectCostInvoiceOpenItems(periodFrom, periodTo, like string) 
 }
 
 func (e *Engine) collectContractAggregateInvoiceOpenItems(spec contractFinanceTotalsSpec, alias, periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
-	unionSQL := fmt.Sprintf(`
-SELECT c.customer_name,
-       c.contract_content,
-       COALESCE(d.invoice_amount, 0) AS invoice_amount,
-       COALESCE(d.%[1]s, 0) AS movement_amount,
-       CASE WHEN COALESCE(d.invoice_amount, 0) > COALESCE(d.%[1]s, 0) THEN COALESCE(d.invoice_amount, 0) - COALESCE(d.%[1]s, 0) ELSE 0 END AS open_amount
-FROM %[2]s d
-JOIN fin_contracts c ON c.contract_id = d.contract_id
-WHERE d.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.DirectTable)
-	args := []any{periodFrom, periodTo}
-	if strings.TrimSpace(like) != "" {
-		unionSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
-		args = append(args, like, like)
-	}
-	if e.hasContractFinanceGroupTables(spec) {
-		groupContent := e.mergedGroupContractContentSQL(spec.GroupMemberTable, "g")
-		unionSQL += fmt.Sprintf(`
-UNION ALL
-SELECT g.customer_name,
-       %[3]s AS contract_content,
-       COALESCE(g.invoice_amount, 0) AS invoice_amount,
-       COALESCE(g.%[1]s, 0) AS movement_amount,
-       CASE WHEN COALESCE(g.invoice_amount, 0) > COALESCE(g.%[1]s, 0) THEN COALESCE(g.invoice_amount, 0) - COALESCE(g.%[1]s, 0) ELSE 0 END AS open_amount
-FROM %[2]s g
-WHERE g.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.GroupTable, groupContent)
-		args = append(args, periodFrom, periodTo)
-		if strings.TrimSpace(like) != "" {
-			unionSQL += ` AND g.customer_name LIKE ?`
-			args = append(args, like)
-		}
-	}
-	sqlText := `
+	like = strings.TrimSpace(like)
+	if !e.hasContractFinanceGroupTables(spec) {
+		directOffsetExpr := e.contractFinanceInvoiceOpenOffsetExpr("d", spec.DirectTable)
+		directSQL := fmt.Sprintf(`
 SELECT customer_name,
-	       contract_content,
-	       COALESCE(SUM(invoice_amount), 0),
-       COALESCE(SUM(movement_amount), 0),
-	       COALESCE(SUM(open_amount), 0)
-FROM (` + unionSQL + `) ` + alias + `
+       contract_content,
+       COALESCE(SUM(invoice_amount), 0),
+       COALESCE(SUM(movement_amount + invoice_open_offset_amount), 0),
+       COALESCE(SUM(open_amount), 0)
+FROM (
+	SELECT c.customer_name,
+	       c.contract_content,
+	       COALESCE(d.invoice_amount, 0) AS invoice_amount,
+	       COALESCE(d.%[1]s, 0) AS movement_amount,
+	       %[3]s AS invoice_open_offset_amount,
+	       CASE WHEN COALESCE(d.invoice_amount, 0) > COALESCE(d.%[1]s, 0) + %[3]s THEN COALESCE(d.invoice_amount, 0) - COALESCE(d.%[1]s, 0) - %[3]s ELSE 0 END AS open_amount
+	FROM %[2]s d
+	JOIN fin_contracts c ON c.contract_id = d.contract_id
+	WHERE d.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.DirectTable, directOffsetExpr)
+		args := []any{periodFrom, periodTo}
+		if like != "" {
+			directSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+			args = append(args, like, like)
+		}
+		directSQL += fmt.Sprintf(`
+) %s
 GROUP BY customer_name, contract_content
 HAVING COALESCE(SUM(open_amount), 0) > 0
-ORDER BY 5 DESC, customer_name, contract_content`
+ORDER BY 5 DESC, customer_name, contract_content`, alias)
+		return e.collectContractAggregateInvoiceOpenItemsFromSQL(directSQL, args)
+	}
+
+	groupAmountFilter, groupAmountArgs := e.contractFinanceGroupAmountFilter(spec, periodFrom, periodTo, like)
+	groupInvoicePredicate, groupInvoiceArgs := e.contractFinanceGroupInvoiceAttributionPredicate(spec, like)
+	directOffsetExpr := e.contractFinanceInvoiceOpenOffsetExpr("d", spec.DirectTable)
+	groupOffsetExpr := e.contractFinanceInvoiceOpenOffsetExpr("g", spec.GroupTable)
+	directFilter := `d.year_month BETWEEN ? AND ?`
+	directArgs := []any{periodFrom, periodTo}
+	if like != "" {
+		directFilter += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		directArgs = append(directArgs, like, like)
+	}
+	groupContent := e.mergedGroupContractContentSQL(spec.GroupMemberTable, "g")
+	sqlText := fmt.Sprintf(`
+WITH selected_groups AS (
+	SELECT g.id, g.year_month
+	FROM %[2]s g
+	WHERE `+groupAmountFilter+`
+),
+direct_rows AS (
+	SELECT d.contract_id,
+	       d.year_month,
+	       c.customer_name,
+	       c.contract_content,
+	       COALESCE(d.invoice_amount, 0) AS invoice_amount,
+	       COALESCE(d.%[1]s, 0) AS movement_amount,
+	       %[8]s AS invoice_open_offset_amount
+	FROM %[3]s d
+	JOIN fin_contracts c ON c.contract_id = d.contract_id
+	WHERE `+directFilter+`
+),
+uncovered_direct_rows AS (
+	SELECT customer_name,
+	       contract_content,
+	       invoice_amount,
+	       movement_amount,
+	       invoice_open_offset_amount,
+	       CASE WHEN invoice_amount > movement_amount + invoice_open_offset_amount THEN invoice_amount - movement_amount - invoice_open_offset_amount ELSE 0 END AS open_amount
+	FROM direct_rows d
+	WHERE NOT EXISTS (
+		SELECT 1
+		FROM selected_groups sg
+		JOIN %[4]s gm ON gm.group_id = sg.id
+		WHERE gm.contract_id = d.contract_id
+		  AND sg.year_month = d.year_month
+	)
+),
+group_scope_base_rows AS (
+	SELECT g.customer_name,
+	       %[6]s AS contract_content,
+	       CASE WHEN %[5]s THEN COALESCE(g.invoice_amount, 0) ELSE 0 END + COALESCE(SUM(d.invoice_amount), 0) AS invoice_amount,
+	       COALESCE(g.%[1]s, 0) + COALESCE(SUM(d.movement_amount), 0) AS movement_amount,
+	       %[9]s + COALESCE(SUM(d.invoice_open_offset_amount), 0) AS invoice_open_offset_amount
+	FROM %[2]s g
+	JOIN selected_groups sg ON sg.id = g.id
+	LEFT JOIN %[4]s gm ON gm.group_id = g.id
+	LEFT JOIN direct_rows d ON d.contract_id = gm.contract_id AND d.year_month = g.year_month
+	GROUP BY g.id, g.customer_name, g.invoice_amount, g.%[1]s, g.year_month
+),
+group_scope_rows AS (
+	SELECT customer_name,
+	       contract_content,
+	       invoice_amount,
+	       movement_amount,
+	       invoice_open_offset_amount,
+	       CASE WHEN invoice_amount > movement_amount + invoice_open_offset_amount THEN invoice_amount - movement_amount - invoice_open_offset_amount ELSE 0 END AS open_amount
+	FROM group_scope_base_rows
+),
+%[7]s AS (
+	SELECT customer_name, contract_content, invoice_amount, movement_amount, invoice_open_offset_amount, open_amount FROM uncovered_direct_rows
+	UNION ALL
+	SELECT customer_name, contract_content, invoice_amount, movement_amount, invoice_open_offset_amount, open_amount FROM group_scope_rows
+)
+SELECT customer_name,
+       contract_content,
+       COALESCE(SUM(invoice_amount), 0),
+       COALESCE(SUM(movement_amount + invoice_open_offset_amount), 0),
+       COALESCE(SUM(open_amount), 0)
+FROM %[7]s
+GROUP BY customer_name, contract_content
+HAVING COALESCE(SUM(open_amount), 0) > 0
+ORDER BY 5 DESC, customer_name, contract_content`, spec.MovementColumn, spec.GroupTable, spec.DirectTable, spec.GroupMemberTable, groupInvoicePredicate, groupContent, alias, directOffsetExpr, groupOffsetExpr)
+	args := append([]any{}, groupAmountArgs...)
+	args = append(args, directArgs...)
+	args = append(args, groupInvoiceArgs...)
+	return e.collectContractAggregateInvoiceOpenItemsFromSQL(sqlText, args)
+}
+
+func (e *Engine) collectContractAggregateInvoiceOpenItemsFromSQL(sqlText string, args []any) ([]contractAggregateOpenItem, error) {
 	rows, err := e.db.Query(sqlText, args...)
 	if err != nil {
 		return nil, err

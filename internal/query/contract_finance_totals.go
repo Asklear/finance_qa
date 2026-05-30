@@ -65,18 +65,19 @@ func (e *Engine) collectContractFinanceTotals(ctx context.Context, spec contract
 	like = strings.TrimSpace(like)
 
 	var totals contractFinanceTotals
+	directOffsetExpr := e.contractFinanceInvoiceOpenOffsetExpr("d", spec.DirectTable)
 	directSQL := fmt.Sprintf(`
 SELECT COALESCE(SUM(d.settlement_amount), 0),
        COALESCE(SUM(d.%[1]s), 0),
        COALESCE(SUM(d.invoice_amount), 0),
        COALESCE(SUM(CASE WHEN COALESCE(d.settlement_amount, 0) > COALESCE(d.%[1]s, 0) THEN COALESCE(d.settlement_amount, 0) - COALESCE(d.%[1]s, 0) ELSE 0 END), 0),
-       COALESCE(SUM(CASE WHEN COALESCE(d.invoice_amount, 0) > COALESCE(d.%[1]s, 0) THEN COALESCE(d.invoice_amount, 0) - COALESCE(d.%[1]s, 0) ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN COALESCE(d.invoice_amount, 0) > COALESCE(d.%[1]s, 0) + %[3]s THEN COALESCE(d.invoice_amount, 0) - COALESCE(d.%[1]s, 0) - %[3]s ELSE 0 END), 0),
        COUNT(*),
        COUNT(DISTINCT d.year_month),
        COUNT(DISTINCT d.contract_id)
 FROM %[2]s d
 JOIN fin_contracts c ON c.contract_id = d.contract_id
-WHERE d.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.DirectTable)
+WHERE d.year_month BETWEEN ? AND ?`, spec.MovementColumn, spec.DirectTable, directOffsetExpr)
 	directArgs := []any{periodFrom, periodTo}
 	if like != "" {
 		directSQL += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
@@ -158,6 +159,12 @@ WHERE `+groupAmountFilter, spec.MovementColumn, spec.GroupTable, groupInvoicePre
 	}
 	totals.MonthCount = monthCount
 	totals.ContractCount = contractCount
+	settlementOpen, invoiceOpen, err := e.collectContractFinanceOpenTotals(ctx, spec, periodFrom, periodTo, like)
+	if err != nil {
+		return contractFinanceTotals{}, err
+	}
+	totals.SettlementOpen = settlementOpen
+	totals.InvoiceOpen = invoiceOpen
 	return totals, nil
 }
 
@@ -213,6 +220,81 @@ func (e *Engine) contractFinanceGroupInvoiceAttributionPredicate(spec contractFi
 		return "1=1", nil
 	}
 	return fmt.Sprintf(`(g.customer_name LIKE ? OR (SELECT COUNT(*) FROM %[1]s gm_attr WHERE gm_attr.group_id = g.id) <= 1)`, spec.GroupMemberTable), []any{like}
+}
+
+func (e *Engine) contractFinanceInvoiceOpenOffsetExpr(alias, tableName string) string {
+	if e.tableColumns(tableName)["invoice_open_offset_amount"] {
+		return fmt.Sprintf("COALESCE(%s.invoice_open_offset_amount, 0)", alias)
+	}
+	return "0"
+}
+
+func (e *Engine) collectContractFinanceOpenTotals(ctx context.Context, spec contractFinanceTotalsSpec, periodFrom, periodTo, like string) (float64, float64, error) {
+	groupAmountFilter, groupAmountArgs := e.contractFinanceGroupAmountFilter(spec, periodFrom, periodTo, like)
+	groupInvoicePredicate, groupInvoiceArgs := e.contractFinanceGroupInvoiceAttributionPredicate(spec, like)
+	directOffsetExpr := e.contractFinanceInvoiceOpenOffsetExpr("d", spec.DirectTable)
+	groupOffsetExpr := e.contractFinanceInvoiceOpenOffsetExpr("g", spec.GroupTable)
+	directFilter := `d.year_month BETWEEN ? AND ?`
+	directArgs := []any{periodFrom, periodTo}
+	if strings.TrimSpace(like) != "" {
+		directFilter += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		directArgs = append(directArgs, like, like)
+	}
+	sqlText := fmt.Sprintf(`
+WITH selected_groups AS (
+	SELECT g.id, g.year_month
+	FROM %[2]s g
+	WHERE `+groupAmountFilter+`
+),
+direct_rows AS (
+	SELECT d.contract_id,
+	       d.year_month,
+	       COALESCE(d.settlement_amount, 0) AS settlement_amount,
+	       COALESCE(d.%[1]s, 0) AS movement_amount,
+	       COALESCE(d.invoice_amount, 0) AS invoice_amount,
+	       %[6]s AS invoice_open_offset_amount
+	FROM %[3]s d
+	JOIN fin_contracts c ON c.contract_id = d.contract_id
+	WHERE `+directFilter+`
+),
+uncovered_direct_rows AS (
+	SELECT d.settlement_amount, d.movement_amount, d.invoice_amount, d.invoice_open_offset_amount
+	FROM direct_rows d
+	WHERE NOT EXISTS (
+		SELECT 1
+		FROM selected_groups sg
+		JOIN %[4]s gm ON gm.group_id = sg.id
+		WHERE gm.contract_id = d.contract_id
+		  AND sg.year_month = d.year_month
+	)
+),
+group_scope_rows AS (
+	SELECT COALESCE(g.settlement_amount, 0) + COALESCE(SUM(d.settlement_amount), 0) AS settlement_amount,
+	       COALESCE(g.%[1]s, 0) + COALESCE(SUM(d.movement_amount), 0) AS movement_amount,
+	       CASE WHEN %[5]s THEN COALESCE(g.invoice_amount, 0) ELSE 0 END + COALESCE(SUM(d.invoice_amount), 0) AS invoice_amount,
+	       %[7]s + COALESCE(SUM(d.invoice_open_offset_amount), 0) AS invoice_open_offset_amount
+	FROM %[2]s g
+	JOIN selected_groups sg ON sg.id = g.id
+	LEFT JOIN %[4]s gm ON gm.group_id = g.id
+	LEFT JOIN direct_rows d ON d.contract_id = gm.contract_id AND d.year_month = g.year_month
+	GROUP BY g.id, g.settlement_amount, g.%[1]s, g.invoice_amount, g.year_month, g.customer_name
+),
+open_rows AS (
+	SELECT settlement_amount, movement_amount, invoice_amount, invoice_open_offset_amount FROM uncovered_direct_rows
+	UNION ALL
+	SELECT settlement_amount, movement_amount, invoice_amount, invoice_open_offset_amount FROM group_scope_rows
+)
+SELECT COALESCE(SUM(CASE WHEN settlement_amount > movement_amount THEN settlement_amount - movement_amount ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN invoice_amount > movement_amount + invoice_open_offset_amount THEN invoice_amount - movement_amount - invoice_open_offset_amount ELSE 0 END), 0)
+FROM open_rows`, spec.MovementColumn, spec.GroupTable, spec.DirectTable, spec.GroupMemberTable, groupInvoicePredicate, directOffsetExpr, groupOffsetExpr)
+	args := append([]any{}, groupAmountArgs...)
+	args = append(args, directArgs...)
+	args = append(args, groupInvoiceArgs...)
+	var settlementOpen, invoiceOpen float64
+	if err := e.db.QueryRowContext(ctx, sqlText, args...).Scan(&settlementOpen, &invoiceOpen); err != nil {
+		return 0, 0, err
+	}
+	return settlementOpen, invoiceOpen, nil
 }
 
 func (e *Engine) collectContractFinanceUnattributedInvoiceContracts(ctx context.Context, spec contractFinanceTotalsSpec, periodFrom, periodTo, like string) ([]contractDimensionRow, error) {

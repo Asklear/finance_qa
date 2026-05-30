@@ -15,6 +15,23 @@ func TestDetectRequestedMetricsFallsBackToSingleCoreMetric(t *testing.T) {
 	}
 }
 
+func TestDetectRequestedMetricsMapsCustomerUnpaidPhrasesToContractARAP(t *testing.T) {
+	cases := []struct {
+		question string
+		want     string
+	}{
+		{question: "从25年10月到今年4月底 客户未付款金额多少", want: "已开票未回款"},
+		{question: "含未开票未付款多少", want: "应收"},
+		{question: "那其妙三四月份的应收未收账款是多少", want: "应收"},
+	}
+
+	for _, tc := range cases {
+		if got := detectRequestedMetrics(tc.question); len(got) != 1 || got[0] != tc.want {
+			t.Fatalf("detectRequestedMetrics(%q) = %v, want [%s]", tc.question, got, tc.want)
+		}
+	}
+}
+
 func TestShouldUseHRBreakdownRequiresBreakdownSignals(t *testing.T) {
 	cfg := getRuleConfig()
 	if !shouldUseHRBreakdown("2026年3月人力成本多少？工资、社保、公积金分别是多少？", cfg) {

@@ -273,6 +273,18 @@ if (!messageOnlyHookResult?.prependSystemContext?.includes("2026年3月应收账
   console.error("message-only prompt event should recover latest finance question:", JSON.stringify(messageOnlyHookResult));
   process.exit(1);
 }
+const followupHookResult = await promptHook({
+  prompt: "含未开票未付款多少",
+  messages: [
+    { role: "user", content: [{ type: "text", text: "从25年10月到今年4月底 客户未付款金额多少" }] },
+    { role: "assistant", content: [{ type: "text", text: "已开票未回款 72801.07 元" }] },
+    { role: "user", content: [{ type: "text", text: "含未开票未付款多少" }] }
+  ]
+});
+if (!followupHookResult?.prependSystemContext?.includes("最新财务问题：从25年10月到今年4月底 客户未付款金额多少；含未开票未付款多少")) {
+  console.error("context-dependent finance followup should be combined with previous finance question:", JSON.stringify(followupHookResult));
+  process.exit(1);
+}
 const retryHookResult = await promptHook({
   prompt: "Continue where you left off. The previous model attempt failed or timed out.",
   messages: [
