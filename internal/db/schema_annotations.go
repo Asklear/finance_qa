@@ -327,12 +327,14 @@ var schemaAnnotations = map[string]SchemaTableAnnotation{
 	"fin_file_mappings": buildSchemaTableAnnotation(
 		"财务来源文件映射表，记录查询来源展示所需的财务文件名、OSS 路径、期间和更新时间。",
 		map[string]string{
-			"table_type":  "财务来源类型，例如 fund-income、cost-settlements、journal、bank-statement",
-				"period":      "来源文件覆盖期间，例如 YYYY-Qn、YYYY-MM 或 YYYY",
-			"storage_key": "财务来源文件 OSS 相对路径",
-			"file_name":   "老板可见的来源文件名",
-			"file_size":   "来源文件大小（字节）",
-			"updated_at":  "来源文件映射最近更新时间，查询来源更新时间以该字段为准",
+			"table_type":        "财务来源类型，例如 fund-income、cost-settlements、journal、bank-statement",
+			"period":            "来源文件覆盖期间，例如 YYYY-Qn、YYYY-MM 或 YYYY",
+			"storage_key":       "财务来源文件 OSS 相对路径",
+			"file_name":         "老板可见的来源文件名",
+			"file_size":         "来源文件大小（字节）",
+			"source_file_hash":  "来源文件内容哈希前缀，用于区分同名文件的不同版本",
+			"source_version_id": "来源文件版本标识，由文件名和内容哈希组成",
+			"updated_at":        "来源文件映射最近更新时间，查询来源更新时间以该字段为准",
 		},
 	),
 	"contract_main": buildSchemaTableAnnotation(
