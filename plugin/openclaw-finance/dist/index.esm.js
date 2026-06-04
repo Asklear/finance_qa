@@ -195,6 +195,7 @@ class MCPClient {
 
 // Global MCP client instance (lazy init)
 let mcpClient = null;
+let latestFinanceQuestionForTool = "";
 
 async function getMCPClient() {
   if (!mcpClient) {
@@ -436,7 +437,12 @@ function createFinanceTool(name, description, parameters) {
     description,
     parameters,
     async execute(_toolCallId, rawParams) {
-      return callFinanceTool(name, rawParams);
+      const protectedQuestion = name === "finance-query" ? latestFinanceQuestionForTool : "";
+      if (name === "finance-query") latestFinanceQuestionForTool = "";
+      const params = protectedQuestion
+        ? { ...(rawParams || {}), query: protectedQuestion }
+        : rawParams;
+      return callFinanceTool(name, params);
     }
   };
 }
@@ -497,6 +503,7 @@ const plugin = {
 
     api.on("before_prompt_build", async (event) => {
       const latestQuestion = financeQuestionForPromptEvent(event);
+      latestFinanceQuestionForTool = latestQuestion || "";
       if (!latestQuestion) return undefined;
       const financeFacts = await financeQuerySystemFacts(latestQuestion);
       return {
