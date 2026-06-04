@@ -49,6 +49,7 @@ trap 'rm -f "$LOCAL_FINANCEQA_BIN"' EXIT
 
 REMOTE_REPO_DIR="${REMOTE_REPO_DIR:-$REMOTE_HOME/finance_qa}"
 REMOTE_FINANCEQA_BIN="${REMOTE_FINANCEQA_BIN:-$REMOTE_REPO_DIR/bin/financeqa}"
+REMOTE_FINANCEQA_UPLOAD="${REMOTE_FINANCEQA_UPLOAD:-$REMOTE_FINANCEQA_BIN.upload.$$}"
 REMOTE_FINANCEQA_BIN_DIR="$(dirname "$REMOTE_FINANCEQA_BIN")"
 REMOTE_FINANCEQA_SERVE_PATTERN="${REMOTE_FINANCEQA_SERVE_PATTERN:-$(printf '%s' "$REMOTE_FINANCEQA_BIN" | sed 's#/#[/]#g') serve}"
 REMOTE_OPENCLAW_PLUGIN_DIR="${REMOTE_OPENCLAW_PLUGIN_DIR:-$REMOTE_HOME/.openclaw/extensions/openclaw-finance}"
@@ -118,9 +119,9 @@ ssh_remote "$SERVER" "set -e; \
   if command -v pgrep >/dev/null 2>&1; then \
     pgrep -f '$REMOTE_FINANCEQA_SERVE_PATTERN' | xargs -r kill; \
   fi; \
-  mkdir -p '$REMOTE_FINANCEQA_BIN_DIR' && rm -f '$REMOTE_REPO_DIR/financeqa'"
-scp_remote "$LOCAL_FINANCEQA_BIN" "$SERVER:$REMOTE_FINANCEQA_BIN"
-ssh_remote "$SERVER" "chmod 755 '$REMOTE_FINANCEQA_BIN'"
+  mkdir -p '$REMOTE_FINANCEQA_BIN_DIR' && rm -f '$REMOTE_REPO_DIR/financeqa' '$REMOTE_FINANCEQA_UPLOAD'"
+scp_remote "$LOCAL_FINANCEQA_BIN" "$SERVER:$REMOTE_FINANCEQA_UPLOAD"
+ssh_remote "$SERVER" "chmod 755 '$REMOTE_FINANCEQA_UPLOAD' && mv -f '$REMOTE_FINANCEQA_UPLOAD' '$REMOTE_FINANCEQA_BIN'"
 
 echo "[6/8] publish OpenClaw extension runtime files and skill symlinks"
 ssh_remote "$SERVER" "set -e; \

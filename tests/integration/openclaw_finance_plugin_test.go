@@ -119,8 +119,8 @@ func TestOpenClawFinancePluginMetadataUsesCurrentMajorVersion(t *testing.T) {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("parse plugin metadata %s: %v", path, err)
 		}
-		if got := doc["version"]; got != "2.0.14" {
-			t.Fatalf("%s version = %v, want 2.0.14", path, got)
+		if got := doc["version"]; got != "2.0.15" {
+			t.Fatalf("%s version = %v, want 2.0.15", path, got)
 		}
 		if strings.HasSuffix(path, "package.json") {
 			packageDoc = doc
@@ -388,11 +388,13 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 		`cp '$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json'`,
 		`cp '$REMOTE_REPO_DIR/plugin/openclaw-finance/package.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/package.json'`,
 		`REMOTE_FINANCEQA_BIN="${REMOTE_FINANCEQA_BIN:-$REMOTE_REPO_DIR/bin/financeqa}"`,
+		`REMOTE_FINANCEQA_UPLOAD="${REMOTE_FINANCEQA_UPLOAD:-$REMOTE_FINANCEQA_BIN.upload.$$}"`,
 		`LOCAL_FINANCEQA_BIN="$(mktemp`,
 		`GOOS=linux GOARCH=amd64 go build -o "$LOCAL_FINANCEQA_BIN" ./cmd/financeqa/...`,
 		`REMOTE_FINANCEQA_SERVE_PATTERN`,
 		`pgrep -f '$REMOTE_FINANCEQA_SERVE_PATTERN'`,
-		`scp_remote "$LOCAL_FINANCEQA_BIN" "$SERVER:$REMOTE_FINANCEQA_BIN"`,
+		`scp_remote "$LOCAL_FINANCEQA_BIN" "$SERVER:$REMOTE_FINANCEQA_UPLOAD"`,
+		`mv -f '$REMOTE_FINANCEQA_UPLOAD' '$REMOTE_FINANCEQA_BIN'`,
 		`rm -f '$REMOTE_REPO_DIR/financeqa'`,
 		`'$REMOTE_FINANCEQA_BIN' serve`,
 		`pkg.openclaw?.extensions`,
