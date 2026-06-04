@@ -92,7 +92,11 @@ func resolvePrimaryAndSupportingBaseTables(spec QuerySpec, data map[string]any) 
 		}
 	case QueryFamilyCoreMetric:
 		if strings.TrimSpace(anyToString(data["source_priority"])) == "contract_first" {
-			return contractAggregateTablesForRequestedMetrics(spec, data), []string{"fin_contracts"}
+			supporting := []string{"fin_contracts"}
+			if contractAggregateHasNetProfitContext(data) {
+				supporting = append(supporting, "fin_income_statement")
+			}
+			return contractAggregateTablesForRequestedMetrics(spec, data), supporting
 		}
 		accrualSource := detectAccrualSource(data)
 		if strings.Contains(accrualSource, "journal") {
@@ -122,6 +126,15 @@ func resolvePrimaryAndSupportingBaseTables(spec QuerySpec, data map[string]any) 
 	default:
 		return nil, nil
 	}
+}
+
+func contractAggregateHasNetProfitContext(data map[string]any) bool {
+	summary, ok := data["contract_summary"].(map[string]any)
+	if !ok || summary == nil {
+		return false
+	}
+	_, ok = summary["net_profit_context"]
+	return ok
 }
 
 func normalizeBaseSourceTables(tables []string) []string {

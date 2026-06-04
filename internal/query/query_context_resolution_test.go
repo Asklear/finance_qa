@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -114,7 +115,185 @@ func TestExplicitBankCashFlowQueryAnswersAllRequestedAmounts(t *testing.T) {
 	}
 }
 
-func TestBalanceQuestionUsesBalanceSheetInsteadOfBankCashFlow(t *testing.T) {
+func TestCashOnHandQuestionAnswersBalanceAndBankFlow(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("账上现在还有多少现金?比年初是多了还是少了?")
+	if route.spec.SourceConstraint != BossSourceBalance {
+		t.Fatalf("source_constraint = %q, want balance", route.spec.SourceConstraint)
+	}
+	res := engine.Query("账上现在还有多少现金?比年初是多了还是少了?")
+	if !res.Success {
+		t.Fatalf("query success = false, message=%s", res.Message)
+	}
+	for key, want := range map[string]float64{
+		"cash_opening_balance": 100,
+		"cash_closing_balance": 150,
+		"bank_credit_total":    1200,
+		"bank_debit_total":     500,
+		"net_cash_inflow":      700,
+	} {
+		if got := anyToFloat64(res.Data[key]); got != want {
+			t.Fatalf("%s = %v, want %v; data=%+v", key, got, want, res.Data)
+		}
+	}
+	for _, want := range []string{"现金期末余额 150.00 元", "年初 100.00 元", "多了 50.00 元", "实际流入 1200.00 元", "实际流出 500.00 元"} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message = %q, want include %q", res.Message, want)
+		}
+	}
+	if got := anySourceStringSlice(res.Data["source_tables"]); !containsString(got, "fin_balance_detail") {
+		t.Fatalf("source_tables = %#v, want balance_detail as cash balance source", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	families := anySourceStringSlice(spec["semantic_families"])
+	for _, want := range []string{"cash_balance", "bank_cash_flow", "balance_sheet"} {
+		if !containsString(families, want) {
+			t.Fatalf("semantic_families = %#v, want %q", families, want)
+		}
+	}
+}
+
+func TestCashOnHandWithAsOfUsesLatestAvailableBalancePeriod(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 14, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("账上现在还有多少现金?比年初是多了还是少了?")
+	if !res.Success {
+		t.Fatalf("query success = false, message=%s", res.Message)
+	}
+	if got := res.Data["period_to"]; got != "2026-03" {
+		t.Fatalf("period_to = %v, want latest available balance period 2026-03; data=%+v", got, res.Data)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["period_to"]; got != "2026-03" {
+		t.Fatalf("query_spec.period_to = %v, want 2026-03", got)
+	}
+	if got := anyToFloat64(res.Data["cash_closing_balance"]); got != 150 {
+		t.Fatalf("cash_closing_balance = %v, want 150", got)
+	}
+}
+
+func TestCompanyOfficialARAPQuestionCarriesBalanceSemanticFamily(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO balance_sheet(company, period, account_code, account_name, opening_balance, closing_balance)
+VALUES ('测试公司','2026-03','1122','应收账款',0,100),
+       ('测试公司','2026-03','2202','应付账款',0,200),
+       ('测试公司','2026-03','2241','其他应付款',0,50)`); err != nil {
+		t.Fatalf("seed arap balance: %v", err)
+	}
+	_ = db.Close()
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 14, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("当前账上应收应付分别是多少，哪头更重？")
+	if !res.Success {
+		t.Fatalf("query success = false, message=%s", res.Message)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	families := anySourceStringSlice(spec["semantic_families"])
+	for _, want := range []string{"balance_ar_ap", "balance_sheet"} {
+		if !containsString(families, want) {
+			t.Fatalf("semantic_families = %#v, want %q", families, want)
+		}
+	}
+}
+
+func TestLargeTransactionRosterQuestionCarriesBankSemanticFamily(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 14, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("Q1 有哪几笔大额的进账和支出？")
+	if !res.Success {
+		t.Fatalf("query success = false, message=%s", res.Message)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	families := anySourceStringSlice(spec["semantic_families"])
+	for _, want := range []string{"large_transactions", "bank_statement"} {
+		if !containsString(families, want) {
+			t.Fatalf("semantic_families = %#v, want %q", families, want)
+		}
+	}
+}
+
+func TestLargeTransactionQuestionDoesNotSilentlyFallbackToPriorQuarter(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.May, 6, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("Q2 有哪几笔大额的进账和支出？")
+	if res.Success {
+		t.Fatalf("Q2 query should not succeed by silently returning Q1 transactions, message=%s data=%+v", res.Message, res.Data)
+	}
+	if strings.Contains(res.Message, "2026-03") || strings.Contains(res.Message, "2026-01~2026-03") {
+		t.Fatalf("message should not answer from Q1 when Q2 was requested, got: %s", res.Message)
+	}
+	if !strings.Contains(res.Message, "2026-04~2026-06") {
+		t.Fatalf("message should disclose requested Q2 period, got: %s", res.Message)
+	}
+}
+
+func TestRelativeLargeTransactionQuestionUsesLatestAvailableBankQuarter(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 14, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("这季度有哪几笔大额的进账和支出？")
+	if !res.Success {
+		t.Fatalf("relative current quarter should use latest available bank quarter, message=%s data=%+v", res.Message, res.Data)
+	}
+	if !strings.Contains(res.Message, "2026-01~2026-03") {
+		t.Fatalf("message should answer from latest available bank quarter, got: %s", res.Message)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if spec["period_from"] != "2026-01" || spec["period_to"] != "2026-03" {
+		t.Fatalf("query_spec period = %v~%v, want 2026-01~2026-03", spec["period_from"], spec["period_to"])
+	}
+}
+
+func TestBalanceQuestionUsesBalanceRecordsInsteadOfBankCashFlow(t *testing.T) {
 	dbPath := buildQueryContextResolutionDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -140,10 +319,13 @@ func TestBalanceQuestionUsesBalanceSheetInsteadOfBankCashFlow(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query success = false, message=%s", res.Message)
 	}
-	for _, want := range []string{"货币资金/银行存款期末余额 130.00 元"} {
+	for _, want := range []string{"货币资金/银行存款期末余额 150.00 元"} {
 		if !strings.Contains(res.Message, want) {
 			t.Fatalf("message = %q, want include %q", res.Message, want)
 		}
+	}
+	if got := anySourceStringSlice(res.Data["source_tables"]); !containsString(got, "fin_balance_detail") {
+		t.Fatalf("source_tables = %#v, want balance_detail source", got)
 	}
 	if strings.Contains(res.Message, "实际到账") || strings.Contains(res.Message, "实际支出") {
 		t.Fatalf("balance query should not answer bank cash flow: %s", res.Message)
@@ -356,6 +538,96 @@ VALUES ('C-FY26-PDD-1','2026-01','contract_fund_income','26年Q1收入明细',10
 	}
 }
 
+func TestCustomerConcentrationQuestionUsesCompanyContractAggregate(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 22, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("Q1 的收入主要靠哪几个客户?会不会太依赖某一两家?")
+	if route.entity != "" || route.hasRealEntity {
+		t.Fatalf("entity = %q hasRealEntity=%t, want company-scope customer dimension", route.entity, route.hasRealEntity)
+	}
+	if route.spec.QueryFamily != QueryFamilyCoreMetric {
+		t.Fatalf("query_family = %s, want %s", route.spec.QueryFamily, QueryFamilyCoreMetric)
+	}
+	if route.spec.NeedsContractDimension {
+		t.Fatalf("NeedsContractDimension = true, want false")
+	}
+	if !route.spec.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want contract aggregate")
+	}
+}
+
+func TestSupplierCostRankingQuestionUsesCompanyContractAggregate(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE fin_cost_settlements (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	contract_id TEXT,
+	year_month TEXT,
+	source_report_type TEXT,
+	source_sheet_name TEXT,
+	settlement_amount REAL,
+	paid_amount REAL,
+	is_invoiced TEXT,
+	invoice_amount REAL
+)`); err != nil {
+		t.Fatalf("create cost table: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
+VALUES ('C-SUP-001','测试供应商','测试采购项目');
+INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount)
+VALUES ('C-SUP-001','2026-03','contract_mixed_finance','成本-月度结算',500,200,'是',500)`); err != nil {
+		t.Fatalf("seed cost: %v", err)
+	}
+	_ = db.Close()
+
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.May, 6, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("我们的钱主要花在哪几家供应商身上?最大的几笔采购成本是什么?")
+	if route.spec.QueryFamily != QueryFamilyCoreMetric {
+		t.Fatalf("query_family = %s, want %s", route.spec.QueryFamily, QueryFamilyCoreMetric)
+	}
+	if route.spec.MetricKind != MetricKindCost {
+		t.Fatalf("metric_kind = %s, want %s", route.spec.MetricKind, MetricKindCost)
+	}
+	if !route.spec.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want contract aggregate")
+	}
+}
+
+func TestGrossMarginQuestionUsesCompanyContractAggregate(t *testing.T) {
+	dbPath := buildQueryContextResolutionDB(t)
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.May, 6, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	route := engine.resolveQueryRouting("按收入减成本算,大概的毛利是什么水平?")
+	if route.spec.QueryFamily != QueryFamilyCoreMetric {
+		t.Fatalf("query_family = %s, want %s", route.spec.QueryFamily, QueryFamilyCoreMetric)
+	}
+	if route.spec.NeedsContractDimension {
+		t.Fatalf("NeedsContractDimension = true, want false")
+	}
+	if !route.spec.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want contract aggregate")
+	}
+}
+
 func buildQueryContextResolutionDB(t *testing.T) string {
 	t.Helper()
 
@@ -402,6 +674,8 @@ func buildQueryContextResolutionDB(t *testing.T) string {
 			period TEXT,
 			account_code TEXT,
 			account_name TEXT,
+			opening_debit REAL,
+			opening_credit REAL,
 			closing_debit REAL,
 			closing_credit REAL
 		)`,
@@ -423,8 +697,8 @@ func buildQueryContextResolutionDB(t *testing.T) string {
 		)`,
 		`INSERT INTO balance_sheet(company, period, account_code, account_name, opening_balance, closing_balance)
 		 VALUES ('测试公司','2026-03','1002','货币资金',100,150)`,
-		`INSERT INTO balance_detail(company, period, account_code, account_name, closing_debit, closing_credit)
-		 VALUES ('测试公司','2026-03','1002','银行存款',130,0)`,
+		`INSERT INTO balance_detail(company, period, account_code, account_name, opening_debit, opening_credit, closing_debit, closing_credit)
+		 VALUES ('测试公司','2026-03','1002','银行存款',100,0,150,0)`,
 		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content)
 		 VALUES ('C-FW-001','飞未云科（深圳）技术有限公司','飞未项目-京东价格数据')`,
 		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)

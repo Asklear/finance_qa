@@ -12,6 +12,8 @@ func (e *Engine) queryARAP(question, entity, from, to string) Result {
 	var result Result
 	if entity != "" && strings.Contains(question, "项目") {
 		result = e.queryProjectARAP(entity, from, to)
+	} else if entity == "" && shouldUseCompanyOfficialARAPComparison(question) {
+		result = e.queryCompanyOfficialARAP(period)
 	} else if entity != "" && e.isRealBusinessEntity(question, entity) && strings.Contains(question, "应付") && !strings.Contains(question, "应收/应付") && !strings.Contains(question, "应收") {
 		result = e.queryAccountPayableReceivable(period, "应付账款", "2202", "payable", entity)
 	} else if entity != "" && e.isRealBusinessEntity(question, entity) && strings.Contains(question, "应收") && !strings.Contains(question, "应收/应付") && !strings.Contains(question, "应付") {
@@ -56,6 +58,97 @@ func (e *Engine) queryARAP(question, entity, from, to string) Result {
 		}
 	}
 	return result
+}
+
+func shouldUseCompanyOfficialARAPComparison(question string) bool {
+	if !strings.Contains(question, "应收") || !strings.Contains(question, "应付") {
+		return false
+	}
+	return shouldUseOfficialARAPQuestion(question) || containsAny(question, []string{"分别", "哪头", "更重"})
+}
+
+func (e *Engine) queryCompanyOfficialARAP(period string) Result {
+	if fallbackPeriod := e.latestARAPBalancePeriodAtOrBefore(period); fallbackPeriod != "" {
+		period = fallbackPeriod
+	}
+	receivable := e.queryAccountPayableReceivable(period, "应收账款", "1122", "receivable", "")
+	payable := e.queryAccountPayableReceivable(period, "应付账款", "2202", "payable", "")
+	otherPayable := e.queryAccountPayableReceivable(period, "其他应付款", "2241", "other_payable", "")
+	if !receivable.Success && !payable.Success && !otherPayable.Success {
+		return Result{Success: false, Message: "该期间未找到应收/应付余额"}
+	}
+
+	receivableTotal := resultTotal(receivable)
+	payableTotal := resultTotal(payable)
+	otherPayableTotal := resultTotal(otherPayable)
+	payableSideTotal := round2(payableTotal + otherPayableTotal)
+	heavier := "应收端更重"
+	if payableSideTotal > receivableTotal {
+		heavier = "应付端更重"
+	} else if approxEqual(payableSideTotal, receivableTotal) {
+		heavier = "两边接近"
+	}
+
+	data := map[string]any{
+		"type":                  "company_official_arap",
+		"period":                period,
+		"source":                "balance_sheet",
+		"receivable_total":      receivableTotal,
+		"payable_total":         payableTotal,
+		"other_payable_total":   otherPayableTotal,
+		"payable_side_total":    payableSideTotal,
+		"heavier_side":          heavier,
+		"receivable":            receivable.Data,
+		"payable":               payable.Data,
+		"other_payable":         otherPayable.Data,
+		"source_tables":         []string{"fin_balance_sheet", "fin_balance_detail"},
+		"source_primary_tables": []string{"fin_balance_sheet", "fin_balance_detail"},
+		"query_spec_overrides": map[string]any{
+			"period_from":       period,
+			"period_to":         period,
+			"time_scope":        TimeScopeMonth,
+			"semantic_families": []string{"balance_ar_ap", "balance_sheet"},
+		},
+	}
+
+	return Result{
+		Success: true,
+		Message: fmt.Sprintf("%s 账上挂账：应收账款 %.2f 元，应付账款 %.2f 元，其他应付款 %.2f 元；合计应付端 %.2f 元，%s。",
+			period, receivableTotal, payableTotal, otherPayableTotal, payableSideTotal, heavier),
+		Data:        data,
+		ExecutedSQL: dedupeStrings(append(append(append([]string{}, receivable.ExecutedSQL...), payable.ExecutedSQL...), otherPayable.ExecutedSQL...)),
+		CalculationLogs: append(append(append([]string{
+			fmt.Sprintf("[公司AR/AP官方余额] period=%s receivable=%.2f payable=%.2f other_payable=%.2f payable_side=%.2f heavier=%s", period, receivableTotal, payableTotal, otherPayableTotal, payableSideTotal, heavier),
+		}, receivable.CalculationLogs...), payable.CalculationLogs...), otherPayable.CalculationLogs...),
+	}
+}
+
+func resultTotal(result Result) float64 {
+	if !result.Success || result.Data == nil {
+		return 0
+	}
+	return round2(anyToFloat64(result.Data["total"]))
+}
+
+func (e *Engine) latestARAPBalancePeriodAtOrBefore(period string) string {
+	var latest string
+	if strings.TrimSpace(period) == "" {
+		_ = e.db.QueryRow(`
+SELECT COALESCE(MAX(period), '')
+FROM balance_sheet
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND (account_name IN ('应收账款', '应付账款', '其他应付款') OR account_code LIKE '1122%' OR account_code LIKE '2202%' OR account_code LIKE '2241%')`,
+			e.Company, e.Company).Scan(&latest)
+		return latest
+	}
+	_ = e.db.QueryRow(`
+SELECT COALESCE(MAX(period), '')
+FROM balance_sheet
+WHERE (? LIKE '%' || company || '%' OR company LIKE '%' || ? || '%')
+  AND period <= ?
+  AND (account_name IN ('应收账款', '应付账款', '其他应付款') OR account_code LIKE '1122%' OR account_code LIKE '2202%' OR account_code LIKE '2241%')`,
+		e.Company, e.Company, period).Scan(&latest)
+	return latest
 }
 
 func (e *Engine) queryEntityARAP(entity, period string) Result {

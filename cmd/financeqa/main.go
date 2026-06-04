@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -182,6 +183,7 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
 	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
+	asOf := fs.String("as-of", "", "anchor relative periods to YYYY-MM-DD")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -191,7 +193,16 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	engine, err := query.NewEngine(resolveDBPath(*dbPath), *company)
+	var opts []query.EngineOption
+	if strings.TrimSpace(*asOf) != "" {
+		anchor, err := time.Parse("2006-01-02", strings.TrimSpace(*asOf))
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid --as-of %q: expected YYYY-MM-DD\n", *asOf)
+			return 2
+		}
+		opts = append(opts, query.WithAsOfAnchor(anchor))
+	}
+	engine, err := query.NewEngine(resolveDBPath(*dbPath), *company, opts...)
 	if err != nil {
 		fmt.Fprintf(stderr, "create query engine failed: %s\n", support.SanitizeError(err))
 		return 1

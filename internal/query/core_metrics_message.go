@@ -48,7 +48,7 @@ func buildBossDualPerspectiveMessage(period string, cash accounting.CashPerspect
 
 	lines := []string{
 		fmt.Sprintf("先说现金口径：%s 实际到账 %.2f 元，实际支出 %.2f 元，净增加 %.2f 元。", period, cash.Income, cash.Expense, cash.Net),
-		fmt.Sprintf("再补经营口径：确认收入 %.2f 元，确认成本及费用 %.2f 元，利润 %.2f 元（含营业外收入 %.2f 元、营业外支出 %.2f 元）。", accrual.Revenue, accrual.TotalCost, accrual.Profit, accrual.NonOperatingIncome, accrual.NonOperatingExpense),
+		fmt.Sprintf("再补经营口径：营业收入 %.2f 元，营业成本及费用 %.2f 元，利润 %.2f 元（含营业外收入 %.2f 元、营业外支出 %.2f 元）。", accrual.Revenue, accrual.TotalCost, accrual.Profit, accrual.NonOperatingIncome, accrual.NonOperatingExpense),
 		fmt.Sprintf("两个口径之间，利润和净现金流相差 %.2f 元。", profitGap),
 		"差异最大的3个原因：",
 		fmt.Sprintf("1. 收入确认和回款时间差 %.2f 元（账上收入减去实际到账）。", revenueTiming),

@@ -6,6 +6,9 @@ import (
 )
 
 func (e *Engine) getLatestContractPeriodAnchor() time.Time {
+	if !e.asOfAnchor.IsZero() {
+		return e.asOfAnchor
+	}
 	cacheKey := strings.TrimSpace(e.Company) + "|contracts"
 	e.cacheMu.RLock()
 	if cached, ok := e.latestAnchorCache[cacheKey]; ok && !cached.IsZero() {

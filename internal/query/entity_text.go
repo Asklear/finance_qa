@@ -59,6 +59,10 @@ func looksLikePeriodOnlyEntity(entity string) bool {
 }
 
 func trimEntityNoiseSuffixes(entity string) string {
+	return trimEntityNoiseSuffixesWithConfig(entity, getRuleConfig())
+}
+
+func trimEntityNoiseSuffixesWithConfig(entity string, cfg RuleConfig) string {
 	entity = strings.TrimSpace(entity)
 	if entity == "" {
 		return ""
@@ -67,7 +71,7 @@ func trimEntityNoiseSuffixes(entity string) string {
 		"报销了", "报销", "报账", "到账", "回款", "收款", "付款",
 		"费用", "支出", "收入", "成本", "利润", "明细", "金额",
 		"产生了", "产生", "多少", "报",
-	}, getRuleConfig().GenericMetricStopwords...)
+	}, cfg.GenericMetricStopwords...)
 	for {
 		trimmed := entity
 		for _, suffix := range suffixes {
@@ -87,10 +91,14 @@ func trimEntityNoiseSuffixes(entity string) string {
 }
 
 func shouldSkipEntityFragment(fragment string, minLen int) bool {
+	return shouldSkipEntityFragmentWithConfig(fragment, minLen, getRuleConfig())
+}
+
+func shouldSkipEntityFragmentWithConfig(fragment string, minLen int, cfg RuleConfig) bool {
 	if len([]rune(fragment)) < minLen {
 		return true
 	}
-	if isGenericMetricEntity(fragment) || looksLikeTemporalMetricEntity(fragment) || looksLikeBusinessDimensionLabel(fragment) {
+	if isGenericMetricEntityWithConfig(fragment, cfg) || looksLikeTemporalMetricEntity(fragment) || looksLikeBusinessDimensionLabel(fragment) {
 		return true
 	}
 	return containsAny(fragment, []string{

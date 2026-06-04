@@ -53,7 +53,7 @@ func buildStrictContractMissingResultForSpecWithConfig(spec QuerySpec, reason st
 	rawReason := strings.TrimSpace(reason)
 	reason = normalizeStrictContractMissingReason(rawReason)
 	if reason == "" {
-		reason = "合同/项目台账在请求期间没有足够记录"
+		reason = "项目台账在请求期间没有足够记录"
 	}
 	tables := contractStrictSourceTablesForSpecWithConfig(spec, sourceTables, cfg)
 	period := displayPeriod(spec.PeriodFrom, spec.PeriodTo)
@@ -64,14 +64,14 @@ func buildStrictContractMissingResultForSpecWithConfig(spec QuerySpec, reason st
 	if entity := strings.TrimSpace(spec.Entity); entity != "" {
 		entityPrefix = fmt.Sprintf("[%s] ", entity)
 	}
-	message := fmt.Sprintf("%s%s 合同口径当前不能直接回答：%s。系统已停止自动回退到财务账/银行流水，避免把非老板口径当成合同口径；如需查看非合同口径，请明确说“账上/科目余额/资产负债表/序时账/银行流水/实际到账/实际支出”。", entityPrefix, period, reason)
+	message := fmt.Sprintf("%s%s 项目口径当前不能直接回答：%s。系统已停止自动回退到财务账/银行流水，避免把非项目口径当成项目口径；如需查看非项目口径，请明确说“账上/科目余额/资产负债表/序时账/银行流水/实际到账/实际支出”。", entityPrefix, period, reason)
 	if len(executedSQL) == 0 {
 		executedSQL = []string{"contract_strict_missing: contract source probe/lookup did not provide full coverage; financial/cash fallback intentionally blocked"}
 	}
 	if len(calculationLogs) == 0 {
-		calculationLogs = []string{fmt.Sprintf("[合同严格口径] blocked_non_contract_fallback=true reason=%s", reason)}
+		calculationLogs = []string{fmt.Sprintf("[项目严格口径] blocked_non_project_fallback=true reason=%s", reason)}
 	} else {
-		calculationLogs = append([]string{fmt.Sprintf("[合同严格口径] blocked_non_contract_fallback=true reason=%s", reason)}, calculationLogs...)
+		calculationLogs = append([]string{fmt.Sprintf("[项目严格口径] blocked_non_project_fallback=true reason=%s", reason)}, calculationLogs...)
 	}
 	return Result{
 		Success: true,

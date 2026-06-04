@@ -23,7 +23,7 @@ func (e *Engine) tryExplicitContractFallback(ctx queryExecutionContext, contract
 
 	reason := strings.TrimSpace(contractFailure.Message)
 	if reason == "" {
-		reason = "合同台账当前不能直接回答该问题"
+		reason = "项目台账当前不能直接回答该问题"
 	}
 	if fallback.Data == nil {
 		fallback.Data = map[string]any{}
@@ -31,7 +31,7 @@ func (e *Engine) tryExplicitContractFallback(ctx queryExecutionContext, contract
 	applyContractFallbackSourceAttribution(fallback.Data)
 	fallback.Data["contract_fallback_reason"] = reason
 	fallback.Data["contract_fallback_target"] = "counterparty_financial_or_cash"
-	fallback.Message = fmt.Sprintf("合同台账当前不能直接回答（%s），本次已回退到财务账/流水口径。\n%s", reason, fallback.Message)
+	fallback.Message = fmt.Sprintf("项目台账当前不能直接回答（%s），本次已回退到财务账/流水口径。\n%s", reason, fallback.Message)
 	fallback.CalculationLogs = append([]string{
 		fmt.Sprintf("[合同显式回退] reason=%s target=counterparty_financial_or_cash", reason),
 	}, fallback.CalculationLogs...)

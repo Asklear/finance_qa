@@ -77,6 +77,25 @@ func TestRewriteBossQueryExplicitBankCash(t *testing.T) {
 	}
 }
 
+func TestRewriteBossQueryCashOnHandUsesBalancePerspective(t *testing.T) {
+	anchor := time.Date(2026, time.March, 31, 0, 0, 0, 0, time.UTC)
+
+	got := RewriteBossQuery("账上现在还有多少现金?比年初是多了还是少了?", anchor)
+
+	if got.Metric != BossMetricCashFlow {
+		t.Fatalf("Metric = %s, want %s", got.Metric, BossMetricCashFlow)
+	}
+	if got.Scope != BossScopeCompany {
+		t.Fatalf("Scope = %s, want %s", got.Scope, BossScopeCompany)
+	}
+	if got.Perspective != BossPerspectiveOfficialThenEvidence {
+		t.Fatalf("Perspective = %s, want %s", got.Perspective, BossPerspectiveOfficialThenEvidence)
+	}
+	if got.SourceConstraint != BossSourceBalance {
+		t.Fatalf("SourceConstraint = %q, want %q", got.SourceConstraint, BossSourceBalance)
+	}
+}
+
 func TestRewriteBossQueryBareYearCumulativeRevenue(t *testing.T) {
 	anchor := time.Date(2026, time.March, 31, 0, 0, 0, 0, time.UTC)
 

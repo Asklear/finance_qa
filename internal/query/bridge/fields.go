@@ -89,7 +89,7 @@ func buildContractStrictMissingSummary(data map[string]any) map[string]any {
 		reason = getString(data, "message")
 	}
 	if reason == "" {
-		reason = "合同/项目台账在请求期间没有足够记录"
+		reason = "项目台账在请求期间没有足够记录"
 	}
 
 	sourceNote := cleanSourceNote(getString(data, "source_note"))
@@ -97,7 +97,7 @@ func buildContractStrictMissingSummary(data map[string]any) map[string]any {
 		sourceNote = cleanSourceNote(getString(data, "source_summary"))
 	}
 	if sourceNote == "" && len(sourceDocuments) > 0 {
-		sourceNote = "本次尝试的合同口径来源：" + strings.Join(sourceDocuments, "、")
+		sourceNote = "本次尝试的项目口径来源：" + strings.Join(sourceDocuments, "、")
 	}
 
 	return map[string]any{

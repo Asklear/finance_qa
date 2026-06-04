@@ -10,6 +10,9 @@ func shouldPreferContractAggregate(q string, intent Intent, family QueryFamily, 
 	if family != QueryFamilyCoreMetric {
 		return false
 	}
+	if shouldUseContractAggregateAnalysisQuestion(q, cfg) {
+		return true
+	}
 	if shouldUseContractFirstARAP(q) {
 		return true
 	}

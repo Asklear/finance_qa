@@ -32,6 +32,9 @@ func (b *executionStagePlanBuilder) stagesOrEmpty() []executionStage {
 
 func resolveOperationalExecutionStages(ctx queryExecutionContext) []executionStage {
 	stages := make([]executionStage, 0, 2)
+	if shouldUseFinanceHealthQuestion(ctx.q) {
+		stages = append(stages, executionStageFinanceHealth)
+	}
 	if shouldUseExpenseBreakdownWithConfig(ctx.q, ctx.cfg) {
 		stages = append(stages, executionStageExpenseBreakdown)
 	}
@@ -45,6 +48,9 @@ func resolveSourceExecutionStages(ctx queryExecutionContext) []executionStage {
 	builder := newExecutionStagePlanBuilder(4)
 	if shouldUseDirectBankCashFlow(ctx) {
 		builder.add(executionStageDirectBankCashFlow)
+	}
+	if shouldUseDirectCashOnHandBalance(ctx) {
+		builder.add(executionStageDirectCashOnHandBalance)
 	}
 	if shouldUseDirectPreciseBalance(ctx) {
 		builder.add(executionStageDirectPreciseBalance)
@@ -67,6 +73,16 @@ func shouldUseDirectBankCashFlow(ctx queryExecutionContext) bool {
 		return false
 	}
 	return ctx.spec.BossRewrite.Perspective == BossPerspectiveExplicitCash
+}
+
+func shouldUseDirectCashOnHandBalance(ctx queryExecutionContext) bool {
+	if ctx.hasRealEntity {
+		return false
+	}
+	if ctx.spec.SourceConstraint != BossSourceBalance {
+		return false
+	}
+	return shouldUseCashOnHandBalanceQuestion(ctx.q)
 }
 
 func shouldUseDirectPreciseBalance(ctx queryExecutionContext) bool {

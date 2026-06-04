@@ -1,8 +1,13 @@
 package ingest
 
 import (
+	"context"
+	"os"
 	"reflect"
 	"testing"
+
+	dbschema "financeqa/internal/db"
+	"financeqa/internal/parser"
 )
 
 func TestContractWorkbookFileMappingsBuildsSortedUniqueQuarterMappings(t *testing.T) {
@@ -96,5 +101,57 @@ func TestSourceMetadataHelpersSQLitePathAndNullableFileSize(t *testing.T) {
 	}
 	if got := nullableFileSize(128); got != int64(128) {
 		t.Fatalf("nullableFileSize(128) = %#v, want 128", got)
+	}
+}
+
+func TestAnnotateImportedReportSourceWritesFileMappingVersion(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := t.TempDir() + "/financeqa.sqlite"
+	if err := dbschema.Bootstrap(ctx, dbPath); err != nil {
+		t.Fatalf("bootstrap db: %v", err)
+	}
+	filePath := t.TempDir() + "/招商银行对公户 交易查询 20260101-20260331.xlsx"
+	if err := os.WriteFile(filePath, []byte("bank statement fixture"), 0o644); err != nil {
+		t.Fatalf("write fixture file: %v", err)
+	}
+
+	err := annotateImportedReportSource(ctx, dbPath, parser.FileMetadata{
+		ReportType:  "bank_statement",
+		Company:     "灵犀数据科技有限公司",
+		PeriodStart: "2026-01",
+		PeriodEnd:   "2026-03",
+	}, filePath, ImportOptions{
+		CompanyOverride:  "灵犀数据科技有限公司",
+		SourceFileName:   "fin-bank-q1.xlsx",
+		SourceStorageKey: "assets/flow-fin-ledger/fin-bank-q1.xlsx",
+	})
+	if err != nil {
+		t.Fatalf("annotate imported report source: %v", err)
+	}
+
+	db, err := dbschema.Open(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	var tableType, period, company, fileName, sourceHash, sourceVersionID string
+	if err := db.QueryRowContext(ctx, `
+SELECT table_type, period, company, file_name, source_file_hash, source_version_id
+FROM fin_file_mappings
+WHERE table_type = 'bank-statement'
+`).Scan(&tableType, &period, &company, &fileName, &sourceHash, &sourceVersionID); err != nil {
+		t.Fatalf("read fin_file_mappings: %v", err)
+	}
+	if tableType != "bank-statement" || period != "2026-Q1" || company != "灵犀数据科技有限公司" || fileName != "fin-bank-q1.xlsx" {
+		t.Fatalf("unexpected mapping row: type=%q period=%q company=%q file=%q", tableType, period, company, fileName)
+	}
+	if len(sourceHash) != 12 {
+		t.Fatalf("source_file_hash length = %d, want 12 (%q)", len(sourceHash), sourceHash)
+	}
+	if sourceVersionID != "fin-bank-q1.xlsx:"+sourceHash {
+		t.Fatalf("source_version_id = %q, want %q", sourceVersionID, "fin-bank-q1.xlsx:"+sourceHash)
 	}
 }

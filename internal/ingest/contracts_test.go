@@ -375,6 +375,184 @@ ORDER BY year_month
 	assertFundIncomeFullMetricRow(t, got["2025-12"], "30", 300, "是", 300, 0)
 }
 
+func TestIncrementalMixedWorkbookSupersedesPriorFundIncomeFacts(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "mixed-supersedes-fund-income.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	stmts := []string{
+		`CREATE TABLE fin_contracts (
+			contract_id TEXT PRIMARY KEY,
+			customer_name TEXT,
+			contract_content TEXT,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			updated_at TIMESTAMP
+		)`,
+		`CREATE TABLE fin_fund_income (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			remarks TEXT,
+			invoice_open_offset_amount REAL,
+			invoice_open_offset_reason TEXT,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT,
+			source_cell_notes TEXT,
+			updated_at TIMESTAMP
+		)`,
+		`CREATE TABLE fin_fund_income_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			source_start_row INTEGER,
+			source_end_row INTEGER,
+			merge_range TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			received_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			remarks TEXT,
+			invoice_open_offset_amount REAL,
+			invoice_open_offset_reason TEXT,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT,
+			source_cell_notes TEXT,
+			updated_at TIMESTAMP
+		)`,
+		`CREATE TABLE fin_fund_income_group_members (
+			group_id INTEGER,
+			contract_id TEXT,
+			source_row_number INTEGER,
+			updated_at TIMESTAMP
+		)`,
+		`CREATE TABLE fin_cost_settlements (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			contract_id TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			paid_amount REAL,
+			account_code TEXT,
+			invoice_open_offset_amount REAL,
+			invoice_open_offset_reason TEXT,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT,
+			source_cell_notes TEXT,
+			updated_at TIMESTAMP
+		)`,
+		`CREATE TABLE fin_cost_settlement_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			customer_name TEXT,
+			year_month TEXT,
+			source_report_type TEXT,
+			source_sheet_name TEXT,
+			source_start_row INTEGER,
+			source_end_row INTEGER,
+			merge_range TEXT,
+			quantity TEXT,
+			settlement_amount REAL,
+			is_invoiced TEXT,
+			invoice_amount REAL,
+			paid_amount REAL,
+			account_code TEXT,
+			invoice_open_offset_amount REAL,
+			invoice_open_offset_reason TEXT,
+			contract_start_date TEXT,
+			contract_end_date TEXT,
+			settlement_cycle TEXT,
+			settlement_unit_price TEXT,
+			source_cell_notes TEXT,
+			updated_at TIMESTAMP
+		)`,
+		`CREATE TABLE fin_cost_settlement_group_members (
+			group_id INTEGER,
+			contract_id TEXT,
+			source_row_number INTEGER,
+			updated_at TIMESTAMP
+		)`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C001', '测试客户', '测试项目')`,
+		`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('C001', '2026-03', 'contract_fund_income', '26年Q1收入明细', 100, 70, '是', 90)`,
+		`INSERT INTO fin_fund_income_groups(customer_name, year_month, source_report_type, source_sheet_name, source_start_row, source_end_row, settlement_amount, received_amount, is_invoiced, invoice_amount)
+		 VALUES ('测试客户', '2026-03', 'contract_fund_income', '26年Q1收入明细', 3, 4, 200, 160, '是', 180)`,
+		`INSERT INTO fin_fund_income_group_members(group_id, contract_id, source_row_number) VALUES (1, 'C001', 3)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("exec stmt: %v\n%s", err, stmt)
+		}
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	bundle := contractImportBundle{
+		Kind: contractWorkbookMixed,
+		RevenueRows: []contractRevenueSettlementRow{{
+			contractKey:      contractKey{Name: "测试客户", Content: "测试项目"},
+			SourceSheetName:  "26年Q1收入明细",
+			YearMonth:        "2026-03",
+			SettlementAmount: 125,
+			IsInvoiced:       "是",
+			InvoiceAmount:    125,
+		}},
+		TableSourceSheets: map[string][]string{
+			"fin_fund_income": {"26年Q1收入明细"},
+		},
+	}
+	if err := replaceRevenueCostSettlements(ctx, tx, bundle, map[contractKey]string{{Name: "测试客户", Content: "测试项目"}: "C001"}, true); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("replaceRevenueCostSettlements: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	var fundRows, fundGroups, mixedRows int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fin_fund_income WHERE source_report_type = 'contract_fund_income'`).Scan(&fundRows); err != nil {
+		t.Fatalf("count fund rows: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fin_fund_income_groups WHERE source_report_type = 'contract_fund_income'`).Scan(&fundGroups); err != nil {
+		t.Fatalf("count fund groups: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM fin_fund_income WHERE source_report_type = 'contract_mixed_finance'`).Scan(&mixedRows); err != nil {
+		t.Fatalf("count mixed rows: %v", err)
+	}
+	if fundRows != 0 || fundGroups != 0 {
+		t.Fatalf("prior fund-income facts remain: rows=%d groups=%d", fundRows, fundGroups)
+	}
+	if mixedRows != 1 {
+		t.Fatalf("mixed rows = %d, want 1", mixedRows)
+	}
+}
+
 func writeFundIncomeRemarksWorkbook(t *testing.T, path string) {
 	t.Helper()
 	f := excelize.NewFile()

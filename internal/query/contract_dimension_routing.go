@@ -16,7 +16,12 @@ func shouldUseContractDimensionWithConfig(question string, cfg RuleConfig) bool 
 	if !strings.Contains(q, "合同") {
 		return false
 	}
-	if shouldUseCompanyScopeContractAggregateWithConfig(q, cfg) {
+	entity := extractNamedEntityFromQuestion(q)
+	hasEntity := isRealishQueryEntity(entity)
+	if shouldUseContractAggregateAnalysisQuestion(q, cfg) && !hasEntity {
+		return false
+	}
+	if !hasEntity && shouldUseCompanyScopeContractAggregateWithConfig(q, cfg) {
 		return false
 	}
 	return containsAny(q, contractPriorityKeywordsWithConfig(cfg))
@@ -53,6 +58,9 @@ func shouldUseCompanyScopeContractAggregate(question string) bool {
 
 func shouldUseCompanyScopeContractAggregateWithConfig(question string, cfg RuleConfig) bool {
 	q := strings.TrimSpace(question)
+	if shouldUseContractAggregateAnalysisQuestion(q, cfg) {
+		return true
+	}
 	if !containsAny(q, []string{"合同", "项目"}) {
 		return false
 	}

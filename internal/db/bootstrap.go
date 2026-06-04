@@ -382,6 +382,8 @@ func Bootstrap(ctx context.Context, dbPath string) error {
 			file_name VARCHAR(255) NOT NULL,
 			description TEXT,
 			file_size BIGINT,
+			source_file_hash VARCHAR(64),
+			source_version_id VARCHAR(512),
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`, schema),
@@ -400,6 +402,8 @@ func Bootstrap(ctx context.Context, dbPath string) error {
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_fin_files_period ON %s.fin_file_mappings(period)`, schema),
 		fmt.Sprintf(`COMMENT ON TABLE %s.fin_revenue_settlements IS 'DEPRECATED: 暂停使用，合同收入统一以 fin_fund_income 为准；代码已停止读取该表'`, schema),
 		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.fin_balance_detail ADD COLUMN IF NOT EXISTS opening_period TEXT`, schema),
+		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.fin_file_mappings ADD COLUMN IF NOT EXISTS source_file_hash TEXT`, schema),
+		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.fin_file_mappings ADD COLUMN IF NOT EXISTS source_version_id TEXT`, schema),
 		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.contract_main DROP COLUMN IF EXISTS linked_contract_main_id`, schema),
 		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.contract_main DROP COLUMN IF EXISTS document_kind`, schema),
 		fmt.Sprintf(`ALTER TABLE IF EXISTS %s.contract_main DROP COLUMN IF EXISTS relative_path`, schema),

@@ -135,14 +135,14 @@ func TestContractDimensionQueryScenarios(t *testing.T) {
 			Question: "辽宁金程信息科技有限公司去年应收未收是多少？",
 			DBPath:   buildContractQueryTestDB,
 			Assert: func(t *testing.T, res query.Result) {
-				if !strings.Contains(res.Message, "应收未收 500.00 元") {
+				if !strings.Contains(res.Message, "项目应收 500.00 元") {
 					t.Fatalf("message should directly answer unreceived receivable, got: %s", res.Message)
 				}
-				bookView, ok := res.Data["book_view"].(map[string]any)
+				summary, ok := res.Data["contract_summary"].(map[string]any)
 				if !ok {
-					t.Fatalf("book_view missing: %+v", res.Data)
+					t.Fatalf("contract_summary missing: %+v", res.Data)
 				}
-				if got := bookView["receivable_amount"]; got != float64(500) {
+				if got := summary["receivable_amount"]; got != float64(500) {
 					t.Fatalf("receivable_amount = %v, want 500", got)
 				}
 			},
@@ -748,7 +748,7 @@ func TestCompanyAggregateMetricIncludesMergedCostSettlementGroups(t *testing.T) 
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "合同成本 600.00 元") {
+	if !strings.Contains(res.Message, "项目成本 600.00 元") {
 		t.Fatalf("message should include merged group cost, got: %s", res.Message)
 	}
 	summary, ok := res.Data["contract_summary"].(map[string]any)
@@ -777,10 +777,10 @@ func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "老板口径先看合同/项目汇总") {
+	if !strings.Contains(res.Message, "老板口径先看项目汇总") {
 		t.Fatalf("message should prefer contract aggregate, got: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "营收 1300.00 元") || !strings.Contains(res.Message, "合同成本 1008.00 元") || !strings.Contains(res.Message, "利润 292.00 元") {
+	if !strings.Contains(res.Message, "营收 1300.00 元") || !strings.Contains(res.Message, "项目成本 1008.00 元") || !strings.Contains(res.Message, "利润 292.00 元") {
 		t.Fatalf("message should use contract aggregate numbers, got: %s", res.Message)
 	}
 	if got, _ := res.Data["source_priority"].(string); got != "contract_first" {
@@ -851,7 +851,7 @@ func TestCompanyAggregateGMVPrefersContractAggregateFirst(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "老板口径先看合同/项目汇总") {
+	if !strings.Contains(res.Message, "老板口径先看项目汇总") {
 		t.Fatalf("message should prefer contract aggregate, got: %s", res.Message)
 	}
 	if !strings.Contains(res.Message, "营收 1300.00 元") {
@@ -919,7 +919,7 @@ func TestCompanyAggregateMetricFallsBackWhenContractSummaryMissingCoverage(t *te
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "合同口径当前不能直接回答") {
+	if !strings.Contains(res.Message, "项目口径当前不能直接回答") {
 		t.Fatalf("message should stop at strict contract source, got: %s", res.Message)
 	}
 	if strings.Contains(res.Message, "先说现金口径") || strings.Contains(res.Message, "已回退到现金+经营/财务口径") {

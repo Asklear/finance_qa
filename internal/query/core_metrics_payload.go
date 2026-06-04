@@ -65,5 +65,6 @@ func buildAccrualCoreMetricsMessage(period string, requestedMetrics []string, bo
 }
 
 func asksExplicitNetProfit(q string) bool {
-	return strings.Contains(strings.TrimSpace(q), "净利润")
+	q = strings.TrimSpace(q)
+	return strings.Contains(q, "净利润") || strings.Contains(q, "净利")
 }

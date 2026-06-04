@@ -76,7 +76,7 @@ func (i *Importer) ImportFileWithOptions(ctx context.Context, dbPath, filePath s
 	if err := i.ImportParsedWithOptions(ctx, dbPath, result, opts); err != nil {
 		return ImportSummary{}, err
 	}
-	if err := annotateImportedReportSource(ctx, dbPath, result.Metadata.ReportType, filePath); err != nil {
+	if err := annotateImportedReportSource(ctx, dbPath, result.Metadata, filePath, opts); err != nil {
 		return ImportSummary{}, err
 	}
 	company := result.Metadata.Company
@@ -113,7 +113,7 @@ func (i *Importer) importMergedFinancialReport(ctx context.Context, dbPath, file
 		if err := i.ImportParsedWithOptions(ctx, dbPath, result, opts); err != nil {
 			return ImportSummary{}, err
 		}
-		if err := annotateImportedReportSource(ctx, dbPath, result.Metadata.ReportType, filePath); err != nil {
+		if err := annotateImportedReportSource(ctx, dbPath, result.Metadata, filePath, opts); err != nil {
 			return ImportSummary{}, err
 		}
 		totalRecords += len(result.Data)

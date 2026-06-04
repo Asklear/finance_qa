@@ -38,7 +38,7 @@ func classifyIntentV2(question string, cfg RuleConfig) (Intent, IntentTrace) {
 		}
 	}
 
-	if containsAny(q, cfg.IntentKeywords(IntentLargeTransactionQuery)) {
+	if isLargeTransactionIntentQuestion(q, cfg) {
 		addScore(IntentLargeTransactionQuery, 3.2, "large_transaction")
 	}
 	if containsAny(q, cfg.IntentKeywords(IntentIdentityQuery)) {

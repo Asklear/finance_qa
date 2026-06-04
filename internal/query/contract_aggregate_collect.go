@@ -9,11 +9,16 @@ import (
 const contractAggregateRole = "aggregate_summary"
 
 type contractAggregateSummary struct {
+	OriginalQuestion        string
 	Entity                  string
 	Scope                   string
 	Period                  string
+	RequestedPeriod         string
 	PeriodFrom              string
 	PeriodTo                string
+	RequestedPeriodFrom     string
+	RequestedPeriodTo       string
+	PeriodAdjusted          bool
 	RequestedMetrics        []string
 	ContractCount           int
 	RevenueSettlement       float64
@@ -27,10 +32,21 @@ type contractAggregateSummary struct {
 	CostPayable             float64
 	CostInvoiceOpen         float64
 	Profit                  float64
+	NetProfitContext        float64
+	HasNetProfitContext     bool
+	NetProfitContextSource  string
+	RevenueComparison       *contractAggregatePeriodComparison
 	RevenueItems            []contractAggregateOpenItem
 	RevenueInvoiceOpenItems []contractAggregateOpenItem
 	CostItems               []contractAggregateOpenItem
 	CostInvoiceOpenItems    []contractAggregateOpenItem
+	RevenueCustomerRanking  []contractAggregateDimensionRow
+	RevenueOpenRanking      []contractAggregateDimensionRow
+	RevenueOpenBuckets      []contractAggregateOpenBucket
+	CostSupplierRanking     []contractAggregateDimensionRow
+	TopRevenueShare         float64
+	Top2RevenueShare        float64
+	Top2RevenueSettlement   float64
 	HasRevenueCoverage      bool
 	HasCostCoverage         bool
 	SourceTables            []string
@@ -45,6 +61,29 @@ type contractAggregateOpenItem struct {
 	InvoiceAmount    float64
 	ReceivedAmount   float64
 	OpenAmount       float64
+}
+
+type contractAggregateDimensionRow struct {
+	Name             string
+	SettlementAmount float64
+	InvoiceAmount    float64
+	MovementAmount   float64
+	OpenAmount       float64
+	Share            float64
+}
+
+type contractAggregatePeriodComparison struct {
+	CurrentLabel           string
+	CurrentFrom            string
+	CurrentTo              string
+	CurrentRevenue         float64
+	BaselineLabel          string
+	BaselineFrom           string
+	BaselineTo             string
+	BaselineRevenue        float64
+	BaselineMonthlyAverage float64
+	DifferenceVsAverage    float64
+	RatioVsAverage         float64
 }
 
 func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggregateSummary, error) {
@@ -66,22 +105,33 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 	requestedMetrics := detectRequestedMetricsWithConfig(spec.OriginalQuestion, cfg)
 	needRevenue := contractAggregateNeedsRevenueData(requestedMetrics)
 	needCost := contractAggregateNeedsCostData(requestedMetrics)
+	coverage := e.resolveContractAggregatePeriodCoverage(spec, requestedMetrics, entityLike)
+	periodFrom := coverage.ActualFrom
+	periodTo := coverage.ActualTo
 
 	summary := contractAggregateSummary{
-		Entity:           entity,
-		Scope:            scope,
-		Period:           displayPeriod(spec.PeriodFrom, spec.PeriodTo),
-		PeriodFrom:       spec.PeriodFrom,
-		PeriodTo:         spec.PeriodTo,
-		RequestedMetrics: requestedMetrics,
-		SourceTables:     contractAggregateSourceTablesForMetricsWithConfig(requestedMetrics, cfg),
+		OriginalQuestion:    spec.OriginalQuestion,
+		Entity:              entity,
+		Scope:               scope,
+		Period:              displayPeriod(periodFrom, periodTo),
+		RequestedPeriod:     displayPeriod(spec.PeriodFrom, spec.PeriodTo),
+		PeriodFrom:          periodFrom,
+		PeriodTo:            periodTo,
+		RequestedPeriodFrom: spec.PeriodFrom,
+		RequestedPeriodTo:   spec.PeriodTo,
+		PeriodAdjusted:      coverage.Adjusted(),
+		RequestedMetrics:    requestedMetrics,
+		SourceTables:        contractAggregateSourceTablesForMetricsWithConfig(requestedMetrics, cfg),
+	}
+	if coverage.Note != "" {
+		summary.CalculationLogs = append(summary.CalculationLogs, coverage.Note)
 	}
 
 	if needRevenue {
 		summary.ExecutedSQL = append(summary.ExecutedSQL,
 			"contract_aggregate(revenue): SELECT SUM(settlement_amount), SUM(received_amount), SUM(invoice_amount), SUM(unreceived), SUM(invoiced_unreceived), COUNT(DISTINCT contract_id) FROM fin_fund_income + fin_fund_income_groups ... WHERE year_month BETWEEN ? AND ?",
 		)
-		revenueTotals, err := e.collectFundIncomeTotals(context.Background(), spec.PeriodFrom, spec.PeriodTo, entityLike)
+		revenueTotals, err := e.collectFundIncomeTotals(context.Background(), periodFrom, periodTo, entityLike)
 		if err != nil {
 			return contractAggregateSummary{}, err
 		}
@@ -91,15 +141,25 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 		summary.RevenueReceivable = revenueTotals.Receivable
 		summary.RevenueInvoiceOpen = revenueTotals.InvoiceOpen
 		summary.ContractCount = revenueTotals.ContractCount
-		if contractAggregateWantsDetailItems(spec.OriginalQuestion) {
-			items, err := e.collectRevenueItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
+		if contractAggregateWantsRevenueItems(spec.OriginalQuestion, requestedMetrics, cfg) {
+			items, err := e.collectRevenueItems(periodFrom, periodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
 			summary.RevenueItems = items
+			summary.RevenueCustomerRanking = rollupContractAggregateItemsByName(items, revenueTotals.Settlement)
+			summary.TopRevenueShare = topNContractAggregateShare(summary.RevenueCustomerRanking, 1)
+			summary.Top2RevenueShare = topNContractAggregateShare(summary.RevenueCustomerRanking, 2)
+			summary.Top2RevenueSettlement = topNContractAggregateSettlement(summary.RevenueCustomerRanking, 2)
+			openItems := filterOpenContractAggregateItems(items)
+			summary.RevenueOpenRanking = rollupContractAggregateOpenItemsByName(openItems, revenueTotals.Receivable)
+			summary.RevenueOpenBuckets = e.collectRevenueOpenBuckets(periodFrom, periodTo, summary.RevenueOpenRanking)
+		}
+		if comparison, ok := e.collectContractRevenuePeriodComparison(spec.OriginalQuestion, periodFrom, periodTo, entityLike); ok {
+			summary.RevenueComparison = &comparison
 		}
 		if contractAggregateIncludesMetric(requestedMetrics, "已开票未回款") {
-			items, err := e.collectRevenueInvoiceOpenItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
+			items, err := e.collectRevenueInvoiceOpenItems(periodFrom, periodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
@@ -112,7 +172,7 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 		summary.ExecutedSQL = append(summary.ExecutedSQL,
 			"contract_aggregate(cost): SELECT SUM(settlement_amount), SUM(paid_amount), SUM(invoice_amount), SUM(payable), SUM(invoiced_unpaid), COUNT(DISTINCT contract_id) FROM fin_cost_settlements + fin_cost_settlement_groups ... WHERE year_month BETWEEN ? AND ?",
 		)
-		costTotals, err := e.collectCostSettlementTotals(context.Background(), spec.PeriodFrom, spec.PeriodTo, entityLike)
+		costTotals, err := e.collectCostSettlementTotals(context.Background(), periodFrom, periodTo, entityLike)
 		if err != nil {
 			return contractAggregateSummary{}, err
 		}
@@ -122,19 +182,32 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 		summary.CostPayable = costTotals.Payable
 		summary.CostInvoiceOpen = costTotals.InvoiceOpen
 		costContractCount = costTotals.ContractCount
-		if contractAggregateWantsDetailItems(spec.OriginalQuestion) {
-			items, err := e.collectCostItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
+		if contractAggregateWantsCostItems(spec.OriginalQuestion, requestedMetrics, cfg) {
+			items, err := e.collectCostItems(periodFrom, periodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
 			summary.CostItems = items
+			summary.CostSupplierRanking = rollupContractAggregateItemsByName(items, costTotals.Settlement)
 		}
 		if contractAggregateIncludesMetric(requestedMetrics, "已收票未付款") {
-			items, err := e.collectCostInvoiceOpenItems(spec.PeriodFrom, spec.PeriodTo, entityLike)
+			items, err := e.collectCostInvoiceOpenItems(periodFrom, periodTo, entityLike)
 			if err != nil {
 				return contractAggregateSummary{}, err
 			}
 			summary.CostInvoiceOpenItems = items
+		}
+	}
+
+	if contractAggregateIncludesMetric(requestedMetrics, "利润") {
+		book, source, _, sqls, logs, err := e.bookSummaryForRange(periodFrom, periodTo)
+		if err == nil {
+			summary.NetProfitContext = round2(book.NetProfit)
+			summary.HasNetProfitContext = true
+			summary.NetProfitContextSource = source
+			summary.SourceTables = dedupeSourceTables(append(summary.SourceTables, "tenant_uhub.fin_income_statement")...)
+			summary.ExecutedSQL = append(summary.ExecutedSQL, sqls...)
+			summary.CalculationLogs = append(summary.CalculationLogs, logs...)
 		}
 	}
 
@@ -162,8 +235,33 @@ func (e *Engine) collectContractAggregateSummary(spec QuerySpec) (contractAggreg
 	return summary, nil
 }
 
+type contractAggregateOpenBucket struct {
+	Name         string
+	PriorLabel   string
+	PriorFrom    string
+	PriorTo      string
+	PriorOpen    float64
+	CurrentLabel string
+	CurrentFrom  string
+	CurrentTo    string
+	CurrentOpen  float64
+	TotalOpen    float64
+}
+
 func contractAggregateWantsDetailItems(question string) bool {
 	return containsAny(question, []string{"明细", "列表", "有哪些", "哪些", "分别", "拆", "拆分", "构成"})
+}
+
+func contractAggregateWantsRevenueItems(question string, requestedMetrics []string, cfg RuleConfig) bool {
+	return contractAggregateWantsDetailItems(question) ||
+		shouldUseCustomerRevenueAnalysisQuestion(question, cfg) ||
+		contractAggregateIncludesMetric(requestedMetrics, "应收")
+}
+
+func contractAggregateWantsCostItems(question string, requestedMetrics []string, cfg RuleConfig) bool {
+	return contractAggregateWantsDetailItems(question) ||
+		shouldUseContractCostAnalysisQuestion(question, cfg) ||
+		contractAggregateIncludesMetric(requestedMetrics, "应付")
 }
 
 func (e *Engine) mergedGroupContractContentSQL(memberTable, groupAlias string) string {

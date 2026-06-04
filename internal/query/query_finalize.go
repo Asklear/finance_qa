@@ -39,6 +39,12 @@ func buildQuerySpecEnvelope(spec QuerySpec) map[string]any {
 		"source_constraint":             spec.SourceConstraint,
 		"lexicon_profile":               spec.LexiconProfile,
 	}
+	if strings.TrimSpace(spec.AsOf) != "" {
+		envelope["as_of"] = spec.AsOf
+	}
+	if len(spec.SemanticFamilies) > 0 {
+		envelope["semantic_families"] = append([]string{}, spec.SemanticFamilies...)
+	}
 	if spec.BossRewrite.Metric != "" {
 		envelope["boss_rewrite"] = buildBossRewriteEnvelope(spec.BossRewrite)
 	}
@@ -121,6 +127,21 @@ func applyQuerySpecOverrides(spec QuerySpec, data map[string]any) QuerySpec {
 	if perspective := strings.TrimSpace(anyToString(overrides["perspective_policy"])); perspective != "" {
 		spec.PerspectivePolicy = PerspectivePolicy(perspective)
 	}
+	if families := anySourceStringSlice(overrides["semantic_families"]); len(families) > 0 {
+		spec.SemanticFamilies = families
+	}
+	if strings.TrimSpace(anyToString(data["source_priority"])) == "contract_first" {
+		spec.RouteDecision.FallbackReason = ""
+		for i := range spec.RouteDecision.ProbeResults {
+			if spec.RouteDecision.ProbeResults[i].Source == BossSourceContractAggregate {
+				spec.RouteDecision.ProbeResults[i].PeriodFrom = spec.PeriodFrom
+				spec.RouteDecision.ProbeResults[i].PeriodTo = spec.PeriodTo
+				spec.RouteDecision.ProbeResults[i].MissingReason = ""
+				spec.RouteDecision.ProbeResults[i].CanAnswer = true
+				spec.RouteDecision.ProbeResults[i].CoverageStatus = CoverageFull
+			}
+		}
+	}
 	return spec
 }
 
@@ -133,7 +154,7 @@ func finalizeQueryResult(ctx queryExecutionContext, r Result) Result {
 	r.Data["query_spec"] = buildQuerySpecEnvelope(finalSpec)
 	if finalSpec.RouteDecision.SelectedSource != "" || len(finalSpec.RouteDecision.ProbeResults) > 0 {
 		r.Data["route_decision"] = buildRouteDecisionEnvelope(finalSpec.RouteDecision)
-		if reason := strings.TrimSpace(finalSpec.RouteDecision.FallbackReason); reason != "" {
+		if reason := strings.TrimSpace(finalSpec.RouteDecision.FallbackReason); reason != "" && strings.TrimSpace(anyToString(r.Data["source_priority"])) != "contract_first" {
 			if _, exists := r.Data["contract_fallback_reason"]; !exists {
 				r.Data["contract_fallback_reason"] = reason
 			}
@@ -147,7 +168,7 @@ func finalizeQueryResult(ctx queryExecutionContext, r Result) Result {
 	}
 
 	if ctx.engine != nil {
-		r = ctx.engine.annotateSourceAttribution(ctx.spec, r)
+		r = ctx.engine.annotateSourceAttribution(finalSpec, r)
 	}
 	return r.WithTraceData()
 }

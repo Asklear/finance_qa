@@ -59,3 +59,34 @@ func TestFinalizeQueryResultInjectsTraceSpecAndSourceAttribution(t *testing.T) {
 		t.Fatalf("message should append source note, got: %s", res.Message)
 	}
 }
+
+func TestFinalizeQueryResultCarriesSemanticFamiliesOverride(t *testing.T) {
+	ctx := queryExecutionContext{
+		spec: QuerySpec{
+			QueryFamily: QueryFamilyGeneral,
+			PeriodFrom:  "2026-01",
+			PeriodTo:    "2026-03",
+			TimeScope:   TimeScopeQuarter,
+		},
+	}
+
+	res := finalizeQueryResult(ctx, Result{
+		Success: true,
+		Message: "现金余额已计算",
+		Data: map[string]any{
+			"query_spec_overrides": map[string]any{
+				"semantic_families": []string{"cash_balance", "bank_cash_flow", "balance_sheet"},
+			},
+		},
+	})
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	families := anySourceStringSlice(spec["semantic_families"])
+	for _, want := range []string{"cash_balance", "bank_cash_flow", "balance_sheet"} {
+		if !containsString(families, want) {
+			t.Fatalf("semantic_families = %#v, want %q", families, want)
+		}
+	}
+}

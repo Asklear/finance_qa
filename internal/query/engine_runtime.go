@@ -33,6 +33,8 @@ type Engine struct {
 	hrBreakdownCache    map[string]Result
 	branchTransferCache map[string]cachedBranchTransfer
 	openItemSummary     map[string]openitems.Summary
+	asOfAnchor          time.Time
+	asOfLabel           string
 }
 
 type cachedUnifiedCoreMetrics struct {
@@ -56,6 +58,17 @@ func WithRuleConfigProvider(provider RuleConfigProvider) EngineOption {
 		if provider != nil {
 			e.ruleConfigProvider = provider
 		}
+	}
+}
+
+// WithAsOfAnchor pins relative period parsing to an explicit anchor date.
+func WithAsOfAnchor(anchor time.Time) EngineOption {
+	return func(e *Engine) {
+		if anchor.IsZero() {
+			return
+		}
+		e.asOfAnchor = anchor
+		e.asOfLabel = anchor.Format("2006-01-02")
 	}
 }
 
@@ -111,6 +124,9 @@ func (e *Engine) Close() error {
 }
 
 func (e *Engine) getLatestPeriodAnchor() time.Time {
+	if !e.asOfAnchor.IsZero() {
+		return e.asOfAnchor
+	}
 	companyKey := strings.TrimSpace(e.Company)
 	e.cacheMu.RLock()
 	if cached, ok := e.latestAnchorCache[companyKey]; ok && !cached.IsZero() {

@@ -12,7 +12,7 @@ type scoredEntityCandidate struct {
 }
 
 func (e *Engine) resolveEntityByScoredCandidates(question string) string {
-	ranked := e.rankEntityCandidates(question)
+	ranked := e.rankEntityCandidatesWithConfig(question, e.currentRuleConfig())
 	if len(ranked) == 0 {
 		return ""
 	}
@@ -27,6 +27,10 @@ func (e *Engine) resolveEntityByScoredCandidates(question string) string {
 }
 
 func (e *Engine) rankEntityCandidates(question string) []scoredEntityCandidate {
+	return e.rankEntityCandidatesWithConfig(question, e.currentRuleConfig())
+}
+
+func (e *Engine) rankEntityCandidatesWithConfig(question string, cfg RuleConfig) []scoredEntityCandidate {
 	q := strings.TrimSpace(question)
 	nq := normalizeEntityText(q)
 	if nq == "" {
@@ -60,7 +64,7 @@ func (e *Engine) rankEntityCandidates(question string) []scoredEntityCandidate {
 
 	scored := make([]scoredEntityCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		score := scoreEntityCandidate(q, nq, candidate.Name, candidate.Sources)
+		score := scoreEntityCandidateWithConfig(q, nq, candidate.Name, candidate.Sources, cfg)
 		if score <= 0 {
 			continue
 		}
@@ -80,6 +84,10 @@ func (e *Engine) rankEntityCandidates(question string) []scoredEntityCandidate {
 }
 
 func scoreEntityCandidate(question, normalizedQuestion, name string, sources map[string]struct{}) int {
+	return scoreEntityCandidateWithConfig(question, normalizedQuestion, name, sources, getRuleConfig())
+}
+
+func scoreEntityCandidateWithConfig(question, normalizedQuestion, name string, sources map[string]struct{}, cfg RuleConfig) int {
 	normalizedName := normalizeEntityText(name)
 	if len([]rune(normalizedName)) < 2 {
 		return 0
@@ -93,8 +101,8 @@ func scoreEntityCandidate(question, normalizedQuestion, name string, sources map
 		runes := []rune(seg)
 		for length := len(runes); length >= 2; length-- {
 			for i := 0; i <= len(runes)-length; i++ {
-				fragment := trimEntityNoiseSuffixes(stripTemporalNoise(string(runes[i : i+length])))
-				if shouldSkipEntityFragment(fragment, 2) {
+				fragment := trimEntityNoiseSuffixesWithConfig(stripTemporalNoise(string(runes[i:i+length])), cfg)
+				if shouldSkipEntityFragmentWithConfig(fragment, 2, cfg) {
 					continue
 				}
 				normalizedFragment := normalizeEntityText(fragment)

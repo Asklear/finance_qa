@@ -120,7 +120,7 @@ func Aliases(company string) []string {
 		aliases = append(aliases, seg)
 	}
 
-	// 衍生更短别名（如“林悦智能”->“林悦”）。
+		// 衍生更短别名（如“某某智能”->“某某”）。
 	for _, a := range append([]string{}, aliases...) {
 		tmp := a
 		for _, s := range trimSuffixes {

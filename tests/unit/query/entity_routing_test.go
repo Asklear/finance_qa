@@ -1131,6 +1131,59 @@ func TestLargeOutflowQuestionUsesDedicatedBankFlowQuery(t *testing.T) {
 	}
 }
 
+func TestLargeTransactionRosterQuestionReturnsInboundAndOutboundLists(t *testing.T) {
+	runParallelHeavyQueryTest(t)
+
+	dbPath := buildEntityRoutingTestDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01-16', '辽宁鼎元信息科技有限公司', '结算款', 0, 2102065.91)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01-05', '云栖智数（深圳）技术有限公司', '结算款', 0, 1450200)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01-05', '云栖智数（深圳）技术有限公司', '结算款', 0, 1250400)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01-06', '北京瀚研国际咨询有限公司', '服务费', 2450000, 0)`,
+		`INSERT INTO bank_statement(company, transaction_date, counterparty_name, summary, debit_amount, credit_amount)
+		 VALUES ('南京优集数据科技有限公司', '2026-01-19', '南京澜阅智能科技有限公司', '服务费', 1490815, 0)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("insert large transaction seed data failed: %v", err)
+		}
+	}
+
+	engine, err := query.NewEngine(dbPath, testCompany)
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年Q1有哪几笔大额的进账和支出?分别是跟谁的?")
+	if !res.Success {
+		t.Fatalf("query failed: %+v", res)
+	}
+	inbound, ok := res.Data["inbound_transactions"].([]map[string]any)
+	if !ok || len(inbound) < 3 {
+		t.Fatalf("inbound_transactions = %#v, want at least 3 rows", res.Data["inbound_transactions"])
+	}
+	outbound, ok := res.Data["outbound_transactions"].([]map[string]any)
+	if !ok || len(outbound) < 2 {
+		t.Fatalf("outbound_transactions = %#v, want at least 2 rows", res.Data["outbound_transactions"])
+	}
+	for _, want := range []string{"辽宁鼎元", "云栖智数", "瀚研", "澜阅", "2450000.00", "2102065.91"} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message = %q, want include %q", res.Message, want)
+		}
+	}
+}
+
 func buildEntityRoutingTestDB(t *testing.T) string {
 	t.Helper()
 

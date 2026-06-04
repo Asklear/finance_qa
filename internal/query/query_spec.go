@@ -68,6 +68,8 @@ type QuerySpec struct {
 	SourceConstraint            string
 	RouteDecision               RouteDecision
 	LexiconProfile              string
+	AsOf                        string
+	SemanticFamilies            []string
 }
 
 func BuildQuerySpec(question string, anchor time.Time) QuerySpec {

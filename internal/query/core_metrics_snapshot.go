@@ -83,7 +83,10 @@ func buildCoreMetricDualSnapshot(question string, spec QuerySpec, coverage coreM
 			"truncated":      coverage.Truncated,
 			"data_ready":     true,
 		},
-		"requested_metrics":  requestedMetrics,
+		"requested_metrics": requestedMetrics,
+		"query_spec_overrides": map[string]any{
+			"semantic_families": []string{"profit_statement", "financial_statement"},
+		},
 		"一致性守卫":              unified.Guard,
 		"range_validation":   unified.AccrualValidation,
 		"profit_cash_bridge": bridgeToMap(unified.Bridge),

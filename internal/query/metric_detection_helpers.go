@@ -29,8 +29,15 @@ func detectRequestedMetrics(q string) []string {
 
 func detectRequestedMetricsWithConfig(q string, cfg RuleConfig) []string {
 	metrics := make([]string, 0, 3)
+	if containsAny(q, []string{"应收"}) && containsAny(q, []string{"应付"}) &&
+		!containsAny(q, []string{"已开票未回款", "已开票未收款", "已收票未付款", "收到发票未付款"}) {
+		return []string{"应收", "应付"}
+	}
 	if side := detectContractARAPMetric(q); side != "" {
 		return []string{side}
+	}
+	if shouldUseContractReceivableOutstandingQuestion(q, cfg) {
+		return []string{"应收", "已开票未回款"}
 	}
 	if containsAny(q, cfg.MetricKeywords(metricKeyRevenue)) {
 		metrics = append(metrics, "收入")

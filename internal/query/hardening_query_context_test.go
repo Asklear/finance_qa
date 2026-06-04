@@ -225,6 +225,18 @@ func TestBuildQuerySpecRoutesQ1AggregateToCoreMetricWithContractPreference(t *te
 	}
 }
 
+func TestBuildQuerySpecPrefersProjectAggregateForBusinessProfitQuestion(t *testing.T) {
+	anchor := time.Date(2026, time.April, 14, 0, 0, 0, 0, time.UTC)
+	spec := BuildQuerySpec("Q1 整体怎么样,挣到钱了吗?收入、成本、净利大概各是多少?", anchor)
+
+	if spec.QueryFamily != QueryFamilyCoreMetric {
+		t.Fatalf("QueryFamily = %s, want %s", spec.QueryFamily, QueryFamilyCoreMetric)
+	}
+	if !spec.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want project aggregate first for business revenue/cost/profit question")
+	}
+}
+
 func TestPrepareQueryExecutionContextRoutesContractAliasRevenueQuestionToContractDimension(t *testing.T) {
 	dbPath := buildQueryContextResolutionDB(t)
 	engine, err := NewEngine(dbPath, "测试公司")

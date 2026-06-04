@@ -1531,6 +1531,22 @@ func replaceRevenueCostSettlements(ctx context.Context, tx *sql.Tx, bundle contr
 			}
 		}
 	} else {
+		if bundle.Kind == contractWorkbookMixed && contractBundleTouchesTable(bundle, "fin_cost_settlements") {
+			if err := deleteContractRowsBySourceScope(ctx, tx, "fin_cost_settlements", compatibleContractReportTypes(bundle.Kind, contractWorkbookRevenueCost), bundle.TableSourceSheets["fin_cost_settlements"]); err != nil {
+				return err
+			}
+			if err := deleteCostSettlementGroupsBySourceScope(ctx, tx, compatibleContractReportTypes(bundle.Kind, contractWorkbookRevenueCost), bundle.TableSourceSheets["fin_cost_settlements"]); err != nil {
+				return err
+			}
+		}
+		if bundle.Kind == contractWorkbookMixed && contractBundleTouchesTable(bundle, "fin_fund_income") {
+			if err := deleteContractRowsBySourceScope(ctx, tx, "fin_fund_income", compatibleContractReportTypes(bundle.Kind, contractWorkbookRevenueCost, contractWorkbookFund), bundle.TableSourceSheets["fin_fund_income"]); err != nil {
+				return err
+			}
+			if err := deleteFundIncomeGroupsBySourceScope(ctx, tx, compatibleContractReportTypes(bundle.Kind, contractWorkbookFund), bundle.TableSourceSheets["fin_fund_income"]); err != nil {
+				return err
+			}
+		}
 		for _, row := range bundle.RevenueRows {
 			if err := deleteContractRowByIdentity(ctx, tx, "fin_fund_income", bundle.Kind, row.SourceSheetName, contractIDs[row.contractKey], row.YearMonth); err != nil {
 				return fmt.Errorf("delete prior fin_fund_income from revenue workbook: %w", err)

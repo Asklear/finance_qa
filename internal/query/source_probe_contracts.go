@@ -9,8 +9,8 @@ import (
 func (e *Engine) probeContractAggregate(ctx context.Context, rewrite BossQueryRewrite) SourceProbeResult {
 	switch rewrite.Metric {
 	case BossMetricARAP:
-		revenue := e.probeContractAmount(ctx, rewrite, "fin_fund_income", "settlement_amount", "合同应收")
-		cost := e.probeContractAmount(ctx, rewrite, "fin_cost_settlements", "settlement_amount", "合同应付")
+		revenue := e.probeContractAmount(ctx, rewrite, "fin_fund_income", "settlement_amount", "项目应收")
+		cost := e.probeContractAmount(ctx, rewrite, "fin_cost_settlements", "settlement_amount", "项目应付")
 		return combineContractARAPProbe(rewrite, revenue, cost)
 	case BossMetricCost, BossMetricPayments:
 		return e.probeContractAmount(ctx, rewrite, "fin_cost_settlements", "settlement_amount", "成本")
@@ -54,7 +54,7 @@ func combineContractARAPProbe(rewrite BossQueryRewrite, revenue, cost SourceProb
 		}
 		return result
 	}
-	result.MissingReason = "合同应收/应付口径在请求期间 " + displayPeriod(rewrite.PeriodFrom, rewrite.PeriodTo) + " 没有匹配记录"
+	result.MissingReason = "项目应收/应付口径在请求期间 " + displayPeriod(rewrite.PeriodFrom, rewrite.PeriodTo) + " 没有匹配记录"
 	return result
 }
 
@@ -87,12 +87,12 @@ func (e *Engine) probeContractAmount(ctx context.Context, rewrite BossQueryRewri
 
 	rowCount, monthCount, err := e.countContractAmountRows(ctx, rewrite, tableName, amountColumn)
 	if err != nil {
-		result.MissingReason = label + "合同口径探测失败：" + err.Error()
+		result.MissingReason = label + "项目口径探测失败：" + err.Error()
 		return result
 	}
 	result.RowCount = rowCount
 	if rowCount == 0 {
-		result.MissingReason = label + "合同口径在请求期间 " + displayPeriod(rewrite.PeriodFrom, rewrite.PeriodTo) + " 没有匹配记录"
+		result.MissingReason = label + "项目口径在请求期间 " + displayPeriod(rewrite.PeriodFrom, rewrite.PeriodTo) + " 没有匹配记录"
 		return result
 	}
 

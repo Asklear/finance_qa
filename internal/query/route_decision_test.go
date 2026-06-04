@@ -58,6 +58,58 @@ func TestRouteDecisionSupplierCostSelectsCostSettlements(t *testing.T) {
 	}
 }
 
+func TestRouteDecisionContractARAPSelectsRevenueCostTables(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	engine := newProbeTestEngine(t, "route-contract-arap.sqlite")
+	seedProbeContract(t, engine, "C-REV-001", "测试客户有限公司", "客户项目")
+	seedProbeContract(t, engine, "C-COST-001", "测试供应商有限公司", "供应商项目")
+	seedProbeFundIncome(t, engine, "C-REV-001", "2026-03", 1000, 600, 800)
+	seedProbeCostSettlement(t, engine, "C-COST-001", "2026-03", 700, 200, 500)
+
+	spec := BuildQuerySpec("2026年3月合同应收应付分别是多少？", probeAnchor())
+	routed, decision := engine.decideBossRoute(ctx, spec)
+
+	if decision.SelectedSource != BossSourceContractAggregate {
+		t.Fatalf("SelectedSource = %s, want %s", decision.SelectedSource, BossSourceContractAggregate)
+	}
+	if !routed.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want true")
+	}
+	for _, want := range []string{"fin_fund_income", "fin_cost_settlements"} {
+		if !containsString(decision.PrimaryTables, want) {
+			t.Fatalf("PrimaryTables = %#v, want %s", decision.PrimaryTables, want)
+		}
+	}
+}
+
+func TestRouteDecisionProjectMarginSelectsRevenueCostTables(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	engine := newProbeTestEngine(t, "route-project-margin.sqlite")
+	seedProbeContract(t, engine, "C-REV-001", "测试客户有限公司", "客户项目")
+	seedProbeContract(t, engine, "C-COST-001", "测试供应商有限公司", "供应商项目")
+	seedProbeFundIncome(t, engine, "C-REV-001", "2026-03", 1000, 600, 800)
+	seedProbeCostSettlement(t, engine, "C-COST-001", "2026-03", 700, 200, 500)
+
+	spec := BuildQuerySpec("2026年3月项目毛利是多少？", probeAnchor())
+	routed, decision := engine.decideBossRoute(ctx, spec)
+
+	if decision.SelectedSource != BossSourceContractAggregate {
+		t.Fatalf("SelectedSource = %s, want %s", decision.SelectedSource, BossSourceContractAggregate)
+	}
+	if !routed.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want true")
+	}
+	for _, want := range []string{"fin_fund_income", "fin_cost_settlements"} {
+		if !containsString(decision.PrimaryTables, want) {
+			t.Fatalf("PrimaryTables = %#v, want %s", decision.PrimaryTables, want)
+		}
+	}
+}
+
 func TestRouteDecisionContractMissingFallsBackWithReason(t *testing.T) {
 	t.Parallel()
 

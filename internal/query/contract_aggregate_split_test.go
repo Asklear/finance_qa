@@ -13,8 +13,8 @@ func TestContractAggregateFallbackReasonMentionsMissingCoverage(t *testing.T) {
 	}
 
 	reason := contractAggregateFallbackReason(summary.RequestedMetrics, summary)
-	if !strings.Contains(reason, "合同成本") {
-		t.Fatalf("fallback reason should mention missing contract cost, got: %s", reason)
+	if !strings.Contains(reason, "项目成本") {
+		t.Fatalf("fallback reason should mention missing project cost, got: %s", reason)
 	}
 	if strings.Contains(reason, "已回退") || strings.Contains(reason, "现金+经营/财务") {
 		t.Fatalf("fallback reason should not claim an automatic fallback, got: %s", reason)
@@ -37,11 +37,11 @@ func TestBuildContractAggregateResultSnapshotIncludesCashAndAccountViews(t *test
 	}
 
 	message, data := buildContractAggregateResultSnapshot(spec, summary)
-	if !strings.Contains(message, "老板口径先看合同/项目汇总") {
-		t.Fatalf("message should disclose contract aggregate priority, got: %s", message)
+	if !strings.Contains(message, "老板口径先看项目汇总") {
+		t.Fatalf("message should disclose project aggregate priority, got: %s", message)
 	}
-	if !strings.Contains(message, "补充合同现金回款 1200.00 元") {
-		t.Fatalf("message should disclose contract cash receipts, got: %s", message)
+	if !strings.Contains(message, "补充项目回款 1200.00 元") {
+		t.Fatalf("message should disclose project receipts, got: %s", message)
 	}
 	moneyView, ok := data["money_view"].(map[string]any)
 	if !ok {
@@ -82,7 +82,7 @@ func TestBuildContractAggregateResultSnapshotRevenueOnlyOmitsPlaceholderCostAndP
 	}
 
 	message, data := buildContractAggregateResultSnapshot(spec, summary)
-	if strings.Contains(message, "合同成本") || strings.Contains(message, "利润") {
+	if strings.Contains(message, "项目成本") || strings.Contains(message, "利润") {
 		t.Fatalf("revenue-only snapshot message should not mention cost/profit, got: %s", message)
 	}
 	metrics, ok := data["metrics"].(map[string]any)
@@ -102,8 +102,8 @@ func TestBuildContractAggregateResultSnapshotRevenueOnlyOmitsPlaceholderCostAndP
 	if !ok {
 		t.Fatalf("account_view missing: %#v", data["account_view"])
 	}
-	if _, ok := accountView["合同成本"]; ok {
-		t.Fatalf("account_view should omit 合同成本 for revenue-only query: %#v", accountView)
+	if _, ok := accountView["项目成本"]; ok {
+		t.Fatalf("account_view should omit 项目成本 for revenue-only query: %#v", accountView)
 	}
 	if _, ok := accountView["利润"]; ok {
 		t.Fatalf("account_view should omit 利润 for revenue-only query: %#v", accountView)
@@ -153,8 +153,8 @@ func TestBuildContractAggregateResultSnapshotCostOnlyUsesPaidCashView(t *testing
 	if strings.Contains(message, "现金回款") {
 		t.Fatalf("cost-only snapshot message should not mention cash receipts, got: %s", message)
 	}
-	if !strings.Contains(message, "合同现金付款 900.00 元") {
-		t.Fatalf("cost-only snapshot message should mention contract payment, got: %s", message)
+	if !strings.Contains(message, "项目现金付款 900.00 元") {
+		t.Fatalf("cost-only snapshot message should mention project payment, got: %s", message)
 	}
 	moneyView, ok := data["money_view"].(map[string]any)
 	if !ok {
@@ -170,8 +170,8 @@ func TestBuildContractAggregateResultSnapshotCostOnlyUsesPaidCashView(t *testing
 	if !ok {
 		t.Fatalf("account_view missing: %#v", data["account_view"])
 	}
-	if accountView["合同成本"] != float64(1008) {
-		t.Fatalf("account_view = %#v, want 合同成本=1008", accountView)
+	if accountView["项目成本"] != float64(1008) {
+		t.Fatalf("account_view = %#v, want 项目成本=1008", accountView)
 	}
 	if _, ok := accountView["营收"]; ok {
 		t.Fatalf("account_view should omit 营收 for cost-only query: %#v", accountView)

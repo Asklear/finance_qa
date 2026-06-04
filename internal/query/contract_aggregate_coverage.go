@@ -51,22 +51,22 @@ func contractAggregateFallbackReason(requestedMetrics []string, summary contract
 			}
 		case "成本":
 			if !summary.HasCostCoverage {
-				missing = append(missing, "合同成本")
+				missing = append(missing, "项目成本")
 			}
 		case "利润":
 			if !summary.HasRevenueCoverage {
 				missing = append(missing, "营收结算")
 			}
 			if !summary.HasCostCoverage {
-				missing = append(missing, "合同成本")
+				missing = append(missing, "项目成本")
 			}
 		case "应收":
 			if !summary.HasRevenueCoverage {
-				missing = append(missing, "合同应收")
+				missing = append(missing, "项目应收")
 			}
 		case "应付":
 			if !summary.HasCostCoverage {
-				missing = append(missing, "合同应付")
+				missing = append(missing, "项目应付")
 			}
 		case "已开票未回款":
 			if !summary.HasRevenueCoverage {
@@ -81,5 +81,5 @@ func contractAggregateFallbackReason(requestedMetrics []string, summary contract
 	if len(missing) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("合同/项目汇总表当前缺少%s", joinWithComma(dedupeStrings(missing)))
+	return fmt.Sprintf("项目汇总表当前缺少%s", joinWithComma(dedupeStrings(missing)))
 }

@@ -34,7 +34,7 @@ func extractNamedEntityFromQuestion(question string) string {
 	}
 	if m := namedEntityPattern.FindStringSubmatch(q); len(m) == 2 {
 		entity := trimEntityNoiseSuffixes(stripTemporalNoise(strings.TrimSpace(m[1])))
-		if len([]rune(entity)) >= 2 && !isGenericMetricEntity(entity) && !looksLikeAccountFragment(entity) && !looksLikeSyntheticQuestionFragment(entity) && !looksLikeBusinessDimensionLabel(entity) {
+		if len([]rune(entity)) >= 2 && !isGenericMetricEntity(entity) && !looksLikeFinancialStateFragment(entity) && !looksLikeAccountFragment(entity) && !looksLikeSyntheticQuestionFragment(entity) && !looksLikeBusinessDimensionLabel(entity) {
 			return entity
 		}
 	}
@@ -45,6 +45,7 @@ func isRealishQueryEntity(entity string) bool {
 	trimmed := strings.TrimSpace(entity)
 	return len([]rune(trimmed)) >= 2 &&
 		!isGenericMetricEntity(trimmed) &&
+		!looksLikeFinancialStateFragment(trimmed) &&
 		!looksLikeTemporalMetricEntity(trimmed) &&
 		!looksLikePeriodOnlyEntity(trimmed) &&
 		!looksLikeBusinessDimensionLabel(trimmed) &&
@@ -53,6 +54,31 @@ func isRealishQueryEntity(entity string) bool {
 
 func looksLikeAccountFragment(entity string) bool {
 	return containsAny(entity, []string{"应收", "应付", "账款", "余额", "情况", "明细", "数据"})
+}
+
+func looksLikeFinancialStateFragment(entity string) bool {
+	normalized := normalizeEntityText(entity)
+	if normalized == "" {
+		return false
+	}
+	if !containsAny(normalized, []string{"开票", "收票", "发票", "付款", "回款", "收款", "支付", "未付", "未回", "未收"}) {
+		return false
+	}
+	replacer := strings.NewReplacer(
+		"已开票", "", "未开票", "", "开票", "",
+		"已收票", "", "未收票", "", "收票", "",
+		"发票", "",
+		"未付款", "", "已付款", "", "未付", "", "已付", "", "付款", "", "付", "",
+		"未回款", "", "已回款", "", "未回", "", "已回", "", "回款", "", "回", "",
+		"未收款", "", "已收款", "", "未收", "", "已收", "", "收款", "", "收", "",
+		"未支付", "", "已支付", "", "支付", "",
+		"已", "", "未", "", "的", "",
+	)
+	residual := strings.TrimSpace(replacer.Replace(normalized))
+	if residual == "" {
+		return true
+	}
+	return containsString([]string{"供应商", "客户", "合同", "项目", "款项", "金额"}, residual)
 }
 
 func looksLikeSyntheticQuestionFragment(entity string) bool {

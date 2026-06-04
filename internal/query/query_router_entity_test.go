@@ -13,6 +13,8 @@ func TestIsRealishQueryEntityRejectsSyntheticTemporalAndGenericFragments(t *test
 		{name: "generic metric", entity: "收入", want: false},
 		{name: "temporal fragment", entity: "Q1", want: false},
 		{name: "synthetic question fragment", entity: "单笔最大流入来自谁", want: false},
+		{name: "invoice payment state fragment", entity: "已开票未", want: false},
+		{name: "short invoice payment state fragment", entity: "已开票未付", want: false},
 	}
 
 	for _, tc := range cases {
@@ -21,5 +23,11 @@ func TestIsRealishQueryEntityRejectsSyntheticTemporalAndGenericFragments(t *test
 				t.Fatalf("isRealishQueryEntity(%q) = %t, want %t", tc.entity, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExtractNamedEntityRejectsCompanyScopeInvoicePaymentQuestion(t *testing.T) {
+	if got := extractNamedEntityFromQuestion("2026年3月已开票未付款的合同有哪些"); got != "" {
+		t.Fatalf("extractNamedEntityFromQuestion() = %q, want empty company-scope entity", got)
 	}
 }

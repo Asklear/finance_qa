@@ -39,6 +39,9 @@ func shouldUseExpenseBreakdownWithConfig(q string, cfg RuleConfig) bool {
 	if containsAny(q, cfg.intentKeywordGroup(routerGroupHRCost)) || shouldUseHRBreakdown(q, cfg) {
 		return false
 	}
+	if shouldUseContractCostAnalysisQuestion(q, cfg) {
+		return false
+	}
 	asksBreakdown := containsAny(q, cfg.ExpenseBreakdownTriggerKeywords())
 	if !asksBreakdown {
 		return false
@@ -554,10 +557,10 @@ func composeExpenseBreakdownMessage(period string, contractRows []expenseBreakdo
 	accountView := cfg.ExpenseBreakdownView("account_category")
 	return strings.Join([]string{
 		fmt.Sprintf("%s %s已按所有可用口径拆开：", period, cfg.ExpenseBreakdownMetricName()),
-		fmt.Sprintf("1. %s：合同成本 %.2f 元，合同付款 %.2f 元。主要项目：%s。", contractView.Label, round2(contractTotal), round2(contractPaid), summarizeContractProjectRows(contractRows, contractView.SummaryLimit)),
+		fmt.Sprintf("1. %s：项目成本 %.2f 元，项目付款 %.2f 元。主要项目：%s。", contractView.Label, round2(contractTotal), round2(contractPaid), summarizeContractProjectRows(contractRows, contractView.SummaryLimit)),
 		fmt.Sprintf("2. %s：银行实际流出 %.2f 元。大类：%s。", cashView.Label, round2(cashTotal), summarizeCategoryRows(cashRows, cashView.SummaryLimit)),
 		fmt.Sprintf("3. %s：账上成本及费用 %.2f 元。科目：%s。", accountView.Label, round2(accountTotal), summarizeCategoryRows(accountRows, accountView.SummaryLimit)),
-		"说明：三种口径分别看合同成本确认、银行实际付款、账务入账成本费用，金额不要求相加一致。",
+		"说明：三种口径分别看项目成本确认、银行实际付款、账务入账成本费用，金额不要求相加一致。",
 	}, "\n")
 }
 

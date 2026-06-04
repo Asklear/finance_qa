@@ -12,6 +12,8 @@ func detectMetricKind(q string, cfg RuleConfig) MetricKind {
 		return MetricKindCost
 	case shouldUseContractFirstARAP(q):
 		return MetricKindRevenue
+	case shouldUseContractMarginAnalysisQuestion(q, cfg):
+		return MetricKindProfit
 	case containsAny(q, []string{"回款", "到账", "收款"}):
 		return MetricKindReceipts
 	case containsAny(q, cfg.MetricKeywords(metricKeyProfit)):

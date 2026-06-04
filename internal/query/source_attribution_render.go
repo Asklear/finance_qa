@@ -49,6 +49,9 @@ func (e *Engine) annotateSourceAttribution(spec QuerySpec, result Result) Result
 	result.Data["source_tables"] = collected
 	result.Data["primary_source_tables"] = primaryTables
 	result.Data["source_documents"] = primaryDocs
+	if sourceVersionIDs := e.sourceVersionIDsForTables(spec, collected); len(sourceVersionIDs) > 0 {
+		result.Data["source_version_ids"] = sourceVersionIDs
+	}
 	if len(supportingDocs) > 0 {
 		result.Data["supporting_source_documents"] = supportingDocs
 	}
@@ -264,10 +267,12 @@ func sourceTableRequiresFinanceFileMapping(tableName string) bool {
 }
 
 type financeFileMappingSource struct {
-	TableType string
-	Period    string
-	FileName  string
-	UpdatedAt string
+	TableType       string
+	Period          string
+	FileName        string
+	SourceFileHash  string
+	SourceVersionID string
+	UpdatedAt       string
 }
 
 func (e *Engine) financeFileMappingsForTables(spec QuerySpec, tables []string) []financeFileMappingSource {
@@ -301,6 +306,8 @@ func (e *Engine) queryFinanceFileMappings(cols map[string]bool, tableTypes, peri
 		contractDetailTextSelectExpr(cols, "period"),
 		contractDetailTextSelectExpr(cols, "file_name"),
 		contractDetailTextSelectExpr(cols, "storage_key"),
+		contractDetailTextSelectExpr(cols, "source_file_hash"),
+		contractDetailTextSelectExpr(cols, "source_version_id"),
 		contractDetailTextSelectExpr(cols, "updated_at"),
 	}
 	typePlaceholders := placeholders(len(tableTypes))
@@ -340,8 +347,8 @@ func (e *Engine) queryFinanceFileMappings(cols map[string]bool, tableTypes, peri
 	out := make([]financeFileMappingSource, 0, len(tableTypes))
 	seen := map[string]struct{}{}
 	for rows.Next() {
-		var tableType, period, fileName, storageKey, updatedAt string
-		if err := rows.Scan(&tableType, &period, &fileName, &storageKey, &updatedAt); err != nil {
+		var tableType, period, fileName, storageKey, sourceFileHash, sourceVersionID, updatedAt string
+		if err := rows.Scan(&tableType, &period, &fileName, &storageKey, &sourceFileHash, &sourceVersionID, &updatedAt); err != nil {
 			return nil
 		}
 		fileName = sourceFileName(fileName, storageKey)
@@ -349,19 +356,36 @@ func (e *Engine) queryFinanceFileMappings(cols map[string]bool, tableTypes, peri
 		if tableType == "" || fileName == "" {
 			continue
 		}
+		sourceFileHash = strings.TrimSpace(sourceFileHash)
+		sourceVersionID = strings.TrimSpace(sourceVersionID)
+		if sourceVersionID == "" && sourceFileHash != "" {
+			sourceVersionID = fileName + ":" + sourceFileHash
+		}
 		key := strings.Join([]string{tableType, strings.TrimSpace(period), fileName}, "|")
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
 		out = append(out, financeFileMappingSource{
-			TableType: tableType,
-			Period:    strings.TrimSpace(period),
-			FileName:  fileName,
-			UpdatedAt: normalizeSourceUpdatedAt(updatedAt),
+			TableType:       tableType,
+			Period:          strings.TrimSpace(period),
+			FileName:        fileName,
+			SourceFileHash:  sourceFileHash,
+			SourceVersionID: sourceVersionID,
+			UpdatedAt:       normalizeSourceUpdatedAt(updatedAt),
 		})
 	}
 	return out
+}
+
+func (e *Engine) sourceVersionIDsForTables(spec QuerySpec, tables []string) []string {
+	ids := make([]string, 0, len(tables))
+	for _, mapping := range e.financeFileMappingsForTables(spec, tables) {
+		if strings.TrimSpace(mapping.SourceVersionID) != "" {
+			ids = append(ids, mapping.SourceVersionID)
+		}
+	}
+	return dedupeStrings(ids)
 }
 
 func financeFileMappingTypesForSourceTable(tableName string) []string {

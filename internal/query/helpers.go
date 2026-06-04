@@ -24,7 +24,7 @@ func ClassifyIntent(question string) Intent {
 	q := strings.ReplaceAll(question, " ", "")
 	cfg := getRuleConfig()
 
-	if containsAny(q, cfg.IntentKeywords(IntentLargeTransactionQuery)) {
+	if isLargeTransactionIntentQuestion(q, cfg) {
 		return IntentLargeTransactionQuery
 	}
 

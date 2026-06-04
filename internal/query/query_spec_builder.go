@@ -37,6 +37,7 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 		SourceConstraint:       rewrite.SourceConstraint,
 		NeedsContractDimension: needsContractDimension,
 		LexiconProfile:         "rules_config",
+		AsOf:                   anchor.Format("2006-01-02"),
 	}
 	return applyQuerySpecPolicy(spec, deriveQuerySpecPolicy(spec, cfg))
 }

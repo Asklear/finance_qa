@@ -328,7 +328,7 @@ var schemaAnnotations = map[string]SchemaTableAnnotation{
 		"财务来源文件映射表，记录查询来源展示所需的财务文件名、OSS 路径、期间和更新时间。",
 		map[string]string{
 			"table_type":  "财务来源类型，例如 fund-income、cost-settlements、journal、bank-statement",
-			"period":      "来源文件覆盖期间，例如 2026-Q1、2026-03 或 2025",
+				"period":      "来源文件覆盖期间，例如 YYYY-Qn、YYYY-MM 或 YYYY",
 			"storage_key": "财务来源文件 OSS 相对路径",
 			"file_name":   "老板可见的来源文件名",
 			"file_size":   "来源文件大小（字节）",

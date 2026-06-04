@@ -82,6 +82,28 @@ func TestRunQueryRequiresQuestion(t *testing.T) {
 	}
 }
 
+func TestRunQueryAcceptsAsOfFlag(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "as-of.sqlite")
+	code, _, stderr := runCLIForTest(t, "init-db", "--db", dbPath)
+	if code != 0 {
+		t.Fatalf("init-db code = %d, stderr = %s", code, stderr)
+	}
+
+	code, stdout, stderr := runCLIForTest(t,
+		"query",
+		"--db", dbPath,
+		"--company", "测试公司",
+		"--as-of", "2026-04-14",
+		"上个月收入多少?",
+	)
+	if code == 2 {
+		t.Fatalf("query rejected --as-of flag, stderr = %s", stderr)
+	}
+	if !strings.Contains(stdout, `"as_of": "2026-04-14"`) {
+		t.Fatalf("stdout should include query_spec.as_of, got stdout=%s stderr=%s", stdout, stderr)
+	}
+}
+
 func TestRunDimensionsRequiresSubcommand(t *testing.T) {
 	code, _, stderr := runCLIForTest(t, "dimensions")
 	if code != 2 {

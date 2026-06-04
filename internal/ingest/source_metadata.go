@@ -2,17 +2,21 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	dbschema "financeqa/internal/db"
+	"financeqa/internal/parser"
 )
 
-func annotateImportedReportSource(ctx context.Context, dbPath, reportType, filePath string) error {
+func annotateImportedReportSource(ctx context.Context, dbPath string, metadata parser.FileMetadata, filePath string, opts ImportOptions) error {
 	db, err := dbschema.Open(ctx, dbPath)
 	if err != nil {
 		return fmt.Errorf("open db for source metadata: %w", err)
@@ -25,12 +29,16 @@ func annotateImportedReportSource(ctx context.Context, dbPath, reportType, fileP
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	reportType := strings.TrimSpace(metadata.ReportType)
 	tableName, err := resolvePhysicalTableName(ctx, tx, reportType)
 	if err != nil {
 		return err
 	}
 	meta := dbschema.BuildImportedTableSourceMetadata(tableName, filePath, []string{reportType}, nil, "")
 	if err := upsertImportedSourceMetadata(ctx, tx, dbPath, tableName, meta, "imported", true); err != nil {
+		return err
+	}
+	if err := upsertImportedReportFileMappings(ctx, tx, dbPath, metadata, filePath, opts); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -203,14 +211,15 @@ func nullableFileSize(fileSize int64) any {
 	return fileSize
 }
 
-func upsertContractWorkbookFileMappings(ctx context.Context, tx *sql.Tx, dbPath, filePath string, bundle contractImportBundle, opts ImportOptions) error {
-	mappings := contractWorkbookFileMappings(bundle)
-	if len(mappings) == 0 {
-		return nil
-	}
-	if err := ensureFinanceFileMappingsTable(ctx, tx, dbPath); err != nil {
-		return err
-	}
+type financeSourceFileIdentity struct {
+	FileName        string
+	StorageKey      string
+	FileHash        string
+	SourceVersionID string
+	FileSize        int64
+}
+
+func buildFinanceSourceFileIdentity(filePath string, opts ImportOptions) financeSourceFileIdentity {
 	fileName := strings.TrimSpace(opts.SourceFileName)
 	if fileName == "" {
 		fileName = workbookDisplayName(filePath)
@@ -219,18 +228,194 @@ func upsertContractWorkbookFileMappings(ctx context.Context, tx *sql.Tx, dbPath,
 	if storageKey == "" {
 		storageKey = strings.TrimSpace(filePath)
 	}
-	if fileName == "" || storageKey == "" {
-		return nil
-	}
-	company := strings.TrimSpace(opts.CompanyOverride)
-	if company == "" {
-		company = "DefaultCompany"
-	}
 	fileSize := opts.SourceFileSize
 	if fileSize <= 0 {
 		if info, err := os.Stat(filePath); err == nil {
 			fileSize = info.Size()
 		}
+	}
+	fileHash := sourceFileHashPrefix(filePath, 12)
+	versionID := ""
+	if fileName != "" && fileHash != "" {
+		versionID = fileName + ":" + fileHash
+	}
+	return financeSourceFileIdentity{
+		FileName:        fileName,
+		StorageKey:      storageKey,
+		FileHash:        fileHash,
+		SourceVersionID: versionID,
+		FileSize:        fileSize,
+	}
+}
+
+func sourceFileHashPrefix(filePath string, length int) string {
+	if length <= 0 {
+		length = 12
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if len(sum) < length {
+		return sum
+	}
+	return sum[:length]
+}
+
+func upsertImportedReportFileMappings(ctx context.Context, tx *sql.Tx, dbPath string, metadata parser.FileMetadata, filePath string, opts ImportOptions) error {
+	tableType := importedReportMappingTableType(metadata.ReportType)
+	if tableType == "" {
+		return nil
+	}
+	if err := ensureFinanceFileMappingsTable(ctx, tx, dbPath); err != nil {
+		return err
+	}
+	identity := buildFinanceSourceFileIdentity(filePath, opts)
+	if identity.FileName == "" || identity.StorageKey == "" {
+		return nil
+	}
+	company := strings.TrimSpace(opts.CompanyOverride)
+	if company == "" {
+		company = strings.TrimSpace(metadata.Company)
+	}
+	if company == "" {
+		company = "DefaultCompany"
+	}
+	periods := importedReportMappingPeriods(metadata.PeriodStart, metadata.PeriodEnd)
+	if len(periods) == 0 {
+		periods = []string{""}
+	}
+	if !opts.Incremental {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM fin_file_mappings
+WHERE LOWER(COALESCE(table_type, '')) = ?
+  AND (
+    COALESCE(company, '') = ''
+    OR ? = ''
+    OR ? LIKE '%' || COALESCE(company, '') || '%'
+    OR COALESCE(company, '') LIKE '%' || ? || '%'
+  )
+`, strings.ToLower(tableType), company, company, company); err != nil {
+			return fmt.Errorf("delete stale imported file mappings for %s: %w", tableType, err)
+		}
+	}
+	for _, period := range periods {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM fin_file_mappings
+WHERE LOWER(COALESCE(table_type, '')) = ?
+  AND COALESCE(period, '') = ?
+  AND (
+    COALESCE(source_version_id, '') = ?
+    OR COALESCE(storage_key, '') = ?
+    OR (COALESCE(source_version_id, '') = '' AND COALESCE(file_name, '') = ?)
+  )
+`, strings.ToLower(tableType), period, identity.SourceVersionID, identity.StorageKey, identity.FileName); err != nil {
+			return fmt.Errorf("dedupe imported file mapping %s/%s: %w", tableType, period, err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, description, file_size, source_file_hash, source_version_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+`, tableType, period, company, identity.StorageKey, identity.FileName, importedReportFileMappingDescription(tableType, period), nullableFileSize(identity.FileSize), identity.FileHash, identity.SourceVersionID); err != nil {
+			return fmt.Errorf("insert imported file mapping %s/%s: %w", tableType, period, err)
+		}
+	}
+	return nil
+}
+
+func importedReportMappingTableType(reportType string) string {
+	switch strings.TrimSpace(reportType) {
+	case "bank_statement":
+		return "bank-statement"
+	case "journal":
+		return "journal"
+	case "income_statement":
+		return "income-statement"
+	case "balance_sheet":
+		return "balance-sheet"
+	case "balance_detail":
+		return "balance-detail"
+	default:
+		return ""
+	}
+}
+
+func importedReportFileMappingDescription(tableType, period string) string {
+	if strings.TrimSpace(period) == "" {
+		return strings.TrimSpace(tableType) + " 财务文件导入"
+	}
+	return strings.TrimSpace(period) + " " + strings.TrimSpace(tableType) + " 财务文件导入"
+}
+
+func importedReportMappingPeriods(periodStart, periodEnd string) []string {
+	from := strings.TrimSpace(periodStart)
+	to := strings.TrimSpace(periodEnd)
+	if to == "" {
+		to = from
+	}
+	if from == "" || to == "" {
+		return nil
+	}
+	fromYear, fromMonth := parseYearMonthForMapping(from)
+	toYear, toMonth := parseYearMonthForMapping(to)
+	if fromYear == 0 || fromMonth == 0 || toYear == 0 || toMonth == 0 {
+		return []string{from, to}
+	}
+	quarters := map[string]struct{}{}
+	for y, m := fromYear, fromMonth; y < toYear || (y == toYear && m <= toMonth); {
+		quarters[fmt.Sprintf("%04d-Q%d", y, ((m-1)/3)+1)] = struct{}{}
+		m++
+		if m > 12 {
+			y++
+			m = 1
+		}
+		if len(quarters) > 40 {
+			break
+		}
+	}
+	out := make([]string, 0, len(quarters))
+	for quarter := range quarters {
+		out = append(out, quarter)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func parseYearMonthForMapping(value string) (int, int) {
+	value = strings.TrimSpace(value)
+	if len(value) != len("2006-01") || value[4] != '-' {
+		return 0, 0
+	}
+	var year, month int
+	if _, err := fmt.Sscanf(value, "%04d-%02d", &year, &month); err != nil {
+		return 0, 0
+	}
+	if month < 1 || month > 12 {
+		return 0, 0
+	}
+	return year, month
+}
+
+func upsertContractWorkbookFileMappings(ctx context.Context, tx *sql.Tx, dbPath, filePath string, bundle contractImportBundle, opts ImportOptions) error {
+	mappings := contractWorkbookFileMappings(bundle)
+	if len(mappings) == 0 {
+		return nil
+	}
+	if err := ensureFinanceFileMappingsTable(ctx, tx, dbPath); err != nil {
+		return err
+	}
+	identity := buildFinanceSourceFileIdentity(filePath, opts)
+	if identity.FileName == "" || identity.StorageKey == "" {
+		return nil
+	}
+	company := strings.TrimSpace(opts.CompanyOverride)
+	if company == "" {
+		company = "DefaultCompany"
 	}
 
 	if !opts.Incremental {
@@ -246,7 +431,7 @@ WHERE LOWER(COALESCE(table_type, '')) = ?
     OR COALESCE(file_name, '') = ?
     OR COALESCE(storage_key, '') = ?
   )
-`, strings.ToLower(tableType), company, company, company, fileName, storageKey); err != nil {
+`, strings.ToLower(tableType), company, company, company, identity.FileName, identity.StorageKey); err != nil {
 				return fmt.Errorf("delete stale finance file mappings for %s: %w", tableType, err)
 			}
 		}
@@ -258,19 +443,17 @@ DELETE FROM fin_file_mappings
 WHERE LOWER(COALESCE(table_type, '')) = ?
   AND COALESCE(period, '') = ?
   AND (
-    COALESCE(company, '') = ?
-    OR ? LIKE '%' || COALESCE(company, '') || '%'
-    OR COALESCE(company, '') LIKE '%' || ? || '%'
-    OR COALESCE(file_name, '') = ?
+    COALESCE(source_version_id, '') = ?
     OR COALESCE(storage_key, '') = ?
+    OR (COALESCE(source_version_id, '') = '' AND COALESCE(file_name, '') = ?)
   )
-`, strings.ToLower(mapping.TableType), mapping.Period, company, company, company, fileName, storageKey); err != nil {
+`, strings.ToLower(mapping.TableType), mapping.Period, identity.SourceVersionID, identity.StorageKey, identity.FileName); err != nil {
 			return fmt.Errorf("dedupe finance file mapping %s/%s: %w", mapping.TableType, mapping.Period, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, description, file_size, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-`, mapping.TableType, mapping.Period, company, storageKey, fileName, mapping.Description, nullableFileSize(fileSize)); err != nil {
+INSERT INTO fin_file_mappings(table_type, period, company, storage_key, file_name, description, file_size, source_file_hash, source_version_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+`, mapping.TableType, mapping.Period, company, identity.StorageKey, identity.FileName, mapping.Description, nullableFileSize(identity.FileSize), identity.FileHash, identity.SourceVersionID); err != nil {
 			return fmt.Errorf("insert finance file mapping %s/%s: %w", mapping.TableType, mapping.Period, err)
 		}
 	}
@@ -288,6 +471,8 @@ CREATE TABLE IF NOT EXISTS fin_file_mappings (
 	file_name VARCHAR(255) NOT NULL,
 	description TEXT,
 	file_size BIGINT,
+	source_file_hash VARCHAR(64),
+	source_version_id VARCHAR(512),
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )`
@@ -302,6 +487,8 @@ CREATE TABLE IF NOT EXISTS fin_file_mappings (
 	file_name TEXT NOT NULL,
 	description TEXT,
 	file_size INTEGER,
+	source_file_hash TEXT,
+	source_version_id TEXT,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )`
@@ -309,11 +496,56 @@ CREATE TABLE IF NOT EXISTS fin_file_mappings (
 	if _, err := tx.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("ensure fin_file_mappings table: %w", err)
 	}
+	if err := ensureFinanceFileMappingsColumn(ctx, tx, dbPath, "source_file_hash", "TEXT"); err != nil {
+		return err
+	}
+	if err := ensureFinanceFileMappingsColumn(ctx, tx, dbPath, "source_version_id", "TEXT"); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_fin_files_table_type ON fin_file_mappings(table_type)`); err != nil {
 		return fmt.Errorf("ensure fin_file_mappings table_type index: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_fin_files_period ON fin_file_mappings(period)`); err != nil {
 		return fmt.Errorf("ensure fin_file_mappings period index: %w", err)
+	}
+	return nil
+}
+
+func ensureFinanceFileMappingsColumn(ctx context.Context, tx *sql.Tx, dbPath, columnName, columnType string) error {
+	columnName = strings.TrimSpace(columnName)
+	columnType = strings.TrimSpace(columnType)
+	if columnName == "" || columnType == "" {
+		return nil
+	}
+	if looksLikeSQLiteImportPath(dbPath) {
+		rows, err := tx.QueryContext(ctx, `PRAGMA table_info(fin_file_mappings)`)
+		if err != nil {
+			return fmt.Errorf("inspect fin_file_mappings columns: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid int
+			var name, typ string
+			var notNull int
+			var defaultValue any
+			var pk int
+			if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+				return fmt.Errorf("scan fin_file_mappings column: %w", err)
+			}
+			if name == columnName {
+				return nil
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE fin_file_mappings ADD COLUMN %s %s`, columnName, columnType)); err != nil {
+			return fmt.Errorf("add fin_file_mappings.%s: %w", columnName, err)
+		}
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE fin_file_mappings ADD COLUMN IF NOT EXISTS %s %s`, columnName, columnType)); err != nil {
+		return fmt.Errorf("add fin_file_mappings.%s: %w", columnName, err)
 	}
 	return nil
 }

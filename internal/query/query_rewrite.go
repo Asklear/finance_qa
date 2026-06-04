@@ -113,6 +113,10 @@ func detectBossMetricWithConfig(q string, cfg RuleConfig) BossMetric {
 	switch {
 	case shouldUsePreciseBalanceQuestion(q):
 		return BossMetricUnknown
+	case shouldUseCashOnHandBalanceQuestion(q):
+		return BossMetricCashFlow
+	case shouldUseContractMarginAnalysisQuestion(q, cfg):
+		return BossMetricProfit
 	case isARAPQuestion(q):
 		return BossMetricARAP
 	case containsAny(q, []string{"回款", "到账", "收款"}):
@@ -146,6 +150,8 @@ func detectBossPerspectiveAndSource(q string, metric BossMetric) (BossPerspectiv
 	switch {
 	case shouldUsePreciseBalanceQuestion(q):
 		return BossPerspectiveOfficialThenEvidence, BossSourceBalance
+	case shouldUseCashOnHandBalanceQuestion(q):
+		return BossPerspectiveOfficialThenEvidence, BossSourceBalance
 	case containsAny(q, []string{"银行", "银行卡", "流水", "现金流", "实际到账", "实际支出", "现金口径"}):
 		return BossPerspectiveExplicitCash, BossSourceBankStatement
 	case shouldUseExplicitFinancialAccountQuestion(q):
@@ -168,6 +174,16 @@ func shouldUsePreciseBalanceQuestion(q string) bool {
 		return false
 	}
 	return containsAny(q, []string{"货币资金", "银行存款"})
+}
+
+func shouldUseCashOnHandBalanceQuestion(q string) bool {
+	if !strings.Contains(q, "现金") {
+		return false
+	}
+	if containsAny(q, []string{"现金流", "实际到账", "实际支出", "现金口径", "银行卡", "银行流水"}) {
+		return false
+	}
+	return containsAny(q, []string{"账上", "现在", "还有", "余额", "结余", "存量", "年初", "多了", "少了", "剩"})
 }
 
 func shouldUseExplicitFinancialAccountQuestion(q string) bool {
@@ -207,7 +223,9 @@ func looksLikeBossRewriteNonEntity(entity string) bool {
 	}
 	return containsAny(normalized, []string{
 		"银行卡", "银行", "实际", "到账", "回款", "收款", "付款", "现金", "现金流",
+		"账上", "现在", "还有", "年初", "多了", "少了",
 		"应收", "应付", "账款", "开票", "收票", "发票", "未付", "未回", "未收",
+		"挂着", "还挂", "挂账", "哪头", "更重",
 		"整体", "大类", "构成", "分类", "类别", "支出", "费用", "开支",
 	})
 }
