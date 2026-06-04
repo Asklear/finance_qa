@@ -51,7 +51,7 @@ OpenClaw 这层会在 `before_prompt_build` 加强财务题约束。直接财务
         "source": "path",
         "sourcePath": "/root/.openclaw/extensions/openclaw-finance",
         "installPath": "/root/.openclaw/extensions/openclaw-finance",
-        "version": "2.0.13"
+        "version": "2.0.14"
       }
     }
   }

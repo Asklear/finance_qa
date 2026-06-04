@@ -7,6 +7,17 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SERVER="${SERVER:-lzh}"
+LOCAL_VERSION_PREFLIGHT="$ROOT_DIR/tests/scripts/check_version_preflight.sh"
+VERSION_PREFLIGHT_ENABLED="${VERSION_PREFLIGHT_ENABLED:-1}"
+
+if [[ "$VERSION_PREFLIGHT_ENABLED" == "1" ]]; then
+  if [[ ! -x "$LOCAL_VERSION_PREFLIGHT" ]]; then
+    echo "missing executable version preflight: $LOCAL_VERSION_PREFLIGHT" >&2
+    exit 1
+  fi
+  echo "[0/8] run version preflight"
+  "$LOCAL_VERSION_PREFLIGHT"
+fi
 
 ssh_remote() {
   if [[ -n "${KEY_PATH:-}" ]]; then
