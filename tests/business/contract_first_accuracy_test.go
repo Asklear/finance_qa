@@ -27,10 +27,10 @@ func TestContractFirstCompanyQ1TotalsMatchIndependentSQL(t *testing.T) {
 		requireSuccessfulTrace(t, res.Success, res.Message, len(res.ExecutedSQL), len(res.CalculationLogs))
 		accountView := requireMap(t, res.Data["account_view"], "data.account_view")
 		assertAmount(t, "account_view.营收", readFloat(t, accountView, "营收"), expected.RevenueSettlement)
-		assertAmount(t, "account_view.合同成本", readFloat(t, accountView, "合同成本"), expected.CostSettlement)
+		assertAmount(t, "account_view.项目成本", readFloat(t, accountView, "项目成本"), expected.CostSettlement)
 		assertAmount(t, "account_view.利润", readFloat(t, accountView, "利润"), expected.Profit)
 		assertAmount(t, "contract_summary.revenue_settlement", readFloat(t, requireMap(t, res.Data["contract_summary"], "data.contract_summary"), "revenue_settlement"), expected.RevenueSettlement)
-		if !strings.Contains(res.Message, "老板口径先看合同/项目汇总") {
+		if !strings.Contains(res.Message, "老板口径先看项目汇总") {
 			t.Fatalf("message should state contract/project first perspective, got: %s", res.Message)
 		}
 		requireSourceLineage(t, res.Data, res.Message)
@@ -49,7 +49,7 @@ func TestContractFirstMonthlyTotalsMatchIndependentSQL(t *testing.T) {
 		requireSuccessfulTrace(t, res.Success, res.Message, len(res.ExecutedSQL), len(res.CalculationLogs))
 		accountView := requireMap(t, res.Data["account_view"], "data.account_view")
 		assertAmount(t, "account_view.营收", readFloat(t, accountView, "营收"), expected.RevenueSettlement)
-		assertAmount(t, "account_view.合同成本", readFloat(t, accountView, "合同成本"), expected.CostSettlement)
+		assertAmount(t, "account_view.项目成本", readFloat(t, accountView, "项目成本"), expected.CostSettlement)
 		assertAmount(t, "account_view.利润", readFloat(t, accountView, "利润"), expected.Profit)
 		requireSourceLineage(t, res.Data, res.Message)
 	})

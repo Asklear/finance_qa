@@ -183,7 +183,7 @@ func buildContractAggregateCoverage(selection contractAggregateSelection, summar
 
 func buildContractAggregateMoneyView(selection contractAggregateSelection, summary contractAggregateSummary) map[string]any {
 	view := map[string]any{
-		"说明": "合同现金口径",
+		"说明": "项目现金口径",
 	}
 	switch {
 	case selection.IncludeProfit && !selection.IncludeRevenue && !selection.IncludeCost:
@@ -230,24 +230,24 @@ func buildContractAggregateMoneyView(selection contractAggregateSelection, summa
 
 func buildContractAggregateAccountView(selection contractAggregateSelection, summary contractAggregateSummary) map[string]any {
 	view := map[string]any{
-		"说明": "合同经营口径",
+		"说明": "项目经营口径",
 	}
 	if selection.IncludeRevenue {
-		view["营收"] = round2(summary.RevenueSettlement)
+		view["项目结算"] = round2(summary.RevenueSettlement)
 		view["已开票"] = round2(summary.RevenueInvoiced)
 	}
 	if selection.IncludeCost {
-		view["合同成本"] = round2(summary.CostSettlement)
+		view["项目成本"] = round2(summary.CostSettlement)
 	}
 	if selection.IncludeProfit {
 		view["利润"] = round2(summary.Profit)
 	}
 	if selection.IncludeReceivable {
-		view["合同应收"] = round2(summary.RevenueReceivable)
+		view["项目应收"] = round2(summary.RevenueReceivable)
 		view["已开票未回款"] = round2(summary.RevenueInvoiceOpen)
 	}
 	if selection.IncludePayable {
-		view["合同应付"] = round2(summary.CostPayable)
+		view["项目应付"] = round2(summary.CostPayable)
 		view["已收票未付款"] = round2(summary.CostInvoiceOpen)
 	}
 	if selection.IncludeInvoiceAR {

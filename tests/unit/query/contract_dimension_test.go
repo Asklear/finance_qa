@@ -722,7 +722,7 @@ func TestCompanyAggregateMetricIncludesMergedFundIncomeGroups(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "营收 4200.00 元") {
+	if !strings.Contains(res.Message, "项目结算 4200.00 元") {
 		t.Fatalf("message should include merged group revenue, got: %s", res.Message)
 	}
 	summary, ok := res.Data["contract_summary"].(map[string]any)
@@ -748,7 +748,7 @@ func TestCompanyAggregateMetricIncludesMergedCostSettlementGroups(t *testing.T) 
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "合同成本 600.00 元") {
+	if !strings.Contains(res.Message, "项目成本 600.00 元") {
 		t.Fatalf("message should include merged group cost, got: %s", res.Message)
 	}
 	summary, ok := res.Data["contract_summary"].(map[string]any)
@@ -777,10 +777,10 @@ func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "老板口径先看合同/项目汇总") {
+	if !strings.Contains(res.Message, "老板口径先看项目汇总") {
 		t.Fatalf("message should prefer contract aggregate, got: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "营收 1300.00 元") || !strings.Contains(res.Message, "合同成本 1008.00 元") || !strings.Contains(res.Message, "利润 292.00 元") {
+	if !strings.Contains(res.Message, "项目结算 1300.00 元") || !strings.Contains(res.Message, "项目成本 1008.00 元") || !strings.Contains(res.Message, "利润 292.00 元") {
 		t.Fatalf("message should use contract aggregate numbers, got: %s", res.Message)
 	}
 	if got, _ := res.Data["source_priority"].(string); got != "contract_first" {
@@ -851,10 +851,10 @@ func TestCompanyAggregateGMVPrefersContractAggregateFirst(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "老板口径先看合同/项目汇总") {
+	if !strings.Contains(res.Message, "老板口径先看项目汇总") {
 		t.Fatalf("message should prefer contract aggregate, got: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "营收 1300.00 元") {
+	if !strings.Contains(res.Message, "项目结算 1300.00 元") {
 		t.Fatalf("message should treat GMV as revenue-like contract metric, got: %s", res.Message)
 	}
 }

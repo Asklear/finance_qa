@@ -29,7 +29,7 @@ func TestBuildContractAggregateScopeLabelIncludesEntityWhenPresent(t *testing.T)
 	noEntity := contractAggregateSummary{
 		Period: "2025-10",
 	}
-	if got := buildContractAggregateScopeLabel(noEntity); got != "2025-10 老板口径先看合同/项目汇总" {
+	if got := buildContractAggregateScopeLabel(noEntity); got != "2025-10 老板口径先看项目汇总" {
 		t.Fatalf("scope label without entity = %s", got)
 	}
 
@@ -37,7 +37,7 @@ func TestBuildContractAggregateScopeLabelIncludesEntityWhenPresent(t *testing.T)
 		Entity: "飞未云科",
 		Period: "2025-10",
 	}
-	if got := buildContractAggregateScopeLabel(withEntity); got != "[飞未云科] 2025-10 老板口径先看合同/项目汇总" {
+	if got := buildContractAggregateScopeLabel(withEntity); got != "[飞未云科] 2025-10 老板口径先看项目汇总" {
 		t.Fatalf("scope label with entity = %s", got)
 	}
 }

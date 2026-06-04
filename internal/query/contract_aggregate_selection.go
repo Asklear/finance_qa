@@ -33,9 +33,9 @@ func resolveContractAggregateSelection(spec QuerySpec, summary contractAggregate
 }
 
 func buildContractAggregateScopeLabel(summary contractAggregateSummary) string {
-	scopeLabel := fmt.Sprintf("%s 老板口径先看合同/项目汇总", summary.Period)
+	scopeLabel := fmt.Sprintf("%s 老板口径先看项目汇总", summary.Period)
 	if strings.TrimSpace(summary.Entity) != "" {
-		scopeLabel = fmt.Sprintf("[%s] %s 老板口径先看合同/项目汇总", summary.Entity, summary.Period)
+		scopeLabel = fmt.Sprintf("[%s] %s 老板口径先看项目汇总", summary.Entity, summary.Period)
 	}
 	return scopeLabel
 }
