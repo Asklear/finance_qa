@@ -24,7 +24,7 @@ func buildContractAggregateResultMessage(selection contractAggregateSelection, s
 func buildContractAggregateMetricParts(selection contractAggregateSelection, summary contractAggregateSummary) []string {
 	parts := make([]string, 0, 3)
 	if selection.IncludeRevenue {
-		parts = append(parts, fmt.Sprintf("营收 %.2f 元", summary.RevenueSettlement))
+		parts = append(parts, fmt.Sprintf("项目结算 %.2f 元", summary.RevenueSettlement))
 	}
 	if selection.IncludeCost {
 		parts = append(parts, fmt.Sprintf("项目成本 %.2f 元", summary.CostSettlement))
@@ -45,7 +45,7 @@ func buildContractAggregateMetricParts(selection contractAggregateSelection, sum
 		parts = append(parts, fmt.Sprintf("已收票未付款 %.2f 元", summary.CostInvoiceOpen))
 	}
 	if len(parts) == 0 {
-		parts = append(parts, fmt.Sprintf("营收 %.2f 元", summary.RevenueSettlement))
+		parts = append(parts, fmt.Sprintf("项目结算 %.2f 元", summary.RevenueSettlement))
 	}
 	return parts
 }
@@ -116,11 +116,11 @@ func buildContractAggregateSupplement(selection contractAggregateSelection, summ
 	default:
 		parts := make([]string, 0, 4)
 		if selection.IncludeRevenue {
-			parts = append(parts, fmt.Sprintf("项目回款 %.2f 元", round2(summary.RevenueReceived)))
+			parts = append(parts, fmt.Sprintf("项目现金回款 %.2f 元", round2(summary.RevenueReceived)))
 			parts = append(parts, fmt.Sprintf("已开票 %.2f 元", round2(summary.RevenueInvoiced)))
 		}
 		if selection.IncludeCost {
-			parts = append(parts, fmt.Sprintf("项目付款 %.2f 元", round2(summary.CostPaid)))
+			parts = append(parts, fmt.Sprintf("项目现金付款 %.2f 元", round2(summary.CostPaid)))
 		}
 		if selection.IncludeReceivable {
 			parts = append(parts, fmt.Sprintf("已到账 %.2f 元", round2(summary.RevenueReceived)))

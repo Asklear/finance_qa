@@ -40,8 +40,8 @@ func TestBuildContractAggregateResultSnapshotIncludesCashAndAccountViews(t *test
 	if !strings.Contains(message, "老板口径先看项目汇总") {
 		t.Fatalf("message should disclose project aggregate priority, got: %s", message)
 	}
-	if !strings.Contains(message, "补充项目回款 1200.00 元") {
-		t.Fatalf("message should disclose project receipts, got: %s", message)
+	if !strings.Contains(message, "补充项目现金回款 1200.00 元") {
+		t.Fatalf("message should disclose project cash receipts, got: %s", message)
 	}
 	moneyView, ok := data["money_view"].(map[string]any)
 	if !ok {
@@ -62,6 +62,50 @@ func TestBuildContractAggregateResultSnapshotIncludesCashAndAccountViews(t *test
 	}
 	if got := data["source_priority"]; got != "contract_first" {
 		t.Fatalf("source_priority = %v, want contract_first", got)
+	}
+}
+
+func TestBuildContractAggregateResultSnapshotUsesProjectLabelsForCompanyAggregate(t *testing.T) {
+	spec := QuerySpec{
+		OriginalQuestion: "从2025年10月到2026年5月底，所有项目的应收未收、应付未付是多少？",
+	}
+	summary := contractAggregateSummary{
+		Period:            "2025-10~2026-05",
+		RequestedMetrics:  []string{"收入", "成本", "应收", "应付"},
+		RevenueSettlement: 25321196.46,
+		RevenueReceived:   19959700.89,
+		RevenueInvoiced:   20083501.96,
+		RevenueReceivable: 5361495.57,
+		CostSettlement:    11159793.22,
+		CostPaid:          8911445.76,
+		CostPayable:       2249454.49,
+		SourceTables:      []string{"tenant_uhub.fin_contracts", "tenant_uhub.fin_fund_income", "tenant_uhub.fin_cost_settlements"},
+	}
+
+	message, data := buildContractAggregateResultSnapshot(spec, summary)
+	for _, want := range []string{"老板口径先看项目汇总", "项目结算 25321196.46 元", "项目成本 11159793.22 元", "项目应收 5361495.57 元", "项目应付 2249454.49 元"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message should include %q, got: %s", want, message)
+		}
+	}
+	for _, forbidden := range []string{"老板口径先看合同/项目汇总", "合同结算", "合同成本", "合同应收", "合同应付"} {
+		if strings.Contains(message, forbidden) {
+			t.Fatalf("message should not expose %q, got: %s", forbidden, message)
+		}
+	}
+	accountView, ok := data["account_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("account_view missing: %#v", data["account_view"])
+	}
+	for _, want := range []string{"项目结算", "项目成本", "项目应收", "项目应付"} {
+		if _, ok := accountView[want]; !ok {
+			t.Fatalf("account_view should include %s, got: %#v", want, accountView)
+		}
+	}
+	for _, forbidden := range []string{"合同成本", "合同应收", "合同应付"} {
+		if _, ok := accountView[forbidden]; ok {
+			t.Fatalf("account_view should not expose %s, got: %#v", forbidden, accountView)
+		}
 	}
 }
 
@@ -108,8 +152,8 @@ func TestBuildContractAggregateResultSnapshotRevenueOnlyOmitsPlaceholderCostAndP
 	if _, ok := accountView["利润"]; ok {
 		t.Fatalf("account_view should omit 利润 for revenue-only query: %#v", accountView)
 	}
-	if accountView["营收"] != float64(1300) || accountView["已开票"] != float64(1180) {
-		t.Fatalf("account_view = %#v, want 营收=1300 and 已开票=1180", accountView)
+	if accountView["项目结算"] != float64(1300) || accountView["已开票"] != float64(1180) {
+		t.Fatalf("account_view = %#v, want 项目结算=1300 and 已开票=1180", accountView)
 	}
 	moneyView, ok := data["money_view"].(map[string]any)
 	if !ok {
@@ -173,8 +217,8 @@ func TestBuildContractAggregateResultSnapshotCostOnlyUsesPaidCashView(t *testing
 	if accountView["项目成本"] != float64(1008) {
 		t.Fatalf("account_view = %#v, want 项目成本=1008", accountView)
 	}
-	if _, ok := accountView["营收"]; ok {
-		t.Fatalf("account_view should omit 营收 for cost-only query: %#v", accountView)
+	if _, ok := accountView["项目结算"]; ok {
+		t.Fatalf("account_view should omit 项目结算 for cost-only query: %#v", accountView)
 	}
 	if _, ok := accountView["利润"]; ok {
 		t.Fatalf("account_view should omit 利润 for cost-only query: %#v", accountView)

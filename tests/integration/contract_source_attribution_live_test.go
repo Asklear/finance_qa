@@ -66,11 +66,11 @@ func TestLiveDBCostAggregatePayloadStaysCostScoped(t *testing.T) {
 	if !ok {
 		t.Fatalf("account_view missing or wrong type: %#v", res.Data["account_view"])
 	}
-	if _, ok := accountView["合同成本"]; !ok {
-		t.Fatalf("account_view should include 合同成本 for cost-only aggregate, got %#v", accountView)
+	if _, ok := accountView["项目成本"]; !ok {
+		t.Fatalf("account_view should include 项目成本 for cost-only aggregate, got %#v", accountView)
 	}
-	if _, ok := accountView["营收"]; ok {
-		t.Fatalf("account_view should omit 营收 for cost-only aggregate, got %#v", accountView)
+	if _, ok := accountView["项目结算"]; ok {
+		t.Fatalf("account_view should omit 项目结算 for cost-only aggregate, got %#v", accountView)
 	}
 }
 
@@ -103,10 +103,10 @@ func TestLiveDBProfitAggregatePayloadStaysProfitScoped(t *testing.T) {
 	if _, ok := accountView["利润"]; !ok {
 		t.Fatalf("account_view should include 利润 for profit-only aggregate, got %#v", accountView)
 	}
-	if _, ok := accountView["营收"]; ok {
-		t.Fatalf("account_view should omit 营收 for profit-only aggregate, got %#v", accountView)
+	if _, ok := accountView["项目结算"]; ok {
+		t.Fatalf("account_view should omit 项目结算 for profit-only aggregate, got %#v", accountView)
 	}
-	if _, ok := accountView["合同成本"]; ok {
-		t.Fatalf("account_view should omit 合同成本 for profit-only aggregate, got %#v", accountView)
+	if _, ok := accountView["项目成本"]; ok {
+		t.Fatalf("account_view should omit 项目成本 for profit-only aggregate, got %#v", accountView)
 	}
 }

@@ -366,7 +366,7 @@ func buildContractAggregateAccountView(selection contractAggregateSelection, sum
 		"说明": "项目经营口径",
 	}
 	if selection.IncludeRevenue {
-		view["营收"] = round2(summary.RevenueSettlement)
+		view["项目结算"] = round2(summary.RevenueSettlement)
 		view["已开票"] = round2(summary.RevenueInvoiced)
 	}
 	if selection.IncludeCost {
