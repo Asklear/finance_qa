@@ -10,15 +10,13 @@
 
 - 测试集共 13 题。
 - 数据正确性：13/13。
-- 逐题评分：12 个 `full_correct`，1 个 `partial`，0 个 `wrong`。
+- 逐题评分：13 个 `full_correct`，0 个 `partial`，0 个 `wrong`。
 - 诊断失败：0。
 - provenance 缺失：0。
 - 生产代码硬编码扫描：未发现本轮新增的测试实体、测试月份、测试文件名、测试金额或 flow 专项硬编码。
 - Go 全量测试：通过。
 
-唯一 `partial` 是 `q1_应收应付`，原因是 scorer 标记 `forbidden_term:项目应收`。实际用户可见答案是“账上挂账：应收账款...”，来源也是财报/余额表；`项目应收` 只出现在内部 `route_decision/contract_fallback_reason` 诊断字段里，用来说明项目口径 probe 未命中。因此这里不是业务回答错误，而是 scorer 对 case 级 forbidden terms 的扫描范围过宽。
-
-建议验收口径：代码修复可接受；后续应调整 scorer，使 case 级 forbidden terms 只检查用户可见答案和来源摘要，不扫描内部诊断字段；全局生产硬编码 forbidden terms 仍可继续扫描完整 JSON。
+此前唯一 `partial` 是 `q1_应收应付`，原因是 scorer 把内部 `route_decision/contract_fallback_reason` 诊断字段里的“项目应收”也纳入 case 级 forbidden terms。该问题已在 `etl-testkit/tools/score_financeqa_flow.py` 修复：case 级 forbidden terms 只检查用户可见答案和来源摘要；全局生产硬编码 forbidden terms 仍扫描完整 JSON。
 
 ## 2. 验收命令和结果
 
@@ -58,20 +56,20 @@ python3 tools/financeqa_flow_runner.py \
   --financeqa /Users/gaorongvc/.config/superpowers/worktrees/finance_qa/repair-flow-fin-ledger-benchmark/bin/financeqa \
   --scenario test-set/scenarios/flow-fin-ledger.json \
   --expected test-set/answers/flow-fin-ledger.expected.json \
-  --out /tmp/flow-fin-ledger-project-priority-results.json
+  --out /tmp/flow-fin-ledger-after-main-merge-results.json
 
 python3 tools/score_financeqa_flow.py \
   --expected test-set/answers/flow-fin-ledger.expected.json \
-  --results /tmp/flow-fin-ledger-project-priority-results.json \
-  --out /tmp/flow-fin-ledger-project-priority-score.json \
+  --results /tmp/flow-fin-ledger-after-main-merge-results.json \
+  --out /tmp/flow-fin-ledger-after-main-merge-score.json \
   --require-total 13 \
-  --fail-on-diagnostic
+  --require-full-correct
 ```
 
 结果：
 
 ```text
-total=13 full_correct=12 partial=1 wrong=0 source_failures=1 missing_provenance=0 diagnostic=0
+total=13 full_correct=13 partial=0 wrong=0 source_failures=0 missing_provenance=0 diagnostic=0
 ```
 
 逐题结果：
@@ -80,7 +78,7 @@ total=13 full_correct=12 partial=1 wrong=0 source_failures=1 missing_provenance=
 | --- | --- | --- |
 | `q1_盈亏` | `full_correct` | 利润表收入、成本、净利润、管理费用正确 |
 | `q1_现金` | `full_correct` | 现金年初/期末、银行流水收入支出、净流入正确 |
-| `q1_应收应付` | `partial` | 数值和用户可见文案正确；内部诊断字段包含 `项目应收`，被 scorer 误判 |
+| `q1_应收应付` | `full_correct` | 官方余额表/账上挂账口径正确；内部诊断字段不再被 case 级 forbidden terms 误扫 |
 | `q1_大额` | `full_correct` | 大额进账/支出对手方和金额正确 |
 | `r_集中度` | `full_correct` | 客户收入集中度、top1/top2 和占比正确 |
 | `r_应收挂账` | `full_correct` | 黔灵/百度等应收挂账信息正确 |
@@ -114,10 +112,10 @@ git diff --check
 
 ## 3. 本次改动总结
 
-当前 tracked diff 规模：
+repair commit 规模：
 
 ```text
-60 files changed, 2323 insertions(+), 147 deletions(-)
+71 files changed, 4347 insertions(+), 149 deletions(-)
 ```
 
 另有新增查询/测试文件：
@@ -258,7 +256,7 @@ git diff --check
 
 ## 5. 剩余分歧和建议
 
-### 5.1 scorer 的 forbidden terms 扫描范围需要收窄
+### 5.1 scorer 的 forbidden terms 扫描范围已收窄
 
 `q1_应收应付` 的 expected 本身是合理的：这题没有“项目/合同/客户/供应商”等业务口径关键词，checkpoint 当天也只有财报、余额表、序时账、银行流水来源，因此应按官方余额表/账上挂账回答。
 
@@ -274,7 +272,7 @@ git diff --check
 contract_fallback_reason: 项目应收/应付口径在请求期间 2026-04 没有匹配记录
 ```
 
-建议修改 scorer，而不是删除 expected 的 forbidden term：
+本轮已修改 scorer，而不是删除 expected 的 forbidden term：
 
 - case 级 `forbidden_terms` 只检查用户可见答案字段，例如 `message`、`final_answer`、`source_note/source_summary`。
 - 不检查 `route_decision`、`contract_fallback_reason`、`calculation_logs`、`query_spec` 等内部诊断字段。
