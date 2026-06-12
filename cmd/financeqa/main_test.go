@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -101,6 +102,58 @@ func TestRunQueryAcceptsAsOfFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"as_of": "2026-04-14"`) {
 		t.Fatalf("stdout should include query_spec.as_of, got stdout=%s stderr=%s", stdout, stderr)
+	}
+}
+
+func TestRunServeHTTPRequiresTokenConfig(t *testing.T) {
+	code, _, stderr := runCLIForTest(t, "serve-http", "--listen", "127.0.0.1:0")
+	if code != 1 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "at least one MCP token") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
+func TestRunServeHTTPHelpShowsFlags(t *testing.T) {
+	code, stdout, stderr := runCLIForTest(t, "serve-http", "--help")
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %s", code, stderr)
+	}
+	for _, want := range []string{"listen", "read-token-file", "admin-token-file"} {
+		if !strings.Contains(stdout+stderr, want) {
+			t.Fatalf("serve-http help should include %s; stdout=%q stderr=%q", want, stdout, stderr)
+		}
+	}
+}
+
+func TestServeHTTPConfigLoadsTokenFiles(t *testing.T) {
+	readTokenPath := filepath.Join(t.TempDir(), "read-token")
+	adminTokenPath := filepath.Join(t.TempDir(), "admin-token")
+	if err := os.WriteFile(readTokenPath, []byte(" read-token \n"), 0o600); err != nil {
+		t.Fatalf("write read token: %v", err)
+	}
+	if err := os.WriteFile(adminTokenPath, []byte(" admin-token \n"), 0o600); err != nil {
+		t.Fatalf("write admin token: %v", err)
+	}
+
+	cfg, err := parseServeHTTPConfig([]string{
+		"--listen", "127.0.0.1:3909",
+		"--read-token-file", readTokenPath,
+		"--admin-token-file", adminTokenPath,
+		"--company", "测试公司",
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("parseServeHTTPConfig: %v", err)
+	}
+	if cfg.listen != "127.0.0.1:3909" {
+		t.Fatalf("listen = %q, want 127.0.0.1:3909", cfg.listen)
+	}
+	if cfg.readToken != "read-token" || cfg.adminToken != "admin-token" {
+		t.Fatalf("tokens = read:%q admin:%q", cfg.readToken, cfg.adminToken)
+	}
+	if cfg.company != "测试公司" {
+		t.Fatalf("company = %q, want 测试公司", cfg.company)
 	}
 }
 

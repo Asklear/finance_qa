@@ -1,0 +1,22 @@
+[Unit]
+Description=FinanceQA MCP HTTP server
+Documentation=file:%h/finance_qa/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=%h/finance_qa
+Environment=FINANCEQA_ENV_FILE=%h/finance_qa/.env
+Environment=FINANCEQA_MCP_LISTEN=127.0.0.1:3009
+Environment=FINANCEQA_MCP_READ_TOKEN_FILE=%h/finance_qa/secrets/mcp_read_token
+Environment=FINANCEQA_MCP_ADMIN_TOKEN_FILE=%h/finance_qa/secrets/mcp_admin_token
+ExecStart=%h/finance_qa/bin/financeqa serve-http
+Restart=on-failure
+RestartSec=3
+SyslogIdentifier=financeqa-mcp
+
+[Install]
+WantedBy=multi-user.target

@@ -65,6 +65,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runAuditAccuracy(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "serve-http":
+		return runServeHTTP(args[1:], stdout, stderr)
 	default:
 		return runQuery(args, stdout, stderr)
 	}
@@ -376,6 +378,107 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+type serveHTTPConfig struct {
+	listen     string
+	dbPath     string
+	company    string
+	skill      string
+	appendix   string
+	readToken  string
+	adminToken string
+}
+
+func runServeHTTP(args []string, stdout, stderr io.Writer) int {
+	cfg, err := parseServeHTTPConfig(args, stdout)
+	if err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		fmt.Fprintf(stderr, "serve-http config failed: %s\n", support.SanitizeError(err))
+		return 1
+	}
+
+	service := mcp.NewService(mcp.ServiceConfig{
+		DBPath:       resolveDBPath(cfg.dbPath),
+		Company:      cfg.company,
+		SkillPath:    cfg.skill,
+		AppendixPath: cfg.appendix,
+	})
+	server, err := mcp.NewHTTPServer(mcp.HTTPServerConfig{
+		Addr:       cfg.listen,
+		ReadToken:  cfg.readToken,
+		AdminToken: cfg.adminToken,
+		Service:    service,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "serve-http config failed: %s\n", support.SanitizeError(err))
+		return 1
+	}
+	if err := server.ListenAndServe(); err != nil {
+		fmt.Fprintf(stderr, "serve-http failed: %s\n", support.SanitizeError(err))
+		return 1
+	}
+	return 0
+}
+
+func parseServeHTTPConfig(args []string, output io.Writer) (serveHTTPConfig, error) {
+	fs := flag.NewFlagSet("serve-http", flag.ContinueOnError)
+	fs.SetOutput(output)
+
+	defaultListen := strings.TrimSpace(os.Getenv("FINANCEQA_MCP_LISTEN"))
+	if defaultListen == "" {
+		defaultListen = "127.0.0.1:3009"
+	}
+
+	listen := fs.String("listen", defaultListen, "HTTP listen address")
+	dbPath := fs.String("db", "", "postgres dsn (or FINANCEQA_PG_DSN env)")
+	company := fs.String("company", support.DefaultCompanyName(), "company name to query")
+	skillPath := fs.String("skill", "", "path to SKILL.md (auto-detected if not set)")
+	appendixPath := fs.String("appendix", "", "path to SKILL_APPENDIX_FULL.md (auto-detected if not set)")
+	readTokenFile := fs.String("read-token-file", strings.TrimSpace(os.Getenv("FINANCEQA_MCP_READ_TOKEN_FILE")), "path to read-scope MCP bearer token file")
+	adminTokenFile := fs.String("admin-token-file", strings.TrimSpace(os.Getenv("FINANCEQA_MCP_ADMIN_TOKEN_FILE")), "path to admin-scope MCP bearer token file")
+	if err := fs.Parse(args); err != nil {
+		return serveHTTPConfig{}, err
+	}
+
+	skill := *skillPath
+	appendix := *appendixPath
+	if skill == "" || appendix == "" {
+		autoSkill, autoAppendix := mcp.AutoDetectPaths()
+		if skill == "" {
+			skill = autoSkill
+		}
+		if appendix == "" {
+			appendix = autoAppendix
+		}
+	}
+
+	var readToken, adminToken string
+	var err error
+	if strings.TrimSpace(*readTokenFile) != "" {
+		readToken, err = mcp.LoadTokenFile(*readTokenFile)
+		if err != nil {
+			return serveHTTPConfig{}, fmt.Errorf("read token file: %w", err)
+		}
+	}
+	if strings.TrimSpace(*adminTokenFile) != "" {
+		adminToken, err = mcp.LoadTokenFile(*adminTokenFile)
+		if err != nil {
+			return serveHTTPConfig{}, fmt.Errorf("admin token file: %w", err)
+		}
+	}
+
+	return serveHTTPConfig{
+		listen:     strings.TrimSpace(*listen),
+		dbPath:     *dbPath,
+		company:    *company,
+		skill:      skill,
+		appendix:   appendix,
+		readToken:  readToken,
+		adminToken: adminToken,
+	}, nil
+}
+
 func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "financeqa - PostgreSQL CLI")
 	fmt.Fprintln(out, "")
@@ -406,4 +509,5 @@ func printUsage(out io.Writer) {
 	fmt.Fprintln(out, "  financeqa ocr retry-failed [--db <dsn>] [--limit <n>]")
 	fmt.Fprintln(out, "  financeqa audit-accuracy [--db <dsn>] [--workbook <xlsx>] [--out <json>]")
 	fmt.Fprintln(out, "  financeqa serve [--db <dsn>] [--company <name>] [--skill <path>] [--appendix <path>]")
+	fmt.Fprintln(out, "  financeqa serve-http [--listen <addr>] [--read-token-file <path>] [--admin-token-file <path>]")
 }

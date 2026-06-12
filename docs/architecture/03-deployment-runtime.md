@@ -108,6 +108,60 @@ flowchart LR
     CC1 --> RT1
 ```
 
+### 远程 MCP / Split-host 部署
+
+当 OpenClaw Agent 与 `finance_qa` 不在同一台机器时，OpenClaw 机器仍需要安装 `openclaw-finance` extension runtime，但它只作为 thin connector 读取 `mcp_url/mcp_token` 并通过 HTTPS 调远端 MCP；Go binary、数据库、飞书、OSS、Gemini 等生产密钥都留在 FinanceQA 服务器。
+
+```mermaid
+flowchart LR
+    subgraph AgentHost["OpenClaw Agent Host"]
+        A1["~/.openclaw/extensions/openclaw-finance/dist/index.esm.js"]
+        A2["openclaw.json<br/>transport=remote<br/>mcp_url + mcp_token"]
+        A3["~/.openclaw/skills/finance -> repo/skill docs"]
+        A2 --> A1
+        A3 --> A1
+    end
+
+    subgraph FinanceHost["FinanceQA Host"]
+        F1["Caddy/Nginx HTTPS /mcp"]
+        F2["127.0.0.1:3009<br/>financeqa serve-http"]
+        F3["/root/finance_qa/secrets/mcp_read_token"]
+        F4["PostgreSQL / Feishu / OSS / Gemini env"]
+        F1 --> F2
+        F2 --> F3
+        F2 --> F4
+    end
+
+    A1 -- "HTTPS + Authorization: Bearer token" --> F1
+```
+
+远程首版默认按 read token 开放 `finance-query`、`finance-host-data` 和 `finance-dimensions action=list`；`finance-upload`、`finance-sync` 等写操作需要 admin token，且不建议在未设计远程文件上传协议前对普通 OpenClaw Agent 开放。
+
+远程 MCP 部署约束：
+
+```bash
+install -d -m 700 /root/finance_qa/secrets
+openssl rand -base64 48 > /root/finance_qa/secrets/mcp_read_token
+openssl rand -base64 48 > /root/finance_qa/secrets/mcp_admin_token
+chmod 600 /root/finance_qa/secrets/mcp_read_token /root/finance_qa/secrets/mcp_admin_token
+
+SERVER="<financeqa-host>" MODE=server tests/scripts/sync_openclaw_bridge_and_skill.sh
+SERVER="<openclaw-agent-host>" MODE=connector tests/scripts/sync_openclaw_bridge_and_skill.sh
+```
+
+```caddy
+financeqa.example.com {
+    handle /mcp {
+        reverse_proxy 127.0.0.1:3009 {
+            header_up Authorization {http.request.header.Authorization}
+            header_up Host {http.request.host}
+        }
+    }
+}
+```
+
+只暴露 HTTPS `/mcp`，不要直接暴露 PostgreSQL、飞书/OSS 密钥或 `127.0.0.1:3009`；token 值只存放在远端 secrets 文件和 OpenClaw host 配置中，不进入 git、部署脚本输出或工具响应。
+
 ## 默认路径
 
 1. 本地仓库根：`/Users/gaorongvc/work/other/finance_qa`
@@ -124,15 +178,15 @@ flowchart LR
 3. Go MCP 只读取 `SKILL.md` 契约版本和 appendix 是否存在，不把 appendix 正文注入响应；正文规则由 OpenClaw/Claude 的 skill 机制读取。
 4. OpenClaw/Claude 当前可调用 Go MCP 工具有 5 个：`finance-query`、`finance-host-data`、`finance-upload`、`finance-sync`、`finance-dimensions`。
 5. `finance-query` 推荐 MCP 调用格式：`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"..."}}}`。
-6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库；脚本会先在本地交叉编译 Linux `financeqa`，再上传到 `~/finance_qa/bin/financeqa`。`SERVER` 默认使用本机 SSH config alias `lzh`，也可由调用方通过环境变量覆盖；`KEY_PATH` 仅在不走 SSH config 时可选传入。仓库中不保留生产 IP、端口或私钥路径。OpenClaw extension runtime 文件拷贝到 `~/.openclaw/extensions/openclaw-finance`，OpenClaw/Claude skill 目录整体软链接到 `~/finance_qa`。脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据，并默认重启 OpenClaw Gateway 让新的 extension runtime 生效。
+6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库；脚本默认 `MODE=all`，也支持 `MODE=server` 只部署 Go binary + `financeqa-mcp.service`，以及 `MODE=connector` 只部署 OpenClaw thin plugin/skill。`SERVER` 默认使用本机 SSH config alias `lzh`，也可由调用方通过环境变量覆盖；`KEY_PATH` 仅在不走 SSH config 时可选传入。仓库中不保留生产 IP、端口、token 或私钥路径。OpenClaw extension runtime 文件拷贝到 `~/.openclaw/extensions/openclaw-finance`，OpenClaw/Claude skill 目录整体软链接到 `~/finance_qa`。脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据，并默认重启 OpenClaw Gateway 让新的 extension runtime 生效。
 7. OpenClaw extension 只保留 runtime 实文件；不要把 extension 目录、`dist/index.esm.js`、`openclaw.plugin.json` 或 `package.json` 挂成指向仓库的软链接。目录级 symlink 适用于 OpenClaw/Claude skill，因为文件级 symlink 会被 OpenClaw skill loader 判定为越过配置根目录并跳过。
-8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.0.15`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
+8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.2.0`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
 9. OpenClaw 插件发现依赖 `plugin/openclaw-finance/package.json` 的 `openclaw.extensions`，当前必须包含 `./dist/index.esm.js`；`openclaw.json` 的 install version 只负责安装元数据同步，不负责发现插件。
 
 ## 运行时要点
 
 1. OpenClaw / Claude 负责读取 skill 正文，并在需要时按相对路径读取 appendix。
-2. `financeqa serve` 负责 MCP 工具注册、调用 Go 查询/导入/同步实现、补充 `bridge_meta.capabilities`，并在需要时返回可供宿主兜底的 `finance-host-data` payload。
+2. `financeqa serve` 负责本地 stdio MCP；`financeqa serve-http` 负责远程 HTTP `/mcp`，使用 token 文件鉴权并在工具执行前做 read/admin scope 校验。
 3. `financeqa` 默认读取 PostgreSQL 配置；只有显式传入 SQLite 路径才使用本地兼容模式。
 4. 查询结果 JSON 会保留 `route_decision/probe_results/trace/executed_sql` 等审计字段，但宿主给老板回复时必须净化成业务语言。
 5. 如果 `finance-query` 无法稳定回答，Go MCP 会返回兜底结构；若 `extraction_errors` 存在，宿主不能把半截 payload 当完整事实回答。

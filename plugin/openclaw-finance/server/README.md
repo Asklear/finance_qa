@@ -6,11 +6,19 @@
 
 ## 当前线上接入方式
 
-当前线上 OpenClaw 不需要在 `openclaw.json` 里新增 `mcpServers`。OpenClaw 加载 `openclaw-finance` extension 后，由 extension 的 `dist/index.esm.js` 作为 MCP client，通过 stdio 启动 Go MCP：
+当前线上 OpenClaw 不需要在 `openclaw.json` 里新增 `mcpServers`。OpenClaw 加载 `openclaw-finance` extension 后，由 extension 的 `dist/index.esm.js` 作为 MCP client。默认本机模式通过 stdio 启动 Go MCP：
 
 ```text
 OpenClaw extension -> dist/index.esm.js -> ~/finance_qa/bin/financeqa serve
 ```
+
+当 OpenClaw Agent 与 FinanceQA 不在同一台机器时，extension 仍安装在 OpenClaw Agent 主机，但只作为 remote connector：
+
+```text
+OpenClaw extension -> HTTPS /mcp -> FinanceQA host -> financeqa serve-http
+```
+
+远程模式下 OpenClaw Agent 主机不需要 `financeqa` binary、数据库、飞书、OSS 或 Gemini 环境；这些都保留在 FinanceQA 主机。
 
 `FINANCEQA_BIN` 可覆盖二进制路径；线上固定路径是：
 
@@ -25,6 +33,17 @@ OpenClaw 这层会在 `before_prompt_build` 加强财务题约束。直接财务
 ```bash
 ~/finance_qa/bin/financeqa serve [--db <dsn>] [--company <name>]
 ```
+
+远程 MCP server 使用 HTTP transport，并要求 token 文件：
+
+```bash
+FINANCEQA_MCP_LISTEN=127.0.0.1:3009 \
+FINANCEQA_MCP_READ_TOKEN_FILE=/root/finance_qa/secrets/mcp_read_token \
+FINANCEQA_MCP_ADMIN_TOKEN_FILE=/root/finance_qa/secrets/mcp_admin_token \
+~/finance_qa/bin/financeqa serve-http
+```
+
+token 文件必须由部署环境生成并 `chmod 600`；不要把 token 写入仓库、`.env` 或日志。
 
 ### 2. OpenClaw 配置要求
 
@@ -51,7 +70,7 @@ OpenClaw 这层会在 `before_prompt_build` 加强财务题约束。直接财务
         "source": "path",
         "sourcePath": "/root/.openclaw/extensions/openclaw-finance",
         "installPath": "/root/.openclaw/extensions/openclaw-finance",
-        "version": "2.0.15"
+        "version": "2.2.0"
       }
     }
   }
@@ -59,6 +78,17 @@ OpenClaw 这层会在 `before_prompt_build` 加强财务题约束。直接财务
 ```
 
 如果这几项已经存在，部署 Go MCP runtime、skill 或二进制时不需要修改 `openclaw.json` 的运行开关。当前线上 `openclaw.json` 的 `plugins.installs.openclaw-finance.version` 是 OpenClaw install metadata，需要与 Go MCP binary 和 OpenClaw plugin metadata 同步。另一个关键点是 `package.json` 必须声明 `openclaw.extensions: ["./dist/index.esm.js"]`，这才是 OpenClaw 发现插件的入口。
+
+远程模式在 `plugins.entries.openclaw-finance.config` 下增加：
+
+```json
+{
+  "transport": "remote",
+  "mcp_url": "https://financeqa.example.com/mcp",
+  "mcp_token": "REDACTED_READ_TOKEN",
+  "timeout_ms": 60000
+}
+```
 
 发布路径固定为：OpenClaw extension 目录保留拷贝后的 runtime 实文件；`~/.openclaw/skills/finance` 和 `~/.claude/skills/finance` 使用目录级 symlink 指向 `/root/finance_qa`。不要把 extension 目录改成 symlink，也不要使用文件级 skill symlink；后者会被 OpenClaw skill loader 跳过。
 

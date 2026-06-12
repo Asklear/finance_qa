@@ -131,33 +131,26 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) error {
 		return s.sendErrorResponse(req.ID, -32602, "Invalid params", err.Error())
 	}
 
-	if s.toolRunner != nil {
-		result, err := s.toolRunner.RunTool(ctx, params.Name, params.Arguments)
-		if err != nil {
-			if toolErr, ok := err.(*ToolError); ok {
-				return s.sendErrorResponse(req.ID, toolErr.Code, toolErr.Message, toolErr.Data)
-			}
-			return s.sendErrorResponse(req.ID, -32603, "Tool failed", err.Error())
-		}
-		operation := result.Operation
-		if operation == "" {
-			operation = params.Name
-		}
-		return s.sendToolResponse(req.ID, params.Name, operation, result.Payload)
+	runner := s.toolRunner
+	if runner == nil {
+		runner = NewService(ServiceConfig{
+			DBPath:       s.dbPath,
+			Company:      s.company,
+			SkillPath:    s.skillPath,
+			AppendixPath: s.appendixPath,
+		})
 	}
 
-	switch params.Name {
-	case "finance-query":
-		return s.handleFinanceQuery(ctx, req.ID, params.Arguments)
-	case "finance-host-data":
-		return s.handleFinanceHostData(ctx, req.ID, params.Arguments)
-	case "finance-upload":
-		return s.handleFinanceUpload(ctx, req.ID, params.Arguments)
-	case "finance-sync":
-		return s.handleFinanceSync(ctx, req.ID, params.Arguments)
-	case "finance-dimensions":
-		return s.handleFinanceDimensions(ctx, req.ID, params.Arguments)
-	default:
-		return s.sendErrorResponse(req.ID, -32602, "Unknown tool", params.Name)
+	result, err := runner.RunTool(ctx, params.Name, params.Arguments)
+	if err != nil {
+		if toolErr, ok := err.(*ToolError); ok {
+			return s.sendErrorResponse(req.ID, toolErr.Code, toolErr.Message, toolErr.Data)
+		}
+		return s.sendErrorResponse(req.ID, -32603, "Tool failed", err.Error())
 	}
+	operation := result.Operation
+	if operation == "" {
+		operation = params.Name
+	}
+	return s.sendToolResponse(req.ID, params.Name, operation, result.Payload)
 }

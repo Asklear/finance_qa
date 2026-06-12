@@ -1,12 +1,33 @@
 {
   "id": "openclaw-finance",
-  "version": "2.0.15",
+  "version": "2.2.0",
   "channels": [
     "openclaw-finance"
   ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "transport": {
+        "type": "string",
+        "enum": [
+          "stdio",
+          "remote"
+        ],
+        "description": "FinanceQA MCP transport"
+      },
+      "mcp_url": {
+        "type": "string",
+        "description": "Remote FinanceQA MCP URL"
+      },
+      "mcp_token": {
+        "type": "string",
+        "description": "Bearer token for remote FinanceQA MCP auth"
+      },
+      "timeout_ms": {
+        "type": "number",
+        "description": "Remote MCP request timeout in milliseconds"
+      }
+    }
   }
 }

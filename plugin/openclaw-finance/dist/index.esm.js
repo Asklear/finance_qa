@@ -8,6 +8,90 @@ const PLUGIN_ID = "openclaw-finance";
 // Path to financeqa binary (auto-detect or from env)
 const FINANCEQA_BIN = process.env.FINANCEQA_BIN || findFinanceQABinary();
 
+function isRecord(value) {
+  return value !== null && typeof value === "object";
+}
+
+function getPath(obj, pathParts) {
+  let current = obj;
+  for (const key of pathParts) {
+    if (!isRecord(current) || !(key in current)) return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+function normalizePluginConfig(input) {
+  if (!isRecord(input)) {
+    return { transport: "stdio", timeout_ms: 60000 };
+  }
+  const mcpURL = typeof input.mcp_url === "string" ? input.mcp_url.trim() : "";
+  const mcpToken = typeof input.mcp_token === "string" ? input.mcp_token.trim() : "";
+  const transportValue = typeof input.transport === "string" ? input.transport.trim() : "";
+  const transport = transportValue || (mcpURL || mcpToken ? "remote" : "stdio");
+  const timeout = Number(input.timeout_ms ?? 60000);
+  const timeout_ms = Number.isFinite(timeout) && timeout > 0 ? timeout : 60000;
+  if (transport !== "remote") {
+    return { transport: "stdio", timeout_ms };
+  }
+  if (!mcpURL || !mcpToken) {
+    throw new Error('Finance plugin remote config missing: expected "mcp_url" and "mcp_token".');
+  }
+  return {
+    transport: "remote",
+    mcp_url: validateMcpURL(mcpURL),
+    mcp_token: mcpToken,
+    timeout_ms
+  };
+}
+
+function tryRuntimeConfig(runtime) {
+  const direct = runtime.getPluginConfig?.(PLUGIN_ID);
+  if (direct !== undefined) return normalizePluginConfig(direct);
+
+  const configFromGetter = runtime.getConfig?.();
+  const getterNested = getPath(configFromGetter, ["plugins", "entries", PLUGIN_ID, "config"]);
+  if (getterNested !== undefined) return normalizePluginConfig(getterNested);
+
+  if (isRecord(runtime.config)) {
+    const loadedConfig = runtime.config.loadConfig?.();
+    const loadedNested = getPath(loadedConfig, ["plugins", "entries", PLUGIN_ID, "config"]);
+    if (loadedNested !== undefined) return normalizePluginConfig(loadedNested);
+    const configGetNested = getPath(runtime.config.get?.(), ["plugins", "entries", PLUGIN_ID, "config"]);
+    if (configGetNested !== undefined) return normalizePluginConfig(configGetNested);
+  }
+
+  for (const container of [runtime.config, runtime.settings, runtime.state?.config, runtime.plugins]) {
+    const nested = getPath(container, ["plugins", "entries", PLUGIN_ID, "config"]);
+    if (nested !== undefined) return normalizePluginConfig(nested);
+  }
+  return null;
+}
+
+function loadPluginConfig(runtime) {
+  if (isRecord(runtime)) {
+    const resolved = tryRuntimeConfig(runtime);
+    if (resolved) return resolved;
+  }
+  return { transport: "stdio", timeout_ms: 60000 };
+}
+
+function validateMcpURL(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`Invalid mcp_url: ${value}`);
+  }
+  if (!/^https?:$/.test(parsed.protocol)) {
+    throw new Error(`Invalid mcp_url protocol: ${parsed.protocol}`);
+  }
+  if (!parsed.pathname.endsWith("/mcp")) {
+    throw new Error(`Invalid mcp_url endpoint: expected path ending with /mcp, got ${parsed.pathname || "/"}`);
+  }
+  return parsed.toString();
+}
+
 function findFinanceQABinary() {
   const pluginDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(pluginDir, "../../..");
@@ -193,15 +277,164 @@ class MCPClient {
   }
 }
 
+class RemoteMCPClient {
+  constructor({ url, token, timeoutMs = 60000 }) {
+    this.url = validateMcpURL(url);
+    this.token = String(token || "").trim();
+    if (!this.token) {
+      throw new Error("Remote FinanceQA MCP token is required");
+    }
+    this.timeoutMs = timeoutMs;
+    this.requestId = 0;
+    this.sessionId = "";
+    this.initialized = false;
+  }
+
+  async start() {
+    if (this.initialized) return;
+    await this.sendRequest("initialize", {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: "openclaw-finance", version: "1.0" }
+    }, { skipStart: true });
+    this.initialized = true;
+  }
+
+  async callTool(name, args) {
+    if (!this.initialized) {
+      await this.start();
+    }
+    return this.sendRequest("tools/call", {
+      name,
+      arguments: args || {}
+    });
+  }
+
+  async sendRequest(method, params, options = {}) {
+    if (!options.skipStart && !this.initialized) {
+      await this.start();
+    }
+
+    this.requestId++;
+    const request = {
+      jsonrpc: "2.0",
+      id: this.requestId,
+      method,
+      params
+    };
+    return this.postJSONRPC(request);
+  }
+
+  async postJSONRPC(request) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const headers = {
+        "Authorization": `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream"
+      };
+      if (this.sessionId) {
+        headers["Mcp-Session-Id"] = this.sessionId;
+      }
+
+      let response;
+      try {
+        response = await fetch(this.url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(request),
+          signal: controller.signal
+        });
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          throw new Error(`Remote FinanceQA MCP request timed out after ${this.timeoutMs}ms`);
+        }
+        throw new Error(`Remote FinanceQA MCP network error: ${error?.message || String(error)}`);
+      }
+
+      const nextSessionId = response.headers.get("Mcp-Session-Id");
+      if (nextSessionId) {
+        this.sessionId = nextSessionId;
+      }
+      const contentType = response.headers.get("content-type") || "";
+      const rawBody = await response.text();
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`Remote FinanceQA MCP auth failed: HTTP ${response.status}`);
+      }
+      if (!response.ok) {
+        throw new Error(`Remote FinanceQA MCP endpoint failed: HTTP ${response.status} ${rawBody.slice(0, 200)}`);
+      }
+
+      const payload = contentType.includes("text/event-stream")
+        ? parseSsePayload(rawBody)
+        : parseJSONPayload(rawBody);
+      if (payload?.error) {
+        throw new Error(payload.error.message || JSON.stringify(payload.error));
+      }
+      return payload?.result;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function parseJSONPayload(rawBody) {
+  try {
+    return JSON.parse(rawBody);
+  } catch (error) {
+    throw new Error(`Remote FinanceQA MCP returned invalid JSON: ${error.message}`);
+  }
+}
+
+function parseSsePayload(rawBody) {
+  const chunks = [];
+  let current = [];
+  for (const line of String(rawBody || "").split(/\r?\n/)) {
+    if (line === "") {
+      if (current.length) {
+        chunks.push(current.join("\n"));
+        current = [];
+      }
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      current.push(line.slice(5).trimStart());
+    }
+  }
+  if (current.length) chunks.push(current.join("\n"));
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    try {
+      return JSON.parse(chunks[i]);
+    } catch {
+      continue;
+    }
+  }
+  throw new Error("Remote FinanceQA MCP SSE response did not contain valid JSON");
+}
+
 // Global MCP client instance (lazy init)
 let mcpClient = null;
+let mcpClientKey = "";
+let pluginRuntime = null;
 let latestFinanceQuestionForTool = "";
 
 async function getMCPClient() {
-  if (!mcpClient) {
-    mcpClient = new MCPClient(FINANCEQA_BIN);
-    await mcpClient.start();
+  const config = loadPluginConfig(pluginRuntime);
+  const nextKey = config.transport === "remote"
+    ? `remote\n${config.mcp_url}\n${config.mcp_token}`
+    : `stdio\n${FINANCEQA_BIN}`;
+  if (mcpClient && mcpClientKey === nextKey) {
+    return mcpClient;
   }
+  if (mcpClient?.stop) {
+    mcpClient.stop();
+  }
+  mcpClientKey = nextKey;
+  mcpClient = config.transport === "remote"
+    ? new RemoteMCPClient({ url: config.mcp_url, token: config.mcp_token, timeoutMs: config.timeout_ms })
+    : new MCPClient(FINANCEQA_BIN);
+  await mcpClient.start();
   return mcpClient;
 }
 
@@ -452,6 +685,8 @@ const plugin = {
   name: "Finance",
   description: "Finance MCP plugin (native, no Python bridge)",
   register(api) {
+    pluginRuntime = api;
+
     api.registerTool(createFinanceTool(
       "finance-query",
       "Boss finance QA. Call this first for finance questions. When the returned JSON has final_answer or boss_reply_text, preserve key amounts, period, business basis, uncertainty, and source notes; surrounding wording may be rephrased. When it has contract_continuity_candidates, describe them as same-project candidates/references, not a confirmed counterparty mapping.",
@@ -513,4 +748,4 @@ const plugin = {
   }
 };
 
-export { plugin as default };
+export { plugin as default, RemoteMCPClient };

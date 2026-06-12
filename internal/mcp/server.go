@@ -4,7 +4,6 @@ package mcp
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,10 +11,6 @@ import (
 	"path/filepath"
 
 	"financeqa/internal/buildinfo"
-	"financeqa/internal/db"
-	"financeqa/internal/dimensions"
-	"financeqa/internal/ingest"
-	"financeqa/internal/query"
 	"financeqa/internal/support"
 )
 
@@ -173,143 +168,6 @@ func (s *Server) handleInitialize(req *Request) error {
 		},
 	}
 	return s.sendResponse(req.ID, result)
-}
-
-func (s *Server) handleFinanceQuery(ctx context.Context, id interface{}, args map[string]any) error {
-	queryStr, _ := args["query"].(string)
-	if queryStr == "" {
-		return s.sendErrorResponse(id, -32602, "Missing required argument", "query")
-	}
-
-	engine, err := query.NewEngine(s.dbPath, s.company)
-	if err != nil {
-		return s.sendErrorResponse(id, -32603, "Failed to create query engine", err.Error())
-	}
-	defer engine.Close()
-
-	result := engine.Query(queryStr)
-
-	// Return result as tool response
-	return s.sendToolResponse(id, "finance-query", "query", result)
-}
-
-func (s *Server) handleFinanceHostData(ctx context.Context, id interface{}, args map[string]any) error {
-	queryStr, _ := args["query"].(string)
-	from, _ := args["from"].(string)
-	to, _ := args["to"].(string)
-
-	if queryStr == "" {
-		queryStr = "输出全量财报原始数据给宿主LLM"
-	}
-
-	engine, err := query.NewEngine(s.dbPath, s.company)
-	if err != nil {
-		return s.sendErrorResponse(id, -32603, "Failed to create query engine", err.Error())
-	}
-	defer engine.Close()
-
-	result := engine.HostLLMPayload(from, to, queryStr)
-	return s.sendToolResponse(id, "finance-host-data", "host-data", result)
-}
-
-func (s *Server) handleFinanceUpload(ctx context.Context, id interface{}, args map[string]any) error {
-	filePath, _ := args["file"].(string)
-	if filePath == "" {
-		return s.sendErrorResponse(id, -32602, "Missing required argument", "file")
-	}
-
-	importer, err := s.newImporter(ctx)
-	if err != nil {
-		return s.sendErrorResponse(id, -32603, "Failed to open database", err.Error())
-	}
-	defer importer.close()
-
-	summary, err := importer.ingest.ImportFileWithOptions(ctx, s.dbPath, filePath, importOptionsFromArgs(args))
-	if err != nil {
-		return s.sendErrorResponse(id, -32603, "Import failed", err.Error())
-	}
-
-	return s.sendToolResponse(id, "finance-upload", "upload", summary)
-}
-
-func (s *Server) handleFinanceSync(ctx context.Context, id interface{}, args map[string]any) error {
-	dirPath, _ := args["directory"].(string)
-	if dirPath == "" {
-		return s.sendErrorResponse(id, -32602, "Missing required argument", "directory")
-	}
-
-	importer, err := s.newImporter(ctx)
-	if err != nil {
-		return s.sendErrorResponse(id, -32603, "Failed to open database", err.Error())
-	}
-	defer importer.close()
-
-	summary, err := importer.ingest.SyncDirectoryWithOptions(ctx, s.dbPath, dirPath, importOptionsFromArgs(args))
-	if err != nil {
-		return s.sendErrorResponse(id, -32603, "Sync failed", err.Error())
-
-	}
-
-	return s.sendToolResponse(id, "finance-sync", "sync", summary)
-}
-
-type mcpImporter struct {
-	ingest *ingest.Importer
-	db     *sql.DB
-}
-
-func (s *Server) newImporter(ctx context.Context) (*mcpImporter, error) {
-	dbConn, err := db.Open(ctx, s.dbPath)
-	if err != nil {
-		return nil, err
-	}
-	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(dbConn))
-	return &mcpImporter{
-		ingest: ingest.NewImporter(manager),
-		db:     dbConn,
-	}, nil
-}
-
-func (i *mcpImporter) close() {
-	if i != nil && i.db != nil {
-		i.db.Close()
-	}
-}
-
-func importOptionsFromArgs(args map[string]any) ingest.ImportOptions {
-	company, _ := args["company"].(string)
-	incremental, _ := args["incremental"].(bool)
-	return ingest.ImportOptions{
-		Incremental:     incremental,
-		CompanyOverride: company,
-	}
-}
-
-func (s *Server) handleFinanceDimensions(ctx context.Context, id interface{}, args map[string]any) error {
-	action, _ := args["action"].(string)
-
-	dbConn, err := db.Open(ctx, s.dbPath)
-	if err != nil {
-		return s.sendErrorResponse(id, -32603, "Failed to open database", err.Error())
-	}
-	defer dbConn.Close()
-
-	manager := dimensions.NewManager(dimensions.NewSQLiteRepository(dbConn))
-
-	switch action {
-	case "list":
-		opts := dimensions.DimensionQueryOptions{
-			Limit: 100,
-		}
-		result, err := manager.ListDimensions(ctx, opts)
-		if err != nil {
-			return s.sendErrorResponse(id, -32603, "Failed to list dimensions", err.Error())
-		}
-		return s.sendToolResponse(id, "finance-dimensions", "dimensions:list", result)
-
-	default:
-		return s.sendErrorResponse(id, -32602, "Unknown dimensions action", action)
-	}
 }
 
 func (s *Server) logError(format string, args ...any) {

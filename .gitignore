@@ -32,6 +32,7 @@ uploads/
 # Test artifacts
 test_data/
 test_questions*.txt
+outputs/
 scratch/
 tmp/
 docs/superpowers/

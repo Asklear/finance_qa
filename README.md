@@ -571,9 +571,14 @@ Go MCP 层（`financeqa serve`）会额外补充：
 
 ## 七、MCP 模式部署（推荐）
 
-系统已支持 **MCP (Model Context Protocol)** 模式。当前线上 OpenClaw 不通过 `openclaw.json.mcpServers` 注册独立 server，而是加载 `openclaw-finance` extension；extension 内部作为 MCP client，通过 stdio 启动 `~/finance_qa/bin/financeqa serve`，无需 Python bridge 脚本。
+系统已支持 **MCP (Model Context Protocol)** 模式。当前线上 OpenClaw 不通过 `openclaw.json.mcpServers` 注册独立 server，而是加载 `openclaw-finance` extension；extension 内部作为 MCP client，可选择本机 stdio 或远程 HTTPS MCP。
+
+- 同机部署：OpenClaw extension 通过 stdio 启动 `~/finance_qa/bin/financeqa serve`，兼容既有路径。
+- 分机部署：OpenClaw extension 只作为 thin connector，通过 `mcp_url/mcp_token` 调 FinanceQA 主机上的 `financeqa serve-http`。OpenClaw Agent 主机不需要数据库、飞书、OSS、Gemini 环境，也不需要 `financeqa` Go binary。
 
 ### 1. MCP 架构
+
+本机 stdio 兼容路径：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -600,7 +605,32 @@ Go MCP 层（`financeqa serve`）会额外补充：
 └─────────────────────────────────────────────────────────────┘
 ```
 
+分机远程 MCP 路径：
+
+```text
+OpenClaw Agent Host
+  ~/.openclaw/extensions/openclaw-finance/
+  ~/.openclaw/openclaw.json
+    plugins.entries.openclaw-finance.config:
+      transport=remote
+      mcp_url=https://financeqa.example.com/mcp
+      mcp_token=<read token>
+        |
+        | HTTPS + Authorization: Bearer <token>
+        v
+FinanceQA Host
+  Caddy/Nginx /mcp -> 127.0.0.1:3009/mcp
+  systemd financeqa-mcp.service
+  /root/finance_qa/bin/financeqa serve-http
+  /root/finance_qa/secrets/mcp_read_token
+  /root/finance_qa/secrets/mcp_admin_token
+```
+
+远程默认使用 read token，只开放 `finance-query`、`finance-host-data` 和 `finance-dimensions action=list`。`finance-upload`、`finance-sync` 和维度写操作需要 admin token，不建议给普通 OpenClaw Agent 配置。
+
 ### 2. OpenClaw 部署步骤
+
+#### 同机 stdio 部署
 
 ```bash
 # 1. 构建带符号剥离的二进制（减小体积 30-50%）
@@ -618,6 +648,70 @@ SERVER="$SERVER" tests/scripts/sync_openclaw_bridge_and_skill.sh
 # 4. 核验 openclaw.json 运行配置，并同步 OpenClaw install metadata 版本
 #    脚本只读校验 skill 路径和 openclaw-finance 插件开关；只写 plugins.installs.openclaw-finance.version/installedAt。
 ```
+
+#### 分机 remote MCP 部署
+
+FinanceQA 主机先生成 token 文件。token 只放远端 secrets 文件，不提交、不写入 `.env`、不贴到日志：
+
+```bash
+install -d -m 700 /root/finance_qa/secrets
+openssl rand -base64 48 > /root/finance_qa/secrets/mcp_read_token
+openssl rand -base64 48 > /root/finance_qa/secrets/mcp_admin_token
+chmod 600 /root/finance_qa/secrets/mcp_read_token /root/finance_qa/secrets/mcp_admin_token
+```
+
+部署 FinanceQA MCP server：
+
+```bash
+SERVER="<financeqa-host>" MODE=server tests/scripts/sync_openclaw_bridge_and_skill.sh
+
+ssh "<financeqa-host>" 'systemctl status financeqa-mcp.service --no-pager'
+ssh "<financeqa-host>" 'curl -i http://127.0.0.1:3009/health'
+```
+
+Caddy 只暴露 HTTPS `/mcp`，不要直接暴露 PostgreSQL 或 `127.0.0.1:3009`：
+
+```caddy
+financeqa.example.com {
+    handle /mcp {
+        reverse_proxy 127.0.0.1:3009 {
+            header_up Authorization {http.request.header.Authorization}
+            header_up Host {http.request.host}
+        }
+    }
+}
+```
+
+OpenClaw Agent 主机只部署 connector runtime 和 skill：
+
+```bash
+SERVER="<openclaw-agent-host>" MODE=connector tests/scripts/sync_openclaw_bridge_and_skill.sh
+```
+
+OpenClaw Agent 主机 `~/.openclaw/openclaw.json` 的插件配置增加 remote config：
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-finance": {
+        "enabled": true,
+        "hooks": {
+          "allowPromptInjection": true
+        },
+        "config": {
+          "transport": "remote",
+          "mcp_url": "https://financeqa.example.com/mcp",
+          "mcp_token": "REDACTED_READ_TOKEN",
+          "timeout_ms": 60000
+        }
+      }
+    }
+  }
+}
+```
+
+`MODE=all` 适合同一台机器同时作为 FinanceQA server 和 OpenClaw connector；`MODE=server` 只部署 Go binary + `financeqa-mcp.service`；`MODE=connector` 只同步 OpenClaw extension runtime、skill 和 wrapper。
 
 线上 `~/.openclaw/openclaw.json` 关键配置：
 
@@ -642,14 +736,14 @@ SERVER="$SERVER" tests/scripts/sync_openclaw_bridge_and_skill.sh
         "source": "path",
         "sourcePath": "/root/.openclaw/extensions/openclaw-finance",
         "installPath": "/root/.openclaw/extensions/openclaw-finance",
-        "version": "2.0.12"
+        "version": "2.1.1"
       }
     }
   }
 }
 ```
 
-说明：`plugin/openclaw-finance/server/README.md` 里的旧 `mcpServers` 示例已废弃；当前 extension 会自行启动 Go MCP。
+说明：`plugin/openclaw-finance/server/README.md` 里的旧 `mcpServers` 示例已废弃；当前 extension 会自行连接 Go MCP，本机模式走 stdio，远程模式走 HTTPS `/mcp`。
 
 ### 3. 构建优化
 
@@ -680,8 +774,8 @@ go build -ldflags "-s -w" -o bin/financeqa ./cmd/financeqa
 
 ### 5. 版本兼容性
 
-- finance_qa / Go MCP: `~/finance_qa/bin/financeqa version`（当前 `2.0.12`）
-- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`（当前 `2.0.12`，且 `openclaw.extensions` 必须包含 `./dist/index.esm.js` 才能被 OpenClaw 发现）
+- finance_qa / Go MCP: `~/finance_qa/bin/financeqa version`（当前 `2.1.1`）
+- OpenClaw Plugin: `~/.openclaw/extensions/openclaw-finance/package.json`（当前 `2.1.1`，且 `openclaw.extensions` 必须包含 `./dist/index.esm.js` 才能被 OpenClaw 发现）
 - OpenClaw Config: `~/.openclaw/openclaw.json` 的 `plugins.installs.openclaw-finance.version` 需与插件版本同步；运行配置只校验 `skills.load.extraDirs`、`plugins.entries.openclaw-finance.enabled` 和 `hooks.allowPromptInjection`
 
 Go MCP、OpenClaw Plugin metadata 与 `openclaw.json` 中的 OpenClaw install metadata semver 需要保持同步；`plugins.entries` 运行开关只做启用配置校验。

@@ -119,8 +119,8 @@ func TestOpenClawFinancePluginMetadataUsesCurrentMajorVersion(t *testing.T) {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("parse plugin metadata %s: %v", path, err)
 		}
-		if got := doc["version"]; got != "2.0.15" {
-			t.Fatalf("%s version = %v, want 2.0.15", path, got)
+		if got := doc["version"]; got != "2.2.0" {
+			t.Fatalf("%s version = %v, want 2.2.0", path, got)
 		}
 		if strings.HasSuffix(path, "package.json") {
 			packageDoc = doc
@@ -371,6 +371,10 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 
 	for _, want := range []string{
 		`SERVER="${SERVER:-lzh}"`,
+		`MODE="${MODE:-all}"`,
+		`all|server|connector) ;;`,
+		`deploy_server()`,
+		`deploy_connector()`,
 		`ssh_remote()`,
 		`scp_remote()`,
 		`if [[ -n "${KEY_PATH:-}" ]]; then`,
@@ -379,24 +383,34 @@ func TestSyncScriptPublishesOpenClawFinancePluginRuntime(t *testing.T) {
 		`LOCAL_PLUGIN_MANIFEST="$ROOT_DIR/plugin/openclaw-finance/openclaw.plugin.json"`,
 		`LOCAL_CLAUDE_WRAPPER="$ROOT_DIR/tests/scripts/claude_finance_final_answer.sh"`,
 		`LOCAL_ONLINE_CHECKER="$ROOT_DIR/tests/scripts/run_online_agent_final_answer_check.py"`,
+		`LOCAL_MCP_SYSTEMD="$ROOT_DIR/deploy/systemd/financeqa-mcp.service"`,
 		`scp_remote "$LOCAL_PLUGIN_DIST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js"`,
 		`scp_remote "$LOCAL_PLUGIN_MANIFEST" "$SERVER:$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json"`,
 		`scp_remote "$LOCAL_CLAUDE_WRAPPER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/claude_finance_final_answer.sh"`,
 		`scp_remote "$LOCAL_ONLINE_CHECKER" "$SERVER:$REMOTE_REPO_DIR/tests/scripts/run_online_agent_final_answer_check.py"`,
+		`if deploy_connector; then`,
 		`if [ -L '$REMOTE_OPENCLAW_PLUGIN_DIR' ]; then rm -f '$REMOTE_OPENCLAW_PLUGIN_DIR'; fi;`,
 		`cp '$REMOTE_REPO_DIR/plugin/openclaw-finance/dist/index.esm.js' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js'`,
 		`cp '$REMOTE_REPO_DIR/plugin/openclaw-finance/openclaw.plugin.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/openclaw.plugin.json'`,
 		`cp '$REMOTE_REPO_DIR/plugin/openclaw-finance/package.json' '$REMOTE_OPENCLAW_PLUGIN_DIR/package.json'`,
 		`REMOTE_FINANCEQA_BIN="${REMOTE_FINANCEQA_BIN:-$REMOTE_REPO_DIR/bin/financeqa}"`,
 		`REMOTE_FINANCEQA_UPLOAD="${REMOTE_FINANCEQA_UPLOAD:-$REMOTE_FINANCEQA_BIN.upload.$$}"`,
+		`REMOTE_MCP_READ_TOKEN_FILE="${REMOTE_MCP_READ_TOKEN_FILE:-$REMOTE_REPO_DIR/secrets/mcp_read_token}"`,
+		`REMOTE_MCP_ADMIN_TOKEN_FILE="${REMOTE_MCP_ADMIN_TOKEN_FILE:-$REMOTE_REPO_DIR/secrets/mcp_admin_token}"`,
 		`LOCAL_FINANCEQA_BIN="$(mktemp`,
+		`if deploy_server; then`,
 		`GOOS=linux GOARCH=amd64 go build -o "$LOCAL_FINANCEQA_BIN" ./cmd/financeqa/...`,
 		`REMOTE_FINANCEQA_SERVE_PATTERN`,
 		`pgrep -f '$REMOTE_FINANCEQA_SERVE_PATTERN'`,
 		`scp_remote "$LOCAL_FINANCEQA_BIN" "$SERVER:$REMOTE_FINANCEQA_UPLOAD"`,
 		`mv -f '$REMOTE_FINANCEQA_UPLOAD' '$REMOTE_FINANCEQA_BIN'`,
 		`rm -f '$REMOTE_REPO_DIR/financeqa'`,
-		`'$REMOTE_FINANCEQA_BIN' serve`,
+		`test -s \"\$token_file\"`,
+		`stat -c '%a'`,
+		`install -m 0644 /tmp/financeqa-mcp.service.$$ '$REMOTE_SYSTEMD_DIR/financeqa-mcp.service'`,
+		`systemctl enable --now financeqa-mcp.service`,
+		`systemctl restart financeqa-mcp.service`,
+		`grep -n 'RemoteMCPClient' '$REMOTE_OPENCLAW_PLUGIN_DIR/dist/index.esm.js'`,
 		`pkg.openclaw?.extensions`,
 		`verify OpenClaw config references the finance plugin and skill path`,
 		`cfg.plugins?.entries?.['openclaw-finance']?.enabled === true`,
