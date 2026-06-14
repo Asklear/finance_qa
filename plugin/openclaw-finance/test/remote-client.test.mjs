@@ -1,8 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
-import { RemoteMCPClient } from "../dist/index.esm.js";
+import { RemoteMCPClient, normalizePluginConfig } from "../dist/index.esm.js";
+
+test("normalizePluginConfig reads remote bearer token from mcp_token_file", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "finance-token-file-"));
+  const tokenFile = path.join(dir, "mcp_read_token");
+  try {
+    await writeFile(tokenFile, " file-token-value \n", { mode: 0o600 });
+
+    const config = normalizePluginConfig({
+      transport: "remote",
+      mcp_url: "http://127.0.0.1:3009/mcp",
+      mcp_token_file: tokenFile
+    });
+
+    assert.equal(config.transport, "remote");
+    assert.equal(config.mcp_url, "http://127.0.0.1:3009/mcp");
+    assert.equal(config.mcp_token, "file-token-value");
+    assert.equal(config.mcp_token_file, tokenFile);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("RemoteMCPClient sends bearer auth, accept header, and reuses MCP session id", async () => {
   const seen = [];

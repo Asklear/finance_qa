@@ -24,6 +24,10 @@
         "type": "string",
         "description": "Bearer token for remote FinanceQA MCP auth"
       },
+      "mcp_token_file": {
+        "type": "string",
+        "description": "Path to a file containing the remote FinanceQA MCP bearer token"
+      },
       "timeout_ms": {
         "type": "number",
         "description": "Remote MCP request timeout in milliseconds"

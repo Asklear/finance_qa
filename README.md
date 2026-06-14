@@ -574,7 +574,7 @@ Go MCP 层（`financeqa serve`）会额外补充：
 系统已支持 **MCP (Model Context Protocol)** 模式。当前线上 OpenClaw 不通过 `openclaw.json.mcpServers` 注册独立 server，而是加载 `openclaw-finance` extension；extension 内部作为 MCP client，可选择本机 stdio 或远程 HTTPS MCP。
 
 - 同机部署：OpenClaw extension 通过 stdio 启动 `~/finance_qa/bin/financeqa serve`，兼容既有路径。
-- 分机部署：OpenClaw extension 只作为 thin connector，通过 `mcp_url/mcp_token` 调 FinanceQA 主机上的 `financeqa serve-http`。OpenClaw Agent 主机不需要数据库、飞书、OSS、Gemini 环境，也不需要 `financeqa` Go binary。
+- 分机部署：OpenClaw extension 只作为 thin connector，通过 `mcp_url` + `mcp_token_file` 调 FinanceQA 主机上的 `financeqa serve-http`。OpenClaw Agent 主机不需要数据库、飞书、OSS、Gemini 环境，也不需要 `financeqa` Go binary。
 
 ### 1. MCP 架构
 
@@ -614,7 +614,7 @@ OpenClaw Agent Host
     plugins.entries.openclaw-finance.config:
       transport=remote
       mcp_url=https://financeqa.example.com/mcp
-      mcp_token=<read token>
+      mcp_token_file=/root/finance_qa/secrets/mcp_read_token
         |
         | HTTPS + Authorization: Bearer <token>
         v
@@ -702,7 +702,7 @@ OpenClaw Agent 主机 `~/.openclaw/openclaw.json` 的插件配置增加 remote c
         "config": {
           "transport": "remote",
           "mcp_url": "https://financeqa.example.com/mcp",
-          "mcp_token": "REDACTED_READ_TOKEN",
+          "mcp_token_file": "/root/finance_qa/secrets/mcp_read_token",
           "timeout_ms": 60000
         }
       }

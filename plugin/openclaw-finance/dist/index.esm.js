@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const PLUGIN_ID = "openclaw-finance";
 
@@ -27,20 +27,24 @@ function normalizePluginConfig(input) {
   }
   const mcpURL = typeof input.mcp_url === "string" ? input.mcp_url.trim() : "";
   const mcpToken = typeof input.mcp_token === "string" ? input.mcp_token.trim() : "";
+  const mcpTokenFile = typeof input.mcp_token_file === "string" ? input.mcp_token_file.trim() : "";
   const transportValue = typeof input.transport === "string" ? input.transport.trim() : "";
-  const transport = transportValue || (mcpURL || mcpToken ? "remote" : "stdio");
+  const transport = transportValue || (mcpURL || mcpToken || mcpTokenFile ? "remote" : "stdio");
   const timeout = Number(input.timeout_ms ?? 60000);
   const timeout_ms = Number.isFinite(timeout) && timeout > 0 ? timeout : 60000;
   if (transport !== "remote") {
     return { transport: "stdio", timeout_ms };
   }
-  if (!mcpURL || !mcpToken) {
-    throw new Error('Finance plugin remote config missing: expected "mcp_url" and "mcp_token".');
+  const resolvedTokenFile = mcpTokenFile ? resolveTokenFilePath(mcpTokenFile) : "";
+  const token = resolvedTokenFile ? readTokenFile(resolvedTokenFile) : mcpToken;
+  if (!mcpURL || !token) {
+    throw new Error('Finance plugin remote config missing: expected "mcp_url" and either "mcp_token" or "mcp_token_file".');
   }
   return {
     transport: "remote",
     mcp_url: validateMcpURL(mcpURL),
-    mcp_token: mcpToken,
+    mcp_token: token,
+    ...(resolvedTokenFile ? { mcp_token_file: resolvedTokenFile } : {}),
     timeout_ms
   };
 }
@@ -90,6 +94,29 @@ function validateMcpURL(value) {
     throw new Error(`Invalid mcp_url endpoint: expected path ending with /mcp, got ${parsed.pathname || "/"}`);
   }
   return parsed.toString();
+}
+
+function resolveTokenFilePath(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed === "~") return process.env.HOME || trimmed;
+  if (trimmed.startsWith("~/")) {
+    return path.join(process.env.HOME || "", trimmed.slice(2));
+  }
+  return path.resolve(trimmed);
+}
+
+function readTokenFile(filePath) {
+  let token;
+  try {
+    token = readFileSync(filePath, "utf8").trim();
+  } catch (error) {
+    throw new Error(`Finance plugin remote token file could not be read: ${filePath}: ${error?.message || String(error)}`);
+  }
+  if (!token) {
+    throw new Error(`Finance plugin remote token file is empty: ${filePath}`);
+  }
+  return token;
 }
 
 function findFinanceQABinary() {
@@ -748,4 +775,4 @@ const plugin = {
   }
 };
 
-export { plugin as default, RemoteMCPClient };
+export { plugin as default, normalizePluginConfig, RemoteMCPClient };
