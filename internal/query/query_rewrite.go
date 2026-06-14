@@ -87,7 +87,7 @@ func RewriteBossQueryWithConfig(question string, anchor time.Time, cfg RuleConfi
 		entity = ""
 	}
 	metric := detectBossMetricWithConfig(q, cfg)
-	perspective, sourceConstraint := detectBossPerspectiveAndSource(q, metric)
+	perspective, sourceConstraint := detectBossPerspectiveAndSourceWithConfig(q, metric, cfg)
 	scope := detectBossScopeWithConfig(q, entity, cfg)
 	granularity := detectBossGranularity(q, metric, hasSubPeriod)
 
@@ -147,6 +147,10 @@ func detectBossMetricWithConfig(q string, cfg RuleConfig) BossMetric {
 }
 
 func detectBossPerspectiveAndSource(q string, metric BossMetric) (BossPerspective, string) {
+	return detectBossPerspectiveAndSourceWithConfig(q, metric, getRuleConfig())
+}
+
+func detectBossPerspectiveAndSourceWithConfig(q string, metric BossMetric, cfg RuleConfig) (BossPerspective, string) {
 	switch {
 	case shouldUsePreciseBalanceQuestion(q):
 		return BossPerspectiveOfficialThenEvidence, BossSourceBalance
@@ -162,6 +166,10 @@ func detectBossPerspectiveAndSource(q string, metric BossMetric) (BossPerspectiv
 		return BossPerspectiveOfficialThenEvidence, BossSourceBalance
 	case metric == BossMetricTax || metric == BossMetricHRCost:
 		return BossPerspectiveFinancialAccount, BossSourceJournal
+	case metric == BossMetricProfit && shouldUseContractMarginAnalysisQuestion(q, cfg):
+		return BossPerspectiveContractFirst, ""
+	case metric == BossMetricProfit && containsAny(q, cfg.ContractSummaryKeywords()):
+		return BossPerspectiveContractFirst, ""
 	case isBossContractFirstMetric(metric):
 		return BossPerspectiveContractFirst, ""
 	default:
@@ -258,7 +266,7 @@ func shouldBossRewriteProbe(metric BossMetric, perspective BossPerspective) bool
 
 func isBossContractFirstMetric(metric BossMetric) bool {
 	switch metric {
-	case BossMetricRevenue, BossMetricCost, BossMetricProfit, BossMetricReceipts, BossMetricPayments, BossMetricInvoice, BossMetricARAP:
+	case BossMetricRevenue, BossMetricCost, BossMetricReceipts, BossMetricPayments, BossMetricInvoice, BossMetricARAP:
 		return true
 	default:
 		return false

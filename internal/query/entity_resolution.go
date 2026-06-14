@@ -179,7 +179,8 @@ func looksLikeTemporalMetricEntity(entity string) bool {
 		"q1", "q2", "q3", "q4",
 		"季度", "第一季度", "第二季度", "第三季度", "第四季度",
 		"上半年", "下半年", "全年", "全年度", "整年", "年度",
-		"今年", "本年", "累计", "年内",
+		"今年", "本年", "去年", "累计", "年内",
+		"本月", "这个月", "当月", "上个月", "上月", "上一个完整自然月", "最新月份", "最新的月份",
 	}
 	for _, keyword := range temporalKeywords {
 		if strings.ToLower(normalizeEntityText(keyword)) == normalized {

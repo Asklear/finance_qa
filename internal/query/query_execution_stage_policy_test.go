@@ -16,6 +16,44 @@ func TestResolveSourceExecutionStagesPrefersOrchestratedContractAggregate(t *tes
 			PreferContractAggregate: true,
 			PeriodFrom:              "2025-10",
 			PeriodTo:                "2025-10",
+			RouteDecision: RouteDecision{
+				SelectedSource: BossSourceContractAggregate,
+				ProbeResults: []SourceProbeResult{
+					{Source: BossSourceContractAggregate, CanAnswer: true},
+				},
+			},
+		},
+	}
+
+	stages := resolveSourceExecutionStages(ctx)
+	want := []executionStage{
+		executionStageOrchestrator,
+	}
+	assertExecutionStagesEqual(t, stages, want)
+}
+
+func TestResolveSourceExecutionStagesKeepsCoreMetricFallbackWhenContractAggregateMissing(t *testing.T) {
+	cfg := getRuleConfig()
+	cfg.MetricKeywordLexicon[metricKeyProfit] = []string{"净赚"}
+	ctx := queryExecutionContext{
+		q:             "2026年2月净赚是多少？",
+		hasRealEntity: false,
+		entity:        "",
+		from:          "2026-02",
+		to:            "2026-02",
+		cfg:           cfg,
+		spec: QuerySpec{
+			QueryFamily:             QueryFamilyCoreMetric,
+			MetricKind:              MetricKindProfit,
+			PreferContractAggregate: true,
+			PeriodFrom:              "2026-02",
+			PeriodTo:                "2026-02",
+			RouteDecision: RouteDecision{
+				SelectedSource: BossSourceContractAggregate,
+				ProbeResults: []SourceProbeResult{
+					{Source: BossSourceContractAggregate, CanAnswer: false},
+				},
+			},
 		},
 	}
 

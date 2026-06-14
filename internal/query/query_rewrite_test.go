@@ -144,6 +144,24 @@ func TestBuildQuerySpecCarriesBossRewrite(t *testing.T) {
 	}
 }
 
+func TestRewriteBossQueryCustomProfitKeywordDoesNotForceContractFirst(t *testing.T) {
+	anchor := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
+	cfg := defaultRuleConfig()
+	cfg.MetricKeywordLexicon[metricKeyProfit] = []string{"净赚"}
+
+	got := RewriteBossQueryWithConfig("2026年2月净赚是多少？", anchor, cfg)
+
+	if got.Metric != BossMetricProfit {
+		t.Fatalf("Metric = %s, want %s", got.Metric, BossMetricProfit)
+	}
+	if got.Perspective == BossPerspectiveContractFirst {
+		t.Fatalf("Perspective = %s, want non contract-first", got.Perspective)
+	}
+	if got.RequiresSourceProbe {
+		t.Fatalf("RequiresSourceProbe = true, want false")
+	}
+}
+
 func TestBuildQuerySpecEnvelopeIncludesBossRewrite(t *testing.T) {
 	spec := QuerySpec{
 		QueryFamily: QueryFamilyCoreMetric,

@@ -103,14 +103,27 @@ func resolveLegacySourceFallbackStages(ctx queryExecutionContext) []executionSta
 	if ctx.spec.QueryFamily == QueryFamilyReconciliation || shouldUseReconciliation(ctx.q) {
 		builder.add(executionStageDirectReconciliation)
 	}
-	if isIntervalCoreMetricQuestionWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg) ||
-		shouldPreferCoreMetricSummaryWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg) {
+	if !shouldSuppressCoreMetricRangeFallback(ctx) &&
+		(isIntervalCoreMetricQuestionWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg) ||
+			shouldPreferCoreMetricSummaryWithConfig(ctx.q, ctx.entity, ctx.hasRealEntity, ctx.from, ctx.to, ctx.cfg)) {
 		builder.add(executionStageDirectCoreMetricRange)
 	}
 	if ctx.spec.QueryFamily == QueryFamilySupplierPayments || shouldUseSupplierPaymentStats(ctx.q) {
 		builder.add(executionStageDirectSupplierPayments)
 	}
 	return builder.stagesOrEmpty()
+}
+
+func shouldSuppressCoreMetricRangeFallback(ctx queryExecutionContext) bool {
+	if !ctx.spec.PreferContractAggregate {
+		return false
+	}
+	for _, probe := range ctx.spec.RouteDecision.ProbeResults {
+		if probe.Source == BossSourceContractAggregate && probe.CanAnswer {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveCounterpartyExecutionStages(ctx queryExecutionContext) []executionStage {

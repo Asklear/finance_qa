@@ -2,8 +2,10 @@ package query
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRouteDecisionQ1RevenueSelectsContractFundIncome(t *testing.T) {
@@ -107,6 +109,71 @@ func TestRouteDecisionProjectMarginSelectsRevenueCostTables(t *testing.T) {
 		if !containsString(decision.PrimaryTables, want) {
 			t.Fatalf("PrimaryTables = %#v, want %s", decision.PrimaryTables, want)
 		}
+	}
+}
+
+func TestRouteDecisionRelativeIncomeCostDefaultsToContractAggregate(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	engine := newProbeTestEngine(t, "route-relative-income-cost.sqlite")
+	seedProbeContract(t, engine, "C-REV-001", "测试客户有限公司", "客户项目")
+	seedProbeContract(t, engine, "C-COST-001", "测试供应商有限公司", "供应商项目")
+	seedProbeFundIncome(t, engine, "C-REV-001", "2026-05", 1000, 600, 800)
+	seedProbeCostSettlement(t, engine, "C-COST-001", "2026-05", 700, 200, 500)
+
+	spec := BuildQuerySpec("上个月收入和成本是多少？", time.Date(2026, time.June, 14, 0, 0, 0, 0, time.UTC))
+	routed, decision := engine.decideBossRoute(ctx, spec)
+
+	if decision.SelectedSource != BossSourceContractAggregate {
+		t.Fatalf("SelectedSource = %s, want %s", decision.SelectedSource, BossSourceContractAggregate)
+	}
+	if routed.QueryFamily != QueryFamilyCoreMetric {
+		t.Fatalf("QueryFamily = %s, want %s (rewrite=%+v entity=%q needs=%t)", routed.QueryFamily, QueryFamilyCoreMetric, routed.BossRewrite, routed.Entity, routed.NeedsContractDimension)
+	}
+	if routed.NeedsContractDimension {
+		t.Fatalf("NeedsContractDimension = true, want false")
+	}
+	if !routed.PreferContractAggregate {
+		t.Fatalf("PreferContractAggregate = false, want true")
+	}
+	if routed.PeriodFrom != "2026-05" || routed.PeriodTo != "2026-05" {
+		t.Fatalf("period = %s~%s, want 2026-05~2026-05", routed.PeriodFrom, routed.PeriodTo)
+	}
+	if !containsString(decision.PrimaryTables, "fin_cost_settlements") {
+		t.Fatalf("PrimaryTables = %#v, want fin_cost_settlements", decision.PrimaryTables)
+	}
+}
+
+func TestQueryRelativeIncomeCostUsesContractAggregate(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "query-relative-income-cost.sqlite")
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.June, 14, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+
+	seedProbeContract(t, engine, "C-REV-001", "测试客户有限公司", "客户项目")
+	seedProbeContract(t, engine, "C-COST-001", "测试供应商有限公司", "供应商项目")
+	seedProbeFundIncome(t, engine, "C-REV-001", "2026-05", 1000, 600, 800)
+	seedProbeCostSettlement(t, engine, "C-COST-001", "2026-05", 700, 200, 500)
+
+	result := engine.Query("上个月收入和成本是多少？")
+	if !result.Success {
+		t.Fatalf("query failed: %s data=%+v", result.Message, result.Data)
+	}
+	if strings.Contains(result.Message, "账务数据仅到") {
+		t.Fatalf("query should not be answered by core metric coverage guard: %s", result.Message)
+	}
+	for _, want := range []string{"2026-05", "1000.00", "700.00"} {
+		if !strings.Contains(result.Message, want) {
+			t.Fatalf("message = %q, want %q", result.Message, want)
+		}
+	}
+	if got := result.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; data=%+v", got, result.Data)
 	}
 }
 

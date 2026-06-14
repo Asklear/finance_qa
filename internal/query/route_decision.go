@@ -17,6 +17,9 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 	rewrite := spec.BossRewrite
 	resolvedEntity := strings.TrimSpace(spec.Entity)
 	alreadyContractDimension := spec.NeedsContractDimension || spec.QueryFamily == QueryFamilyContractDimension
+	resolvedPeriodFrom := strings.TrimSpace(spec.PeriodFrom)
+	resolvedPeriodTo := strings.TrimSpace(spec.PeriodTo)
+	resolvedSubPeriod := strings.TrimSpace(spec.SubPeriod)
 	if rewrite.Metric == "" || rewrite.Metric == BossMetricUnknown {
 		return spec, RouteDecision{}
 	}
@@ -38,6 +41,10 @@ func (e *Engine) decideBossRoute(ctx context.Context, spec QuerySpec) (QuerySpec
 			rewrite = RewriteBossQuery(spec.NormalizedQuestion, contractAnchor)
 			if rewrite.Perspective == BossPerspectiveContractFirst {
 				from, to := extractContractQuestionPeriods(spec.NormalizedQuestion, contractAnchor)
+				if resolvedPeriodFrom != "" && resolvedPeriodTo != "" {
+					from, to = resolvedPeriodFrom, resolvedPeriodTo
+					rewrite.SubPeriod = resolvedSubPeriod
+				}
 				rewrite.PeriodFrom = from
 				rewrite.PeriodTo = to
 			}
@@ -142,7 +149,7 @@ func shouldRouteContractProbeAsDimension(rewrite BossQueryRewrite) bool {
 	if rewrite.Metric == BossMetricARAP && strings.TrimSpace(rewrite.Entity) == "" {
 		return false
 	}
-	if rewrite.Scope == BossScopeEntity {
+	if rewrite.Scope == BossScopeEntity && strings.TrimSpace(rewrite.Entity) != "" {
 		return true
 	}
 	if rewrite.Scope == BossScopeContract && strings.TrimSpace(rewrite.Entity) != "" {
