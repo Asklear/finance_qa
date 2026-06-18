@@ -180,7 +180,7 @@ financeqa.example.com {
 5. `finance-query` 推荐 MCP 调用格式：`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"finance-query","arguments":{"query":"..."}}}`。
 6. `sync_openclaw_bridge_and_skill.sh` 负责同步 `SKILL.md`、appendix 和 OpenClaw 插件运行时到服务器仓库；脚本默认 `MODE=all`，也支持 `MODE=server` 只部署 Go binary + `financeqa-mcp.service`，以及 `MODE=connector` 只部署 OpenClaw thin plugin/skill。`SERVER` 默认使用本机 SSH config alias `lzh`，也可由调用方通过环境变量覆盖；`KEY_PATH` 仅在不走 SSH config 时可选传入。仓库中不保留生产 IP、端口、token 或私钥路径。OpenClaw extension runtime 文件拷贝到 `~/.openclaw/extensions/openclaw-finance`，OpenClaw/Claude skill 目录整体软链接到 `~/finance_qa`。脚本只读校验 `openclaw.json` 中的 finance plugin/skill 运行配置，只更新 `plugins.installs.openclaw-finance.version/installedAt` 安装元数据，并默认重启 OpenClaw Gateway 让新的 extension runtime 生效。
 7. OpenClaw extension 只保留 runtime 实文件；不要把 extension 目录、`dist/index.esm.js`、`openclaw.plugin.json` 或 `package.json` 挂成指向仓库的软链接。目录级 symlink 适用于 OpenClaw/Claude skill，因为文件级 symlink 会被 OpenClaw skill loader 判定为越过配置根目录并跳过。
-8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.2.1`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
+8. `finance_qa`、Go MCP、OpenClaw plugin metadata 和 `openclaw.json` 中的 OpenClaw install metadata 当前版本均为 `2.2.3`；较大的运行时、部署或宿主接入变更必须提升 semver 版本，并保持这些版本同步。
 9. OpenClaw 插件发现依赖 `plugin/openclaw-finance/package.json` 的 `openclaw.extensions`，当前必须包含 `./dist/index.esm.js`；`openclaw.json` 的 install version 只负责安装元数据同步，不负责发现插件。
 
 ## 运行时要点
@@ -277,7 +277,7 @@ FINANCEQA_FEISHU_SNAPSHOT_DIR=tmp/feishu_snapshots
 OSS_ACCESS_KEY_ID=replace_with_access_key_id
 OSS_ACCESS_KEY_SECRET=replace_with_access_key_secret
 OSS_BUCKET=boss-agent
-OSS_ENDPOINT=https://oss-cn-shenzhen.aliyuncs.com
+OSS_ENDPOINT=https://oss-cn-shenzhen-internal.aliyuncs.com
 OSS_CONTRACT_PREFIX=tenant/uhub/contract
 OSS_FINANCE_PREFIX=tenant/uhub/finance
 OSS_SMOKE_PREFIX=tmp/financeqa-smoke
@@ -318,5 +318,5 @@ go test ./internal/feishusync -run 'TestPDFScanner|TestWorkbookScanner' -count=1
 常见边界：
 
 1. 飞书返回 403：优先检查应用审核、scope 导入、文档协作者授权。
-2. OSS 返回 403 且提示 second-level domain：必须使用 `https://oss-cn-shenzhen.aliyuncs.com`，代码会自动转为 bucket 三段域名访问。
+2. OSS 返回 403 且提示 second-level domain：ECS 内网部署优先使用 `https://oss-cn-shenzhen-internal.aliyuncs.com`，本地或非阿里云内网环境使用 `https://oss-cn-shenzhen.aliyuncs.com`；代码会自动转为 bucket 三段域名访问。
 3. OCR pending 未消费：检查 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL`、`contract_main.storage_key` 是否为空，以及 `sync_status` 是否为 `active`。

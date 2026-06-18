@@ -190,28 +190,10 @@ func (c *OSSClient) ObjectSHA256(ctx context.Context, key string) (string, bool,
 	if hash := strings.TrimSpace(headResp.Header.Get("x-oss-meta-sha256")); hash != "" {
 		return hash, true, nil
 	}
-
-	getReq, err := c.newRequest(ctx, http.MethodGet, key, nil, "")
-	if err != nil {
-		return "", false, err
-	}
-	getResp, err := c.client.Do(getReq)
-	if err != nil {
-		return "", false, fmt.Errorf("download oss object for hash: %w", err)
-	}
-	defer func() { _ = getResp.Body.Close() }()
-	if getResp.StatusCode == http.StatusNotFound {
-		return "", false, nil
-	}
-	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(getResp.Body, 1024))
-		return "", false, fmt.Errorf("download oss object for hash http %d: %s", getResp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, getResp.Body); err != nil {
-		return "", false, fmt.Errorf("hash oss object: %w", err)
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), true, nil
+	// The object exists, but its hash is unknown. Do not GET the body here:
+	// active scans call this for every reused object, so fallback downloads
+	// turn missing legacy metadata into repeated OSS egress.
+	return "", true, nil
 }
 
 type listObjectsResult struct {

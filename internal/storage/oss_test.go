@@ -137,10 +137,7 @@ func TestOSSClientObjectSHA256UsesObjectMetadata(t *testing.T) {
 	}
 }
 
-func TestOSSClientObjectSHA256StreamsObjectWhenMetadataMissing(t *testing.T) {
-	body := []byte("existing-object")
-	wantBytes := sha256.Sum256(body)
-	want := hex.EncodeToString(wantBytes[:])
+func TestOSSClientObjectSHA256DoesNotDownloadWhenMetadataMissing(t *testing.T) {
 	var sawGet bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/boss-agent/tenant/uhub/finance/2026/a.xlsx" {
@@ -151,7 +148,7 @@ func TestOSSClientObjectSHA256StreamsObjectWhenMetadataMissing(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
 			sawGet = true
-			_, _ = w.Write(body)
+			t.Fatalf("ObjectSHA256 must not download object contents when metadata is missing")
 		default:
 			t.Fatalf("method = %s", r.Method)
 		}
@@ -169,8 +166,8 @@ func TestOSSClientObjectSHA256StreamsObjectWhenMetadataMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ObjectSHA256: %v", err)
 	}
-	if !exists || hash != want || !sawGet {
-		t.Fatalf("hash=%q exists=%v sawGet=%v want=%q", hash, exists, sawGet, want)
+	if !exists || hash != "" || sawGet {
+		t.Fatalf("hash=%q exists=%v sawGet=%v, want existing object with unknown hash and no GET", hash, exists, sawGet)
 	}
 }
 
@@ -199,10 +196,8 @@ func TestOSSClientObjectSHA256ReportsMissingObject(t *testing.T) {
 	}
 }
 
-func TestOSSClientFindObjectBySHA256ScansPrefix(t *testing.T) {
-	body := []byte("existing-object")
-	wantBytes := sha256.Sum256(body)
-	want := hex.EncodeToString(wantBytes[:])
+func TestOSSClientFindObjectBySHA256DoesNotDownloadObjectsWithoutMetadata(t *testing.T) {
+	want := strings.Repeat("a", 64)
 	var listed bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -220,7 +215,7 @@ func TestOSSClientFindObjectBySHA256ScansPrefix(t *testing.T) {
 		case r.Method == http.MethodHead && r.URL.Path == "/boss-agent/tenant/uhub/contract/b.pdf":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/boss-agent/tenant/uhub/contract/b.pdf":
-			_, _ = w.Write(body)
+			t.Fatalf("FindObjectBySHA256 must not download object contents when metadata is missing")
 		default:
 			t.Fatalf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
 		}
@@ -238,7 +233,7 @@ func TestOSSClientFindObjectBySHA256ScansPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindObjectBySHA256: %v", err)
 	}
-	if !exists || key != "tenant/uhub/contract/b.pdf" || !listed {
+	if exists || key != "" || !listed {
 		t.Fatalf("key=%q exists=%v listed=%v", key, exists, listed)
 	}
 }

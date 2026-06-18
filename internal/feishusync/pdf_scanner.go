@@ -559,7 +559,16 @@ func (s *PDFScanner) resolveExistingObject(ctx context.Context, storageKey, hash
 	if err != nil {
 		return "", false, err
 	}
-	if !exists || !sameContentHash(remoteHash, hash) {
+	if !exists {
+		return "", false, nil
+	}
+	if strings.TrimSpace(remoteHash) == "" {
+		if uri := strings.TrimSpace(probe.ObjectURI(objectKeyFromStorageKey(storageKey))); uri != "" {
+			return uri, true, nil
+		}
+		return storageKey, true, nil
+	}
+	if !sameContentHash(remoteHash, hash) {
 		return "", false, nil
 	}
 	uri := strings.TrimSpace(probe.ObjectURI(objectKeyFromStorageKey(storageKey)))

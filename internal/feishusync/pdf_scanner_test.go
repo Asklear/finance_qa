@@ -306,6 +306,59 @@ func TestPDFScannerReusesSameHashWithoutUploadingDuplicate(t *testing.T) {
 	}
 }
 
+func TestPDFScannerReusesExistingOSSKeyWhenRemoteHashMetadataMissing(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedPDFSourceWithMetadata(t, repo, "folder-a", `{"oss_prefix":"tenant/uhub/contract/优集客户合同"}`)
+	hash := writeSnapshotAndHash(t, "contract-a")
+	existingStorageKey := "tenant/uhub/contract/优集客户合同/旧合同.pdf"
+	existingID, err := repo.UpsertContractPDFState(context.Background(), feishusync.ContractPDFState{
+		FileName:          "旧合同.pdf",
+		FileHash:          hash,
+		StorageKey:        existingStorageKey,
+		FeishuFileToken:   "old-file",
+		FeishuParentToken: "folder-a",
+		FeishuSlotKey:     "folder-a:旧合同.pdf",
+		SyncStatus:        feishusync.SyncStatusActive,
+		OCRStatus:         feishusync.OCRStatusDone,
+	})
+	if err != nil {
+		t.Fatalf("seed existing: %v", err)
+	}
+	store := &recordingObjectStore{existingWithoutHash: map[string]bool{existingStorageKey: true}}
+	scanner := feishusync.NewPDFScanner(&fakeFeishuClient{
+		files: []feishu.DriveFile{{
+			Token:       "new-file",
+			Name:        "新合同.pdf",
+			MimeType:    "application/pdf",
+			ParentToken: "folder-a",
+			Size:        12,
+		}},
+		downloads: map[string][]byte{"new-file": []byte("contract-a")},
+	}, repo, &recordingOCRDispatcher{}, t.TempDir(), store)
+
+	result, err := scanner.ScanFolder(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan folder: %v", err)
+	}
+	if result.Reused != 1 || result.Created != 0 || result.OCRQueued != 0 {
+		t.Fatalf("result = %#v, want reused=1 created=0 ocr=0", result)
+	}
+	if len(store.hashCalls) != 1 || store.hashCalls[0] != existingStorageKey || len(store.puts) != 0 {
+		t.Fatalf("same hash with missing OSS metadata should only HEAD existing key: hashCalls=%#v puts=%#v", store.hashCalls, store.puts)
+	}
+	state, ok, err := repo.FindContractByFileHash(context.Background(), hash)
+	if err != nil {
+		t.Fatalf("find by hash: %v", err)
+	}
+	if !ok || state.ID != existingID || state.StorageKey != existingStorageKey {
+		t.Fatalf("state = %#v ok=%v", state, ok)
+	}
+}
+
 func TestPDFScannerReusesLegacyMD5RowAndUpgradesToSHA256(t *testing.T) {
 	t.Parallel()
 
@@ -920,10 +973,12 @@ func (NoopOCRForTest) EnqueueOCR(context.Context, int64, string, string) error {
 }
 
 type recordingObjectStore struct {
-	uri      string
-	hashes   map[string]string
-	hashKeys map[string]string
-	puts     []objectStorePut
+	uri                 string
+	hashes              map[string]string
+	hashKeys            map[string]string
+	existingWithoutHash map[string]bool
+	puts                []objectStorePut
+	hashCalls           []string
 }
 
 type objectStorePut struct {
@@ -941,6 +996,10 @@ func (s *recordingObjectStore) PutFile(_ context.Context, localPath, key, conten
 }
 
 func (s *recordingObjectStore) ObjectSHA256(_ context.Context, key string) (string, bool, error) {
+	s.hashCalls = append(s.hashCalls, key)
+	if s.existingWithoutHash != nil && s.existingWithoutHash[key] {
+		return "", true, nil
+	}
 	if s.hashes == nil {
 		return "", false, nil
 	}
