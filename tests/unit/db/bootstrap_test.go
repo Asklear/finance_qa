@@ -384,6 +384,7 @@ func TestBootstrapAddsOCRColumnsToLegacyContractMainSQLiteTable(t *testing.T) {
 		"feishu_relative_path",
 		"feishu_folder_path",
 		"feishu_relation_key",
+		"feishu_modified_time",
 		"created_at",
 		"updated_at",
 	)
@@ -396,7 +397,6 @@ func TestBootstrapAddsOCRColumnsToLegacyContractMainSQLiteTable(t *testing.T) {
 		"file_version",
 		"tags",
 		"remarks",
-		"feishu_modified_time",
 	} {
 		assertSQLiteColumnMissing(t, sqlDB, "contract_main", columnName)
 	}

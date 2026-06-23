@@ -70,6 +70,8 @@ FEISHU_AUTH_MODE=tenant
 # FEISHU_USER_TOKEN_FILE=~/finance_qa/secrets/feishu_user_token.json
 # FEISHU_OAUTH_REDIRECT_URI=http://127.0.0.1:8787/feishu/oauth/callback
 FINANCEQA_FEISHU_SNAPSHOT_DIR=tmp/feishu_snapshots
+# FINANCEQA_FEISHU_METADATA_SHORTCUT=0  # emergency rollback: disable metadata-based skip
+# FINANCEQA_FEISHU_FORCE_DOWNLOAD=1     # emergency rollback: force old download/hash path
 
 # OSS ODS
 OSS_ACCESS_KEY_ID=replace_with_access_key_id
@@ -196,7 +198,7 @@ FEISHU_SYNC_SOURCES_FILE=~/finance_qa/secrets/feishu_sources.json
 ./bin/financeqa feishu sync-once --source-token replace_with_source_token
 ```
 
-PDF 扫描规则：扫描器会递归遍历飞书来源文件夹，按“来源根目录 + 相对路径 + 文件名”识别同一业务位置，内容 hash 变化才重新进入待 OCR 状态；合同 PDF 写入 `contract_main`，发票 PDF 写入 `contract_invoices`，云盘中消失的文件会在对应表标记为 `sync_status='deleted'`，不会硬删除 OCR 记录。路径中包含 `发票`、`开票` 或 `invoice` 的 PDF 会标记为发票，关系 key 取去掉发票目录后的业务目录；同一关系 key 下的发票通过 `contract_invoices.contract_id` 关联到合同，支持发票晚于合同上传。未匹配到合同的发票不会猜测落库，会等待下一轮扫描。财务表格按整份 `.xlsx` 快照导入，hash 未变则跳过，hash 变化则复用现有导入链路做整表刷新；导出的 Excel 批注/单元格备注会按单元格坐标保存到 `source_cell_notes`，覆盖 `fin_fund_income`、`fin_cost_settlements` 及对应合并组表；收入明细里可见的“备注”列会单独保存到 `fin_fund_income.remarks` 和 `fin_fund_income_groups.remarks`。如果某一行只有“备注”列有内容、没有任何金额列，导入器会保留一条当季末月的 0 金额 `fin_fund_income` 记录，便于查询谈判状态或备注金额，但不会影响收入、收款、开票合计。
+PDF 扫描规则：扫描器会递归遍历飞书来源文件夹，按“来源根目录 + 相对路径 + 文件名”识别同一业务位置，内容 hash 变化才重新进入待 OCR 状态；合同 PDF 写入 `contract_main`，发票 PDF 写入 `contract_invoices`，云盘中消失的文件会在对应表标记为 `sync_status='deleted'`，不会硬删除 OCR 记录。路径中包含 `发票`、`开票` 或 `invoice` 的 PDF 会标记为发票，关系 key 取去掉发票目录后的业务目录；同一关系 key 下的发票通过 `contract_invoices.contract_id` 关联到合同，支持发票晚于合同上传。未匹配到合同的发票不会猜测落库，会等待下一轮扫描。扫描器默认使用飞书列表/元数据里的 `file_token` 和 `modified_time` 做轻量变化判断：PDF 在已有 `file_hash`、`storage_key`、`feishu_root_token`、`feishu_modified_time` 全部匹配时跳过下载，只更新移动或改名后的路径元数据；财务表格在 `feishu_sync_sources.metadata_json` 里的 `file_token`、`modified_time`、`storage_key` 和 `file_mappings_content_hash` 都匹配当前 `last_content_hash` 时跳过下载和导入。缺少这些游标、首次上线、文件变更或显式设置 `FINANCEQA_FEISHU_FORCE_DOWNLOAD=1` / `FINANCEQA_FEISHU_METADATA_SHORTCUT=0` 时，会回落到原下载、hash、导入/OCR 路径。财务表格按整份 `.xlsx` 快照导入，hash 未变则跳过，hash 变化则复用现有导入链路做整表刷新；导出的 Excel 批注/单元格备注会按单元格坐标保存到 `source_cell_notes`，覆盖 `fin_fund_income`、`fin_cost_settlements` 及对应合并组表；收入明细里可见的“备注”列会单独保存到 `fin_fund_income.remarks` 和 `fin_fund_income_groups.remarks`。如果某一行只有“备注”列有内容、没有任何金额列，导入器会保留一条当季末月的 0 金额 `fin_fund_income` 记录，便于查询谈判状态或备注金额，但不会影响收入、收款、开票合计。
 
 如果配置了 `OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET`、`OSS_BUCKET`、`OSS_ENDPOINT`，扫描会把飞书原始 PDF/XLSX 快照上传到 OSS ODS 层，但只使用现有历史业务前缀：合同/发票默认在 `tenant/uhub/contract` 并保留飞书相对目录，财务表默认在 `tenant/uhub/finance`；只有文件名能识别年份，或 `feishu_sync_sources.metadata_json.oss_prefix` 明确指定 `tenant/uhub/finance/2025`、`tenant/uhub/finance/2026` 时，才进入年份子目录。合同/发票的 `contract_main.storage_key`、`contract_invoices.storage_key` 和财务来源的 `feishu_sync_sources.metadata_json.storage_key` 都保存 OSS object key 相对路径，例如 `tenant/uhub/contract/...pdf`，不保存 `s3://bucket/...`。上传前会先按 SHA256 查数据库；同 hash 直接复用已有 `storage_key`，不会重复上传。若目标 OSS key 已存在，会尝试读取远端对象 SHA256，一致时复用远端对象，不覆盖上传；不一致时才写入带 hash 后缀的新对象。未配置 OSS 时仍保留本地 snapshot 路径，便于本地开发。
 

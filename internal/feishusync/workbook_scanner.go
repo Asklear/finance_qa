@@ -84,6 +84,15 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 	if strings.TrimSpace(meta.Token) == "" {
 		meta.Token = fileToken
 	}
+	if s.workbookMetadataUnchanged(src, meta) {
+		result.Scanned = 1
+		result.Skipped = 1
+		storageKey := sourceStorageKey(src.MetadataJSON)
+		if err := s.repo.MarkSourceSuccess(ctx, src.ID, strings.TrimSpace(src.LastContentHash), strings.TrimSpace(meta.Revision), workbookMetadata(src, meta, ingest.ImportSummary{}, true, storageKey, strings.TrimSpace(src.LastContentHash))); err != nil {
+			return result, err
+		}
+		return result, nil
+	}
 
 	snapshotPath := workbookSnapshotPath(snapshotDir, fileToken, meta)
 	if isXLSXDriveFile(meta) {
@@ -169,6 +178,26 @@ func (s *WorkbookScanner) ScanWorkbook(ctx context.Context, src SyncSource) (Sca
 		return result, err
 	}
 	return result, nil
+}
+
+func (s *WorkbookScanner) workbookMetadataUnchanged(src SyncSource, file feishu.DriveFile) bool {
+	if !feishuMetadataShortcutEnabled() {
+		return false
+	}
+	contentHash := strings.TrimSpace(src.LastContentHash)
+	if contentHash == "" || !workbookFileMappingsSynced(src.MetadataJSON, contentHash) {
+		return false
+	}
+	if strings.TrimSpace(sourceStorageKey(src.MetadataJSON)) == "" {
+		return false
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(src.MetadataJSON)), &payload); err != nil {
+		return false
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", payload["file_token"])) == strings.TrimSpace(file.Token) &&
+		strings.TrimSpace(fmt.Sprintf("%v", payload["modified_time"])) != "" &&
+		strings.TrimSpace(fmt.Sprintf("%v", payload["modified_time"])) == strings.TrimSpace(file.ModifiedTime)
 }
 
 func (s *WorkbookScanner) resolveWorkbookFolderFile(ctx context.Context, folderToken string) (feishu.DriveFile, error) {
@@ -377,6 +406,7 @@ func workbookMetadata(src SyncSource, file feishu.DriveFile, summary ingest.Impo
 	payload["source_type"] = strings.TrimSpace(src.SourceType)
 	payload["file_token"] = file.Token
 	payload["file_name"] = file.Name
+	payload["modified_time"] = file.ModifiedTime
 	payload["revision"] = file.Revision
 	payload["oss_prefix"] = financeOSSPrefix(src, file)
 	if strings.TrimSpace(storageKey) != "" || payload["storage_key"] == nil {

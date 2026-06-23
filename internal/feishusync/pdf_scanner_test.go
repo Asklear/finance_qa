@@ -61,6 +61,382 @@ func TestPDFScannerCreatesPendingOCRForNewPDF(t *testing.T) {
 	}
 }
 
+func TestPDFScannerSkipsDownloadWhenContractMetadataUnchanged(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedPDFSource(t, repo, "folder-a")
+	hash := writeSnapshotAndHash(t, "contract-a")
+	existingID, err := repo.UpsertContractPDFState(context.Background(), feishusync.ContractPDFState{
+		FileName:           "合同A.pdf",
+		FileHash:           hash,
+		StorageKey:         "tenant/uhub/contract/合同A.pdf",
+		FeishuFileToken:    "file-a",
+		FeishuRootToken:    "folder-a",
+		FeishuParentToken:  "folder-a",
+		FeishuRelativePath: "合同A.pdf",
+		FeishuFolderPath:   "",
+		FeishuSlotKey:      "folder-a:合同a.pdf",
+		RelationKey:        "合同a",
+		FileSize:           int64(len("contract-a")),
+		SyncStatus:         feishusync.SyncStatusActive,
+		OCRStatus:          feishusync.OCRStatusDone,
+	})
+	if err != nil {
+		t.Fatalf("seed existing: %v", err)
+	}
+	if _, err := sqlDB.Exec(`UPDATE contract_main SET feishu_modified_time = ? WHERE id = ?`, "1714972020", existingID); err != nil {
+		t.Fatalf("seed modified time: %v", err)
+	}
+	client := &fakeFeishuClient{
+		files: []feishu.DriveFile{{
+			Token:        "file-a",
+			Name:         "合同A.pdf",
+			MimeType:     "application/pdf",
+			ParentToken:  "folder-a",
+			ModifiedTime: "1714972020",
+		}},
+		downloads: map[string][]byte{"file-a": []byte("contract-a")},
+	}
+	ocr := &recordingOCRDispatcher{}
+	scanner := feishusync.NewPDFScanner(client, repo, ocr, t.TempDir())
+
+	result, err := scanner.ScanFolder(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan unchanged pdf: %v", err)
+	}
+	if result.Reused != 1 || result.Scanned != 1 || result.Created != 0 || result.OCRQueued != 0 {
+		t.Fatalf("result=%#v, want reused=1 scanned=1 created=0 ocr=0", result)
+	}
+	if len(client.downloadedTokens) != 0 {
+		t.Fatalf("unchanged PDF should not be downloaded: %#v", client.downloadedTokens)
+	}
+	if len(ocr.calls) != 0 {
+		t.Fatalf("unchanged PDF should not enqueue OCR: %#v", ocr.calls)
+	}
+	state, ok, err := repo.FindActiveContractBySlot(context.Background(), "folder-a:合同a.pdf")
+	if err != nil {
+		t.Fatalf("find active contract: %v", err)
+	}
+	if !ok || state.ID != existingID || state.FileHash != hash || state.OCRStatus != feishusync.OCRStatusDone {
+		t.Fatalf("state=%#v ok=%v", state, ok)
+	}
+}
+
+func TestPDFScannerDownloadsWhenContractMetadataUnchangedButStoredArtifactMissing(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedPDFSource(t, repo, "folder-a")
+	hash := writeSnapshotAndHash(t, "contract-a")
+	existingID, err := repo.UpsertContractPDFState(context.Background(), feishusync.ContractPDFState{
+		FileName:           "合同A.pdf",
+		FileHash:           hash,
+		FeishuFileToken:    "file-a",
+		FeishuRootToken:    "folder-a",
+		FeishuParentToken:  "folder-a",
+		FeishuRelativePath: "合同A.pdf",
+		FeishuFolderPath:   "",
+		FeishuSlotKey:      "folder-a:合同a.pdf",
+		RelationKey:        "合同a",
+		FeishuModifiedTime: "1714972020",
+		FileSize:           int64(len("contract-a")),
+		SyncStatus:         feishusync.SyncStatusActive,
+		OCRStatus:          feishusync.OCRStatusDone,
+	})
+	if err != nil {
+		t.Fatalf("seed existing: %v", err)
+	}
+	client := &fakeFeishuClient{
+		files: []feishu.DriveFile{{
+			Token:        "file-a",
+			Name:         "合同A.pdf",
+			MimeType:     "application/pdf",
+			ParentToken:  "folder-a",
+			ModifiedTime: "1714972020",
+		}},
+		downloads: map[string][]byte{"file-a": []byte("contract-a")},
+	}
+	ocr := &recordingOCRDispatcher{}
+	scanner := feishusync.NewPDFScanner(client, repo, ocr, t.TempDir())
+
+	result, err := scanner.ScanFolder(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan unchanged pdf with missing storage: %v", err)
+	}
+	if result.Reused != 1 || result.Created != 0 || result.OCRQueued != 0 {
+		t.Fatalf("result=%#v, want reused=1 created=0 ocr=0", result)
+	}
+	if len(client.downloadedTokens) != 1 || client.downloadedTokens[0] != "file-a" {
+		t.Fatalf("missing stored artifact should force download: %#v", client.downloadedTokens)
+	}
+	state, ok, err := repo.FindActiveContractBySlot(context.Background(), "folder-a:合同a.pdf")
+	if err != nil {
+		t.Fatalf("find active contract: %v", err)
+	}
+	if !ok || state.ID != existingID || state.FileHash != hash || state.OCRStatus != feishusync.OCRStatusDone {
+		t.Fatalf("state=%#v ok=%v", state, ok)
+	}
+}
+
+func TestPDFScannerDownloadsWhenInvoiceMetadataUnchangedButStoredArtifactMissing(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedPDFSource(t, repo, "folder-root")
+	contractID, err := repo.UpsertContractPDFState(context.Background(), feishusync.ContractPDFState{
+		FileName:           "服务合同.pdf",
+		FileHash:           writeSnapshotAndHash(t, "contract-a"),
+		StorageKey:         "tenant/uhub/contract/客户A/服务合同.pdf",
+		FeishuFileToken:    "contract-file",
+		FeishuRootToken:    "folder-root",
+		FeishuParentToken:  "folder-customer",
+		FeishuRelativePath: "客户A/服务合同.pdf",
+		FeishuFolderPath:   "客户A",
+		FeishuSlotKey:      "folder-root:客户a/服务合同.pdf",
+		RelationKey:        "客户a",
+		FeishuModifiedTime: "1714972000",
+		FileSize:           int64(len("contract-a")),
+		SyncStatus:         feishusync.SyncStatusActive,
+		OCRStatus:          feishusync.OCRStatusDone,
+	})
+	if err != nil {
+		t.Fatalf("seed contract: %v", err)
+	}
+	invoiceHash := writeSnapshotAndHash(t, "invoice-a")
+	invoiceID, err := repo.UpsertInvoicePDFState(context.Background(), feishusync.InvoicePDFState{
+		ContractID:         contractID,
+		InvoiceNumber:      "pending:invoice",
+		FileName:           "2026-03发票.pdf",
+		FileHash:           invoiceHash,
+		FeishuFileToken:    "invoice-file",
+		FeishuRootToken:    "folder-root",
+		FeishuParentToken:  "folder-invoices",
+		FeishuRelativePath: "客户A/发票/2026-03发票.pdf",
+		FeishuFolderPath:   "客户A/发票",
+		FeishuSlotKey:      "folder-root:客户a/发票/2026-03发票.pdf",
+		RelationKey:        "客户a",
+		FeishuModifiedTime: "1714972020",
+		FileSize:           int64(len("invoice-a")),
+		SyncStatus:         feishusync.SyncStatusActive,
+		OCRStatus:          feishusync.OCRStatusDone,
+	})
+	if err != nil {
+		t.Fatalf("seed invoice: %v", err)
+	}
+	client := &fakeFeishuClient{
+		filesByFolder: map[string][]feishu.DriveFile{
+			"folder-root": {{
+				Token: "folder-customer",
+				Name:  "客户A",
+				Type:  "folder",
+			}},
+			"folder-customer": {{
+				Token: "folder-invoices",
+				Name:  "发票",
+				Type:  "folder",
+			}},
+			"folder-invoices": {{
+				Token:        "invoice-file",
+				Name:         "2026-03发票.pdf",
+				MimeType:     "application/pdf",
+				ParentToken:  "folder-invoices",
+				ModifiedTime: "1714972020",
+			}},
+		},
+		downloads: map[string][]byte{"invoice-file": []byte("invoice-a")},
+	}
+	ocr := &recordingOCRDispatcher{}
+	scanner := feishusync.NewPDFScanner(client, repo, ocr, t.TempDir())
+
+	result, err := scanner.ScanFolder(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan unchanged invoice with missing storage: %v", err)
+	}
+	if result.Reused != 1 || result.Created != 0 || result.OCRQueued != 0 {
+		t.Fatalf("result=%#v, want reused=1 created=0 ocr=0", result)
+	}
+	if len(client.downloadedTokens) != 1 || client.downloadedTokens[0] != "invoice-file" {
+		t.Fatalf("missing stored invoice artifact should force download: %#v", client.downloadedTokens)
+	}
+	gotID := assertFeishuInvoicePDFMetadata(t, sqlDB, "invoice-file", feishuPDFMetadata{
+		RootToken:    "folder-root",
+		ParentToken:  "folder-invoices",
+		RelativePath: "客户A/发票/2026-03发票.pdf",
+		FolderPath:   "客户A/发票",
+		RelationKey:  "客户a",
+		LinkedID:     contractID,
+	})
+	if gotID != invoiceID {
+		t.Fatalf("invoice id = %d, want existing %d", gotID, invoiceID)
+	}
+}
+
+func TestPDFScannerUpdatesContractPathWithoutDownloadWhenTokenAndModifiedTimeUnchanged(t *testing.T) {
+	t.Parallel()
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedPDFSource(t, repo, "folder-root")
+	hash := writeSnapshotAndHash(t, "contract-a")
+	existingID, err := repo.UpsertContractPDFState(context.Background(), feishusync.ContractPDFState{
+		FileName:           "服务合同.pdf",
+		FileHash:           hash,
+		StorageKey:         "tenant/uhub/contract/客户A/服务合同.pdf",
+		FeishuFileToken:    "file-a",
+		FeishuRootToken:    "folder-root",
+		FeishuParentToken:  "folder-old",
+		FeishuRelativePath: "客户A/服务合同.pdf",
+		FeishuFolderPath:   "客户A",
+		FeishuSlotKey:      "folder-root:客户a/服务合同.pdf",
+		RelationKey:        "客户a",
+		FeishuModifiedTime: "1714972020",
+		FileSize:           int64(len("contract-a")),
+		SyncStatus:         feishusync.SyncStatusActive,
+		OCRStatus:          feishusync.OCRStatusDone,
+	})
+	if err != nil {
+		t.Fatalf("seed existing: %v", err)
+	}
+	client := &fakeFeishuClient{
+		filesByFolder: map[string][]feishu.DriveFile{
+			"folder-root": {{
+				Token: "folder-new",
+				Name:  "客户B",
+				Type:  "folder",
+			}},
+			"folder-new": {{
+				Token:        "file-a",
+				Name:         "服务合同.pdf",
+				MimeType:     "application/pdf",
+				ParentToken:  "folder-new",
+				ModifiedTime: "1714972020",
+			}},
+		},
+		downloads: map[string][]byte{"file-a": []byte("contract-a")},
+	}
+	scanner := feishusync.NewPDFScanner(client, repo, &recordingOCRDispatcher{}, t.TempDir())
+
+	result, err := scanner.ScanFolder(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan moved pdf: %v", err)
+	}
+	if result.Reused != 1 || result.Created != 0 || result.OCRQueued != 0 {
+		t.Fatalf("result=%#v, want reused=1 created=0 ocr=0", result)
+	}
+	if len(client.downloadedTokens) != 0 {
+		t.Fatalf("moved unchanged PDF should not be downloaded: %#v", client.downloadedTokens)
+	}
+	state, ok, err := repo.FindActiveContractBySlot(context.Background(), "folder-root:客户b/服务合同.pdf")
+	if err != nil {
+		t.Fatalf("find moved contract: %v", err)
+	}
+	if !ok || state.ID != existingID || state.FeishuRelativePath != "客户B/服务合同.pdf" || state.RelationKey != "客户b" || state.OCRStatus != feishusync.OCRStatusDone {
+		t.Fatalf("state=%#v ok=%v", state, ok)
+	}
+}
+
+func TestPDFScannerForceDownloadsWhenMetadataUnchanged(t *testing.T) {
+	t.Setenv("FINANCEQA_FEISHU_FORCE_DOWNLOAD", "1")
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedPDFSource(t, repo, "folder-a")
+	hash := writeSnapshotAndHash(t, "contract-a")
+	if _, err := repo.UpsertContractPDFState(context.Background(), feishusync.ContractPDFState{
+		FileName:           "合同A.pdf",
+		FileHash:           hash,
+		StorageKey:         "tenant/uhub/contract/合同A.pdf",
+		FeishuFileToken:    "file-a",
+		FeishuRootToken:    "folder-a",
+		FeishuParentToken:  "folder-a",
+		FeishuRelativePath: "合同A.pdf",
+		FeishuFolderPath:   "",
+		FeishuSlotKey:      "folder-a:合同a.pdf",
+		RelationKey:        "合同a",
+		FeishuModifiedTime: "1714972020",
+		FileSize:           int64(len("contract-a")),
+		SyncStatus:         feishusync.SyncStatusActive,
+		OCRStatus:          feishusync.OCRStatusDone,
+	}); err != nil {
+		t.Fatalf("seed existing: %v", err)
+	}
+	client := &fakeFeishuClient{
+		files: []feishu.DriveFile{{
+			Token:        "file-a",
+			Name:         "合同A.pdf",
+			MimeType:     "application/pdf",
+			ParentToken:  "folder-a",
+			ModifiedTime: "1714972020",
+		}},
+		downloads: map[string][]byte{"file-a": []byte("contract-a")},
+	}
+	scanner := feishusync.NewPDFScanner(client, repo, &recordingOCRDispatcher{}, t.TempDir())
+
+	result, err := scanner.ScanFolder(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan forced pdf: %v", err)
+	}
+	if result.Reused != 1 || len(client.downloadedTokens) != 1 || client.downloadedTokens[0] != "file-a" {
+		t.Fatalf("result=%#v downloaded=%#v, want forced download", result, client.downloadedTokens)
+	}
+}
+
+func TestPDFScannerMetadataShortcutDisabledDownloadsWhenMetadataUnchanged(t *testing.T) {
+	t.Setenv("FINANCEQA_FEISHU_METADATA_SHORTCUT", "0")
+
+	sqlDB := openFeishuSyncTestDB(t)
+	createContractPDFStateFixture(t, sqlDB)
+	repo := feishusync.NewRepository(sqlDB)
+	src := mustSeedPDFSource(t, repo, "folder-a")
+	hash := writeSnapshotAndHash(t, "contract-a")
+	if _, err := repo.UpsertContractPDFState(context.Background(), feishusync.ContractPDFState{
+		FileName:           "合同A.pdf",
+		FileHash:           hash,
+		StorageKey:         "tenant/uhub/contract/合同A.pdf",
+		FeishuFileToken:    "file-a",
+		FeishuRootToken:    "folder-a",
+		FeishuParentToken:  "folder-a",
+		FeishuRelativePath: "合同A.pdf",
+		FeishuFolderPath:   "",
+		FeishuSlotKey:      "folder-a:合同a.pdf",
+		RelationKey:        "合同a",
+		FeishuModifiedTime: "1714972020",
+		FileSize:           int64(len("contract-a")),
+		SyncStatus:         feishusync.SyncStatusActive,
+		OCRStatus:          feishusync.OCRStatusDone,
+	}); err != nil {
+		t.Fatalf("seed existing: %v", err)
+	}
+	client := &fakeFeishuClient{
+		files: []feishu.DriveFile{{
+			Token:        "file-a",
+			Name:         "合同A.pdf",
+			MimeType:     "application/pdf",
+			ParentToken:  "folder-a",
+			ModifiedTime: "1714972020",
+		}},
+		downloads: map[string][]byte{"file-a": []byte("contract-a")},
+	}
+	scanner := feishusync.NewPDFScanner(client, repo, &recordingOCRDispatcher{}, t.TempDir())
+
+	result, err := scanner.ScanFolder(context.Background(), src)
+	if err != nil {
+		t.Fatalf("scan metadata-disabled pdf: %v", err)
+	}
+	if result.Reused != 1 || len(client.downloadedTokens) != 1 || client.downloadedTokens[0] != "file-a" {
+		t.Fatalf("result=%#v downloaded=%#v, want shortcut disabled download", result, client.downloadedTokens)
+	}
+}
+
 func TestPDFScannerRecursivelyScansNestedPDFsAndLinksByFolderRelation(t *testing.T) {
 	t.Parallel()
 
@@ -918,6 +1294,7 @@ type fakeFeishuClient struct {
 	downloads        map[string][]byte
 	exported         map[string][]byte
 	downloadedTokens []string
+	exportedTokens   []string
 }
 
 func (c *fakeFeishuClient) ListFolderFiles(_ context.Context, folderToken string) ([]feishu.DriveFile, error) {
@@ -945,6 +1322,7 @@ func (c *fakeFeishuClient) DownloadFile(_ context.Context, fileToken, destPath s
 }
 
 func (c *fakeFeishuClient) ExportToXLSX(_ context.Context, fileToken, destPath string) error {
+	c.exportedTokens = append(c.exportedTokens, fileToken)
 	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
 		return err
 	}

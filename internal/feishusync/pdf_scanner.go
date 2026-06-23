@@ -189,6 +189,9 @@ func (s *PDFScanner) scanPDFFile(ctx context.Context, src SyncSource, rootToken,
 	file := scanFile.File
 	fileName := strings.TrimSpace(file.Name)
 	slotKey := SlotKey(rootToken, scanFile.RelativePath)
+	if reused, err := s.reuseUnchangedContractPDF(ctx, rootToken, scanFile, result); err != nil || reused {
+		return err
+	}
 	filePath := filepath.Join(snapshotDir, rootToken, file.Token+".pdf")
 	if err := s.client.DownloadFile(ctx, file.Token, filePath); err != nil {
 		return err
@@ -227,6 +230,7 @@ func (s *PDFScanner) scanPDFFile(ctx context.Context, src SyncSource, rootToken,
 			FeishuFolderPath:   scanFile.FolderPath,
 			FeishuSlotKey:      slotKey,
 			RelationKey:        scanFile.RelationKey,
+			FeishuModifiedTime: strings.TrimSpace(file.ModifiedTime),
 			FileSize:           fileSize,
 			SyncStatus:         SyncStatusActive,
 			OCRStatus:          OCRStatusPending,
@@ -274,6 +278,7 @@ func (s *PDFScanner) scanPDFFile(ctx context.Context, src SyncSource, rootToken,
 		FeishuFolderPath:   scanFile.FolderPath,
 		FeishuSlotKey:      slotKey,
 		RelationKey:        scanFile.RelationKey,
+		FeishuModifiedTime: strings.TrimSpace(file.ModifiedTime),
 		FileSize:           fileSize,
 		SyncStatus:         SyncStatusActive,
 		OCRStatus:          OCRStatusPending,
@@ -337,6 +342,9 @@ func (s *PDFScanner) scanInvoicePDFFile(ctx context.Context, src SyncSource, roo
 		result.Skipped++
 		return nil
 	}
+	if reused, err := s.reuseUnchangedInvoicePDF(ctx, rootToken, scanFile, target, result); err != nil || reused {
+		return err
+	}
 
 	filePath := filepath.Join(snapshotDir, rootToken, file.Token+".pdf")
 	if err := s.client.DownloadFile(ctx, file.Token, filePath); err != nil {
@@ -362,6 +370,7 @@ func (s *PDFScanner) scanInvoicePDFFile(ctx context.Context, src SyncSource, roo
 		FeishuFolderPath:   scanFile.FolderPath,
 		FeishuSlotKey:      slotKey,
 		RelationKey:        scanFile.RelationKey,
+		FeishuModifiedTime: strings.TrimSpace(file.ModifiedTime),
 		FileSize:           fileSize,
 		SyncStatus:         SyncStatusActive,
 		OCRStatus:          OCRStatusPending,
@@ -456,6 +465,98 @@ func (s *PDFScanner) scanInvoicePDFFile(ctx context.Context, src SyncSource, roo
 	result.Created++
 	result.OCRQueued++
 	return nil
+}
+
+func (s *PDFScanner) reuseUnchangedContractPDF(ctx context.Context, rootToken string, scanFile pdfScanFile, result *ScanResult) (bool, error) {
+	if !feishuMetadataShortcutEnabled() {
+		return false, nil
+	}
+	file := scanFile.File
+	if strings.TrimSpace(file.Token) == "" || strings.TrimSpace(file.ModifiedTime) == "" {
+		return false, nil
+	}
+	existing, ok, err := s.repo.findContractPDFState(ctx, `feishu_file_token = ? AND (sync_status IS NULL OR sync_status <> ?)`, strings.TrimSpace(file.Token), SyncStatusDeleted)
+	if err != nil || !ok {
+		return false, err
+	}
+	if !pdfStoredArtifactReusable(existing.FileHash, existing.StorageKey) {
+		return false, nil
+	}
+	if !pdfCursorReusable(existing.FeishuRootToken, existing.FeishuModifiedTime, rootToken, file.ModifiedTime) {
+		return false, nil
+	}
+	existing.FileName = strings.TrimSpace(file.Name)
+	existing.FeishuFileToken = strings.TrimSpace(file.Token)
+	existing.FeishuRootToken = strings.TrimSpace(rootToken)
+	existing.FeishuParentToken = strings.TrimSpace(scanFile.ParentToken)
+	existing.FeishuRelativePath = strings.TrimSpace(scanFile.RelativePath)
+	existing.FeishuFolderPath = strings.TrimSpace(scanFile.FolderPath)
+	existing.FeishuSlotKey = SlotKey(rootToken, scanFile.RelativePath)
+	existing.RelationKey = scanFile.RelationKey
+	existing.FeishuModifiedTime = strings.TrimSpace(file.ModifiedTime)
+	existing.SyncStatus = SyncStatusActive
+	if existing.OCRStatus == "" {
+		existing.OCRStatus = OCRStatusNone
+	}
+	contractID, err := s.repo.UpsertContractPDFState(ctx, existing)
+	if err != nil {
+		return false, err
+	}
+	if _, err := s.repo.LinkPendingInvoicesToContract(ctx, rootToken, existing.RelationKey, contractID); err != nil {
+		return false, err
+	}
+	result.Reused++
+	return true, nil
+}
+
+func (s *PDFScanner) reuseUnchangedInvoicePDF(ctx context.Context, rootToken string, scanFile pdfScanFile, target ContractPDFState, result *ScanResult) (bool, error) {
+	if !feishuMetadataShortcutEnabled() {
+		return false, nil
+	}
+	file := scanFile.File
+	if strings.TrimSpace(file.Token) == "" || strings.TrimSpace(file.ModifiedTime) == "" {
+		return false, nil
+	}
+	existing, ok, err := s.repo.findInvoicePDFState(ctx, `feishu_file_token = ? AND (sync_status IS NULL OR sync_status <> ?)`, strings.TrimSpace(file.Token), SyncStatusDeleted)
+	if err != nil || !ok {
+		return false, err
+	}
+	if !pdfStoredArtifactReusable(existing.FileHash, existing.StorageKey) {
+		return false, nil
+	}
+	if !pdfCursorReusable(existing.FeishuRootToken, existing.FeishuModifiedTime, rootToken, file.ModifiedTime) {
+		return false, nil
+	}
+	existing.ContractID = target.ID
+	existing.FileName = strings.TrimSpace(file.Name)
+	existing.FeishuFileToken = strings.TrimSpace(file.Token)
+	existing.FeishuRootToken = strings.TrimSpace(rootToken)
+	existing.FeishuParentToken = strings.TrimSpace(scanFile.ParentToken)
+	existing.FeishuRelativePath = strings.TrimSpace(scanFile.RelativePath)
+	existing.FeishuFolderPath = strings.TrimSpace(scanFile.FolderPath)
+	existing.FeishuSlotKey = SlotKey(rootToken, scanFile.RelativePath)
+	existing.RelationKey = scanFile.RelationKey
+	existing.FeishuModifiedTime = strings.TrimSpace(file.ModifiedTime)
+	existing.SyncStatus = SyncStatusActive
+	if existing.OCRStatus == "" {
+		existing.OCRStatus = OCRStatusNone
+	}
+	if _, err := s.repo.UpsertInvoicePDFState(ctx, existing); err != nil {
+		return false, err
+	}
+	result.Reused++
+	return true, nil
+}
+
+func pdfCursorReusable(oldRoot, oldModified, rootToken, modified string) bool {
+	return strings.TrimSpace(oldRoot) == strings.TrimSpace(rootToken) &&
+		strings.TrimSpace(oldModified) != "" &&
+		strings.TrimSpace(oldModified) == strings.TrimSpace(modified)
+}
+
+func pdfStoredArtifactReusable(fileHash, storageKey string) bool {
+	return strings.TrimSpace(fileHash) != "" &&
+		strings.TrimSpace(storageKey) != ""
 }
 
 func downloadedFileSize(filePath string, fallback int64) int64 {

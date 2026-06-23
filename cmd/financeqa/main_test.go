@@ -693,6 +693,7 @@ func createContractPDFStateTablesForCmdTest(t *testing.T, db *sql.DB) {
 			feishu_folder_path TEXT,
 			feishu_slot_key TEXT,
 			feishu_file_name TEXT,
+			feishu_modified_time TEXT,
 			feishu_relation_key TEXT,
 			category_id INTEGER NOT NULL,
 			file_size INTEGER,

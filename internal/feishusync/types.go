@@ -62,6 +62,7 @@ type ContractPDFState struct {
 	FeishuRelativePath string `json:"feishu_relative_path"`
 	FeishuFolderPath   string `json:"feishu_folder_path"`
 	FeishuSlotKey      string `json:"feishu_slot_key"`
+	FeishuModifiedTime string `json:"feishu_modified_time"`
 	RelationKey        string `json:"feishu_relation_key"`
 	FileSize           int64  `json:"file_size"`
 	SyncStatus         string `json:"sync_status"`
@@ -81,6 +82,7 @@ type InvoicePDFState struct {
 	FeishuRelativePath string `json:"feishu_relative_path"`
 	FeishuFolderPath   string `json:"feishu_folder_path"`
 	FeishuSlotKey      string `json:"feishu_slot_key"`
+	FeishuModifiedTime string `json:"feishu_modified_time"`
 	RelationKey        string `json:"feishu_relation_key"`
 	FileSize           int64  `json:"file_size"`
 	SyncStatus         string `json:"sync_status"`

@@ -206,6 +206,7 @@ var commonColumnComments = map[string]string{
 	"feishu_folder_path":         "相对飞书来源根目录的父文件夹路径",
 	"feishu_slot_key":            "飞书业务位置唯一键，通常由来源根目录和相对路径组成",
 	"feishu_file_name":           "飞书侧文件名",
+	"feishu_modified_time":       "飞书列表接口返回的文件修改时间，用于未变化文件跳过下载",
 	"feishu_deleted_at":          "飞书侧文件删除或失联标记时间",
 	"feishu_relation_key":        "合同/发票目录关联 key",
 	"last_seen_at":               "最近一次扫描看到该文件的时间",

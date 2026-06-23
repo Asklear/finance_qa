@@ -382,6 +382,7 @@ SET file_name = ?,
     feishu_folder_path = ?,
     feishu_slot_key = ?,
     feishu_file_name = ?,
+    feishu_modified_time = ?,
     feishu_relation_key = ?,
     file_size = ?,
     sync_status = ?,
@@ -390,7 +391,7 @@ SET file_name = ?,
     last_seen_at = CURRENT_TIMESTAMP,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-`, nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
+`, nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.FeishuModifiedTime), nullableString(state.RelationKey), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
 		if err != nil {
 			return 0, err
 		}
@@ -402,15 +403,15 @@ WHERE id = ?
 
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
-INSERT INTO contract_main(
+	INSERT INTO contract_main(
 	job_id, file_name, file_hash, storage_key, feishu_file_token, feishu_root_token,
 	feishu_parent_token, feishu_relative_path, feishu_folder_path,
-	feishu_slot_key, feishu_file_name, feishu_relation_key,
+	feishu_slot_key, feishu_file_name, feishu_modified_time, feishu_relation_key,
 	category_id, file_size, sync_status, ocr_status, last_seen_at, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 RETURNING id
-`, generatedJobID(state), nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), r.defaultContractCategoryID(ctx), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
+`, generatedJobID(state), nullableString(state.FileName), nullableString(state.FileHash), nullableString(state.StorageKey), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.FeishuModifiedTime), nullableString(state.RelationKey), r.defaultContractCategoryID(ctx), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
 	return id, err
 }
 
@@ -488,6 +489,7 @@ func (r *Repository) UpsertInvoicePDFState(ctx context.Context, state InvoicePDF
 		"feishu_slot_key",
 		"feishu_file_name",
 		"feishu_relation_key",
+		"feishu_modified_time",
 		"file_size",
 		"sync_status",
 		"ocr_status",
@@ -555,6 +557,7 @@ SET contract_id = ?,
     feishu_slot_key = ?,
     feishu_file_name = ?,
     feishu_relation_key = ?,
+    feishu_modified_time = ?,
     file_size = ?,
     sync_status = ?,
     ocr_status = ?,
@@ -562,7 +565,7 @@ SET contract_id = ?,
     last_seen_at = CURRENT_TIMESTAMP,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-`, state.ContractID, state.InvoiceNumber, nullableString(state.FileName), nullableString(state.StorageKey), nullableString(state.FileHash), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
+`, state.ContractID, state.InvoiceNumber, nullableString(state.FileName), nullableString(state.StorageKey), nullableString(state.FileHash), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), nullableString(state.FeishuModifiedTime), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus), state.ID)
 		return state.ID, err
 	}
 
@@ -572,12 +575,12 @@ INSERT INTO contract_invoices(
 	contract_id, invoice_number, file_name, storage_key, file_hash,
 	feishu_file_token, feishu_root_token, feishu_parent_token,
 	feishu_relative_path, feishu_folder_path, feishu_slot_key,
-	feishu_file_name, feishu_relation_key, file_size, sync_status, ocr_status,
+	feishu_file_name, feishu_relation_key, feishu_modified_time, file_size, sync_status, ocr_status,
 	last_seen_at, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 RETURNING id
-`, state.ContractID, state.InvoiceNumber, nullableString(state.FileName), nullableString(state.StorageKey), nullableString(state.FileHash), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
+`, state.ContractID, state.InvoiceNumber, nullableString(state.FileName), nullableString(state.StorageKey), nullableString(state.FileHash), nullableString(state.FeishuFileToken), nullableString(state.FeishuRootToken), nullableString(state.FeishuParentToken), nullableString(state.FeishuRelativePath), nullableString(state.FeishuFolderPath), nullableString(state.FeishuSlotKey), nullableString(state.FileName), nullableString(state.RelationKey), nullableString(state.FeishuModifiedTime), state.FileSize, nullableString(state.SyncStatus), nullableString(state.OCRStatus)).Scan(&id)
 	return id, err
 }
 
@@ -749,6 +752,7 @@ SELECT
 	COALESCE(feishu_relative_path, ''),
 	COALESCE(feishu_folder_path, ''),
 	COALESCE(feishu_slot_key, ''),
+	COALESCE(feishu_modified_time, ''),
 	COALESCE(feishu_relation_key, ''),
 	COALESCE(file_size, 0),
 	COALESCE(sync_status, ''),
@@ -772,6 +776,7 @@ LIMIT 1`
 		&state.FeishuRelativePath,
 		&state.FeishuFolderPath,
 		&state.FeishuSlotKey,
+		&state.FeishuModifiedTime,
 		&state.RelationKey,
 		&state.FileSize,
 		&state.SyncStatus,
@@ -803,6 +808,7 @@ func (r *Repository) findInvoicePDFState(ctx context.Context, filter string, arg
 		"feishu_folder_path",
 		"feishu_slot_key",
 		"feishu_relation_key",
+		"feishu_modified_time",
 		"file_size",
 		"sync_status",
 		"ocr_status",
@@ -823,6 +829,7 @@ SELECT
 	COALESCE(feishu_relative_path, ''),
 	COALESCE(feishu_folder_path, ''),
 	COALESCE(feishu_slot_key, ''),
+	COALESCE(feishu_modified_time, ''),
 	COALESCE(feishu_relation_key, ''),
 	COALESCE(file_size, 0),
 	COALESCE(sync_status, ''),
@@ -848,6 +855,7 @@ LIMIT 1`
 		&state.FeishuRelativePath,
 		&state.FeishuFolderPath,
 		&state.FeishuSlotKey,
+		&state.FeishuModifiedTime,
 		&state.RelationKey,
 		&state.FileSize,
 		&state.SyncStatus,
