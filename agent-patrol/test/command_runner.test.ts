@@ -62,11 +62,42 @@ test("parseAgentEnvelope accepts OpenClaw pretty JSON with warning lines and nes
   assert.equal(envelope.sessionId, "patrol-smoke-1");
 });
 
+test("parseAgentEnvelope extracts OpenClaw nested session key", () => {
+  const envelope = parseAgentEnvelope(JSON.stringify({
+    result: {
+      payloads: [{ text: "AGENT_PATROL_OK" }],
+      meta: {
+        agentMeta: {
+          sessionId: "7d7a39ca-d320-4a12-9ca8-970262cbf73e"
+        },
+        systemPromptReport: {
+          sessionKey: "agent:main:main"
+        }
+      }
+    }
+  }));
+
+  assert.equal(envelope.sessionId, "7d7a39ca-d320-4a12-9ca8-970262cbf73e");
+  assert.equal(envelope.sessionKey, "agent:main:main");
+});
+
 test("validateAgentEnvelope rejects direct-MCP-only actual output", () => {
   assert.throws(() => validateAgentEnvelope({
     answer: "直接工具答案",
     source: "direct_mcp"
   }, { requireSessionIsolation: true }), /actual agent envelope/i);
+});
+
+test("validateAgentEnvelope rejects mismatched OpenClaw sessions", () => {
+  assert.throws(() => validateAgentEnvelope({
+    answer: "AGENT_PATROL_OK",
+    source: "agent",
+    sessionId: "7d7a39ca-d320-4a12-9ca8-970262cbf73e",
+    sessionKey: "agent:main:main"
+  }, {
+    requireSessionIsolation: true,
+    expectedSessionId: "patrol-session-1"
+  }), /session isolation/i);
 });
 
 test("runCommandAgent executes a JSON agent command with question file and isolated session", async () => {

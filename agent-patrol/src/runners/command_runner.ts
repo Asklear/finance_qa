@@ -35,7 +35,10 @@ export async function runCommandAgent(options: RunCommandAgentOptions): Promise<
       timeoutMs: options.timeoutMs ?? 120_000
     });
     const envelope = parseAgentEnvelope(stdout);
-    validateAgentEnvelope(envelope, { requireSessionIsolation: options.requireSessionIsolation });
+    validateAgentEnvelope(envelope, {
+      requireSessionIsolation: options.requireSessionIsolation,
+      expectedSessionId: options.sessionId
+    });
     return envelope;
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -89,12 +92,13 @@ export function parseAgentEnvelope(stdout: string): AgentEnvelope {
   const result = asRecord(parsed.result) ?? parsed;
   const meta = asRecord(result.meta);
   const agentMeta = asRecord(meta?.agentMeta);
+  const systemPromptReport = asRecord(meta?.systemPromptReport);
   const answer = extractAnswer(result);
   return {
     source: "agent",
     answer,
     sessionId: stringValue(result.sessionId) ?? stringValue(result.session_id) ?? stringValue(agentMeta?.sessionId),
-    sessionKey: stringValue(result.sessionKey) ?? stringValue(result.session_key),
+    sessionKey: stringValue(result.sessionKey) ?? stringValue(result.session_key) ?? stringValue(systemPromptReport?.sessionKey),
     toolCalls: Array.isArray(result.toolCalls) ? result.toolCalls as AgentEnvelope["toolCalls"] : [],
     raw: parsed
   };
@@ -102,7 +106,7 @@ export function parseAgentEnvelope(stdout: string): AgentEnvelope {
 
 export function validateAgentEnvelope(
   envelope: Partial<AgentEnvelope>,
-  options: { requireSessionIsolation?: boolean } = {}
+  options: { requireSessionIsolation?: boolean; expectedSessionId?: string } = {}
 ): asserts envelope is AgentEnvelope {
   if (envelope.source !== "agent") {
     throw new Error("missing actual agent envelope; direct MCP output is not a valid actual path");
@@ -115,8 +119,11 @@ export function validateAgentEnvelope(
     if (!session) {
       throw new Error("agent session isolation could not be verified");
     }
-    if (session === "agent:main:main") {
+    if (envelope.sessionKey === "agent:main:main" || session === "agent:main:main") {
       throw new Error("agent session isolation failed: protected main session reused");
+    }
+    if (options.expectedSessionId && envelope.sessionId !== options.expectedSessionId && envelope.sessionKey !== options.expectedSessionId) {
+      throw new Error(`agent session isolation failed: expected ${options.expectedSessionId}, got ${session}`);
     }
   }
 }

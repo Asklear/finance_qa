@@ -120,3 +120,14 @@ AGENT_PATROL_LIVE=1 \
 AGENT_PATROL_OPENCLAW_HOST=clawdbot \
 npm run start -- run --config examples/live/clawdbot-openclaw.example.yaml --suite smoke --out tmp/live-clawdbot-openclaw
 ```
+
+FinanceQA live smoke should run against the real OpenClaw agent surface on `ssh lzh`:
+
+```bash
+AGENT_PATROL_LIVE=1 \
+OPENCLAW_AGENT_CMD='node examples/runners/openclaw_ssh_runner.mjs --host lzh --question-file {questionFile} --session-id {sessionId} --thinking off --timeout 300' \
+FINANCEQA_MCP_URL=http://127.0.0.1/stub \
+npm run start -- run --config presets/financeqa.yaml --suite smoke --out tmp/live-lzh-financeqa
+```
+
+For the default `main` agent on `lzh`, do not pass `--agent main`: that path maps to the protected `agent:main:main` session and defeats explicit patrol session IDs. The runner rejects this when session isolation is required.
