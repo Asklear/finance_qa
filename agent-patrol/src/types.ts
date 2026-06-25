@@ -16,6 +16,7 @@ export interface RunnerConfig {
   isolatedSessionPrefix?: string;
   requireSessionIsolation?: boolean;
   disableDelivery?: boolean;
+  timeoutMs?: number;
 }
 
 export interface TargetConfig {
@@ -67,4 +68,30 @@ export interface AgentEnvelope {
   sessionKey?: string;
   toolCalls?: Array<{ name?: string; [key: string]: unknown }>;
   raw?: unknown;
+}
+
+export interface ReferenceEnvelope {
+  source: "financeqa_mcp" | "readonly_mcp" | string;
+  tool?: string;
+  answer?: string;
+  error?: string;
+  raw?: unknown;
+}
+
+export interface CaseEvidence {
+  caseId: string;
+  target: string;
+  runner: string;
+  question: string;
+  expected: Record<string, unknown>;
+  actual: AgentEnvelope;
+  reference?: ReferenceEnvelope;
+  score: {
+    caseId?: string;
+    pass?: boolean;
+    invalid?: boolean;
+    failures?: string[];
+    failureDetails?: unknown[];
+    warnings?: string[];
+  };
 }

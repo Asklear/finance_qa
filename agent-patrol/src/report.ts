@@ -6,6 +6,7 @@ interface ReportInput {
   cases: unknown[];
   results: unknown[];
   scores: unknown[];
+  evidence?: unknown[];
   aggregate: { total: number; passed: number; accuracy: number; durationMs?: number };
 }
 
@@ -20,6 +21,14 @@ export function writeReport(dir: string, input: ReportInput): void {
   writeJson(path.join(dir, "manifest.json"), input.manifest);
   writeJson(path.join(dir, "cases.json"), input.cases);
   writeJson(path.join(dir, "scores.json"), input.scores);
+  if (input.evidence) {
+    fs.writeFileSync(
+      path.join(dir, "case_evidence.jsonl"),
+      input.evidence.map((row) => redactSensitive(JSON.stringify(row))).join("\n") + "\n",
+      "utf8"
+    );
+    writeFailedEvidencePackages(dir, input);
+  }
   writeJson(path.join(dir, "summary.json"), renderSummaryJson(input));
   fs.writeFileSync(
     path.join(dir, "raw_results.jsonl"),
@@ -50,9 +59,12 @@ function renderSummary(input: ReportInput): string {
     for (const row of failedCases) {
       lines.push(`- ${row.caseId}`);
       if (row.failures.length > 0) lines.push(`  - Failures: ${row.failures.join(", ")}`);
+      if ((row.failureTypes ?? []).length > 0) lines.push(`  - Failure Types: ${row.failureTypes!.join(", ")}`);
       if (row.question) lines.push(`  - Question: ${row.question}`);
       if (row.answer) lines.push(`  - Answer: ${truncate(row.answer, 240)}`);
+      if (row.referenceAnswer) lines.push(`  - Reference: ${truncate(row.referenceAnswer, 240)}`);
       if (row.sessionId) lines.push(`  - Session: ${row.sessionId}`);
+      if (row.evidenceFile) lines.push(`  - Evidence: ${row.evidenceFile}`);
     }
     lines.push("");
   }
@@ -70,9 +82,12 @@ function renderSummaryJson(input: ReportInput): unknown {
 function failedCaseRows(input: ReportInput): Array<{
   caseId: string;
   failures: string[];
+  failureTypes?: string[];
   question?: string;
   answer?: string;
+  referenceAnswer?: string;
   sessionId?: string;
+  evidenceFile?: string;
 }> {
   const resultsByCase = new Map<string, Record<string, unknown>>();
   for (const result of input.results) {
@@ -80,28 +95,86 @@ function failedCaseRows(input: ReportInput): Array<{
     const caseId = stringValue(row?.caseId);
     if (caseId && row) resultsByCase.set(caseId, row);
   }
+  const evidenceByCase = new Map<string, Record<string, unknown>>();
+  for (const evidence of input.evidence ?? []) {
+    const row = asRecord(evidence);
+    const caseId = stringValue(row?.caseId);
+    if (caseId && row) evidenceByCase.set(caseId, row);
+  }
   const rows: Array<{
     caseId: string;
     failures: string[];
+    failureTypes?: string[];
     question?: string;
     answer?: string;
+    referenceAnswer?: string;
     sessionId?: string;
+    evidenceFile?: string;
   }> = [];
   for (const item of input.scores) {
     const score = asRecord(item);
     if (!score || score.pass !== false) continue;
     const caseId = stringValue(score.caseId) ?? "unknown";
     const result = resultsByCase.get(caseId);
-    const actual = asRecord(result?.actual);
-    rows.push({
+    const evidence = evidenceByCase.get(caseId);
+    const actual = asRecord(evidence?.actual) ?? asRecord(result?.actual);
+    const reference = asRecord(evidence?.reference);
+    const row: {
+      caseId: string;
+      failures: string[];
+      failureTypes?: string[];
+      question?: string;
+      answer?: string;
+      referenceAnswer?: string;
+      sessionId?: string;
+      evidenceFile?: string;
+    } = {
       caseId,
       failures: stringArray(score.failures),
-      question: stringValue(result?.question),
+      question: stringValue(evidence?.question) ?? stringValue(result?.question),
       answer: stringValue(actual?.answer) ?? stringValue(result?.answer),
-      sessionId: stringValue(actual?.sessionId) ?? stringValue(actual?.sessionKey)
-    });
+      referenceAnswer: stringValue(reference?.answer),
+      sessionId: stringValue(actual?.sessionId) ?? stringValue(actual?.sessionKey),
+      evidenceFile: evidence ? failedEvidenceRelativePath(caseId) : undefined
+    };
+    const types = failureTypes(score.failureDetails);
+    if (types.length > 0) row.failureTypes = types;
+    rows.push(row);
   }
   return rows;
+}
+
+function writeFailedEvidencePackages(dir: string, input: ReportInput): void {
+  const evidenceByCase = new Map<string, unknown>();
+  for (const evidence of input.evidence ?? []) {
+    const row = asRecord(evidence);
+    const caseId = stringValue(row?.caseId);
+    if (caseId) evidenceByCase.set(caseId, evidence);
+  }
+  const failedCaseIds = new Set<string>();
+  for (const item of input.scores) {
+    const score = asRecord(item);
+    if (score?.pass === false) {
+      const caseId = stringValue(score.caseId);
+      if (caseId) failedCaseIds.add(caseId);
+    }
+  }
+  if (failedCaseIds.size === 0) return;
+  const failedDir = path.join(dir, "failed_cases");
+  fs.mkdirSync(failedDir, { recursive: true });
+  for (const caseId of failedCaseIds) {
+    const evidence = evidenceByCase.get(caseId);
+    if (evidence === undefined) continue;
+    writeJson(path.join(dir, failedEvidenceRelativePath(caseId)), evidence);
+  }
+}
+
+function failedEvidenceRelativePath(caseId: string): string {
+  return path.join("failed_cases", `${safeFileName(caseId)}.json`);
+}
+
+function safeFileName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -118,4 +191,11 @@ function stringValue(value: unknown): string | undefined {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function failureTypes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => stringValue(asRecord(item)?.type))
+    .filter((item): item is string => Boolean(item));
 }

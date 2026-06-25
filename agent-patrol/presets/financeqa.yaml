@@ -80,7 +80,7 @@ templates:
     scoring:
       mustContainAny:
         - ["已收票未付款", "已收票但未付款"]
-        - ["项目口径", "所有项目", "项目成本", "项目应付"]
+        - ["项目口径", "所有项目", "项目成本", "项目应付", "项目金额"]
 
   finance_unpaid_projects:
     questions:
@@ -101,6 +101,7 @@ targets:
       agent: main
       isolatedSessionPrefix: patrol-finance
       requireSessionIsolation: true
+      timeoutMs: 360000
     # MVP: this is read-only tool policy metadata, not a business-answer oracle.
     oracle:
       type: financeqa_readonly

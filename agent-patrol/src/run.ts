@@ -1,9 +1,10 @@
 import { generateCases } from "./cases.ts";
 import { runDoctor } from "./doctor.ts";
 import { writeReport } from "./report.ts";
+import { executeReadonlyReference, type ExecuteReferenceInput } from "./reference.ts";
 import { runCommandAgent } from "./runners/command_runner.ts";
 import { scoreCase, type CaseScore } from "./scorer.ts";
-import type { AgentEnvelope, PatrolCase, PatrolConfig, TargetConfig } from "./types.ts";
+import type { AgentEnvelope, CaseEvidence, PatrolCase, PatrolConfig, ReferenceEnvelope, TargetConfig } from "./types.ts";
 
 export interface ExecuteAgentInput {
   patrolCase: PatrolCase;
@@ -12,12 +13,14 @@ export interface ExecuteAgentInput {
 }
 
 export type ExecuteAgent = (input: ExecuteAgentInput) => Promise<AgentEnvelope>;
+export type ExecuteReference = (input: ExecuteReferenceInput) => Promise<ReferenceEnvelope | undefined>;
 
 export interface RunSuiteOptions {
   suite: string;
   seed: string;
   outDir: string;
   executeAgent?: ExecuteAgent;
+  executeReference?: ExecuteReference;
 }
 
 export interface RunSuiteResult {
@@ -31,6 +34,7 @@ export interface RunSuiteResult {
     actual: AgentEnvelope;
   }>;
   scores: CaseScore[];
+  evidence: CaseEvidence[];
   aggregate: {
     total: number;
     passed: number;
@@ -47,8 +51,10 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
   }
   const cases = generateCases(config, { suite: options.suite, seed: options.seed });
   const executeAgent = options.executeAgent ?? defaultExecuteAgent;
+  const executeReference = options.executeReference ?? executeReadonlyReference;
   const results: RunSuiteResult["results"] = [];
   const scores: CaseScore[] = [];
+  const evidence: CaseEvidence[] = [];
   const startedAt = Date.now();
 
   for (const patrolCase of cases) {
@@ -68,11 +74,24 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
       durationMs,
       actual
     });
-    scores.push(scoreCase({
+    const reference = await executeReference({ patrolCase, target });
+    const score = scoreCase({
       id: patrolCase.id,
       expected: patrolCase.scoring,
-      actual
-    }));
+      actual,
+      reference
+    });
+    scores.push(score);
+    evidence.push({
+      caseId: patrolCase.id,
+      target: patrolCase.target,
+      runner: target.runner.type,
+      question: patrolCase.question,
+      expected: patrolCase.scoring,
+      actual,
+      reference,
+      score
+    });
   }
 
   const aggregate = aggregateScores(scores, config.report.minAccuracy, Date.now() - startedAt);
@@ -85,9 +104,10 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
     cases,
     results,
     scores,
+    evidence,
     aggregate
   });
-  return { cases, results, scores, aggregate };
+  return { cases, results, scores, evidence, aggregate };
 }
 
 async function defaultExecuteAgent(input: ExecuteAgentInput): Promise<AgentEnvelope> {
@@ -99,6 +119,7 @@ async function defaultExecuteAgent(input: ExecuteAgentInput): Promise<AgentEnvel
     question: input.patrolCase.question,
     sessionId: input.sessionId,
     requireSessionIsolation: input.target.runner.requireSessionIsolation,
+    timeoutMs: input.target.runner.timeoutMs,
     values: {
       agent: input.target.runner.agent ?? "",
       profile: input.target.runner.profile ?? "",

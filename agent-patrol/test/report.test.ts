@@ -70,3 +70,77 @@ test("writeReport includes failed case details in summary", () => {
     sessionId: "patrol-session-1"
   }]);
 });
+
+test("writeReport writes failed evidence package with actual and reference answers", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-report-evidence-"));
+  writeReport(dir, {
+    manifest: { suite: "finance" },
+    cases: [{ id: "finance-case-1" }],
+    results: [{
+      caseId: "finance-case-1",
+      question: "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？",
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：应收未收 2,000,000.00 元",
+        sessionId: "patrol-session-1"
+      }
+    }],
+    evidence: [{
+      caseId: "finance-case-1",
+      target: "finance_qa",
+      question: "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？",
+      expected: { amounts: [{ label: "应收未收", value: 2185200 }] },
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：应收未收 2,000,000.00 元",
+        sessionId: "patrol-session-1"
+      },
+      reference: {
+        source: "financeqa_mcp",
+        tool: "finance-query",
+        answer: "FinanceQA MCP：项目应收口径，应收未收 2,185,200.00 元"
+      },
+      score: {
+        caseId: "finance-case-1",
+        pass: false,
+        invalid: false,
+        failures: ["missing_amount:应收未收=2185200"],
+        failureDetails: [{
+          type: "agent_changed_amount",
+          message: "actual answer does not contain expected amount but reference does",
+          expected: { label: "应收未收", value: 2185200 },
+          actual: "OpenClaw 回答：应收未收 2,000,000.00 元"
+        }],
+        warnings: []
+      }
+    }],
+    scores: [{
+      caseId: "finance-case-1",
+      pass: false,
+      failures: ["missing_amount:应收未收=2185200"],
+      failureDetails: [{ type: "agent_changed_amount", message: "actual answer does not contain expected amount but reference does" }]
+    }],
+    aggregate: { total: 1, passed: 0, accuracy: 0 }
+  });
+
+  const evidenceJsonl = fs.readFileSync(path.join(dir, "case_evidence.jsonl"), "utf8");
+  assert.match(evidenceJsonl, /FinanceQA MCP/);
+  assert.match(evidenceJsonl, /OpenClaw/);
+
+  const failedPackagePath = path.join(dir, "failed_cases", "finance-case-1.json");
+  assert.equal(fs.existsSync(failedPackagePath), true);
+  const failedPackage = JSON.parse(fs.readFileSync(failedPackagePath, "utf8"));
+  assert.equal(failedPackage.question, "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？");
+  assert.match(failedPackage.actual.answer, /2,000,000\.00/);
+  assert.match(failedPackage.reference.answer, /2,185,200\.00/);
+  assert.equal(failedPackage.score.failureDetails[0].type, "agent_changed_amount");
+
+  const summary = fs.readFileSync(path.join(dir, "summary.md"), "utf8");
+  assert.match(summary, /Failure Types: agent_changed_amount/);
+  assert.match(summary, /Reference: FinanceQA MCP/);
+  assert.match(summary, /Evidence: failed_cases\/finance-case-1\.json/);
+
+  const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+  assert.deepEqual(summaryJson.failedCases[0].failureTypes, ["agent_changed_amount"]);
+  assert.equal(summaryJson.failedCases[0].evidenceFile, "failed_cases/finance-case-1.json");
+});
