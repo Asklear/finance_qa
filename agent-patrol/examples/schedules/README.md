@@ -5,8 +5,14 @@ These examples run the real OpenClaw FinanceQA path and write local report artif
 Before installing either cron or systemd templates:
 
 1. Copy `financeqa-daily.env.example` to `financeqa-daily.env`.
-2. Adjust `/opt/finance_qa/agent-patrol` to the actual checkout path.
-3. Confirm the command manually:
+2. Point `AGENT_PATROL_OPENCLAW_HOST` at a non-production OpenClaw host.
+3. Confirm that host has `openclaw-finance` installed and test data loaded.
+4. Adjust `/opt/finance_qa/agent-patrol` to the actual checkout path.
+5. Confirm the command manually:
+
+```bash
+ssh "$AGENT_PATROL_OPENCLAW_HOST" 'test -d /root/.openclaw/extensions/openclaw-finance'
+```
 
 ```bash
 cd /opt/finance_qa/agent-patrol

@@ -83,6 +83,8 @@ test("financeqa daily schedule examples only write local reports", () => {
   assert.match(contents, /tmp\/financeqa-daily/);
   assert.match(contents, /AGENT_PATROL_LIVE=1/);
   assert.match(contents, /OPENCLAW_AGENT_CMD="/);
+  assert.match(contents, /openclaw-finance/);
+  assert.match(contents, /non-production|非生产/i);
   assert.doesNotMatch(contents, /--deliver/);
   assert.doesNotMatch(contents, /\blzh\b/);
 });
