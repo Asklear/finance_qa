@@ -93,6 +93,49 @@ func TestHangingReceivablePayableQuestionUsesProjectAggregateBeforeOfficialBalan
 	}
 }
 
+func TestProjectReceivableRangeToLastCompleteNaturalMonthKeepsRequestedPeriod(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.June, 25, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("项目口径看，从2025年10月起到上一个完整自然月月底，还有多少应收未收？")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(600) {
+		t.Fatalf("total = %v, want project receivable 600", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["period_from"]; got != "2025-10" {
+		t.Fatalf("query_spec.period_from = %v, want 2025-10", got)
+	}
+	if got := spec["period_to"]; got != "2026-05" {
+		t.Fatalf("query_spec.period_to = %v, want 2026-05", got)
+	}
+	summary, ok := res.Data["contract_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract_summary missing: %+v", res.Data)
+	}
+	if got := summary["period_from"]; got != "2025-10" {
+		t.Fatalf("contract_summary.period_from = %v, want 2025-10", got)
+	}
+	if got := summary["period_to"]; got != "2026-05" {
+		t.Fatalf("contract_summary.period_to = %v, want 2026-05", got)
+	}
+	if !strings.Contains(res.Message, "2025-10~2026-05") {
+		t.Fatalf("message should include requested range, got %q", res.Message)
+	}
+}
+
 func TestHangingReceivablePayableWithoutProjectDataFallsBackToOfficialBalances(t *testing.T) {
 	dbPath := buildOfficialOnlyARAPDB(t)
 	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 14, 0, 0, 0, 0, time.UTC)))

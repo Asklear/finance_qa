@@ -128,6 +128,22 @@ func TestRewriteBossQueryBareCumulativeRevenueDefaultsToYearToDate(t *testing.T)
 	}
 }
 
+func TestRewriteBossQueryKeepsExplicitStartToLastCompleteNaturalMonth(t *testing.T) {
+	anchor := time.Date(2026, time.June, 25, 0, 0, 0, 0, time.UTC)
+
+	got := RewriteBossQuery("项目口径看，从2025年10月起到上一个完整自然月月底，还有多少应收未收？", anchor)
+
+	if got.PeriodFrom != "2025-10" || got.PeriodTo != "2026-05" {
+		t.Fatalf("period = %s~%s, want 2025-10~2026-05", got.PeriodFrom, got.PeriodTo)
+	}
+	if got.Metric != BossMetricARAP {
+		t.Fatalf("Metric = %s, want %s", got.Metric, BossMetricARAP)
+	}
+	if got.Perspective != BossPerspectiveContractFirst {
+		t.Fatalf("Perspective = %s, want %s", got.Perspective, BossPerspectiveContractFirst)
+	}
+}
+
 func TestBuildQuerySpecCarriesBossRewrite(t *testing.T) {
 	anchor := time.Date(2026, time.April, 25, 0, 0, 0, 0, time.UTC)
 

@@ -78,6 +78,16 @@ func TestExtractPeriodWithNowSupportsMixedRelativeYearMonthRange(t *testing.T) {
 	}
 }
 
+func TestExtractPeriodWithNowSupportsExplicitStartToLastCompleteNaturalMonth(t *testing.T) {
+	anchor := time.Date(2026, time.June, 25, 0, 0, 0, 0, time.UTC)
+
+	from, to := ExtractPeriodWithNow("项目口径看，从2025年10月起到上一个完整自然月月底，还有多少应收未收？", anchor)
+
+	if from != "2025-10" || to != "2026-05" {
+		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2025-10,2026-05)", from, to)
+	}
+}
+
 func TestExtractPeriodWithNowSupportsAdjacentChineseMonthRange(t *testing.T) {
 	anchor := time.Date(2026, time.May, 30, 0, 0, 0, 0, time.UTC)
 

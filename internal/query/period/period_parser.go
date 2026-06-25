@@ -24,6 +24,9 @@ func ExtractPeriodWithNow(question string, anchor time.Time) (string, string) {
 	if from, to, ok := extractExplicitMonthRange(q, year); ok {
 		return from, to
 	}
+	if from, to, ok := extractExplicitStartToRelativeMonthEndRange(q, anchor); ok {
+		return from, to
+	}
 	if from, to, ok := extractRelativeYearMonthRange(q, year); ok {
 		return from, to
 	}
@@ -142,6 +145,21 @@ func extractExplicitMonthRange(q string, anchorYear int) (string, string, bool) 
 	return "", "", false
 }
 
+func extractExplicitStartToRelativeMonthEndRange(q string, anchor time.Time) (string, string, bool) {
+	re := regexp.MustCompile(`(?:从|自)?\s*(20\d{2}|\d{2}|今年|本年|去年)\s*年?\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?(?:底|末)?\s*(?:起|开始)?\s*(?:到|至|截至|截止)\s*(上一个完整自然月|上个月|上月)(?:月底|月末|底|末)?`)
+	m := re.FindStringSubmatch(q)
+	if len(m) != 4 {
+		return "", "", false
+	}
+	y := resolveRelativeYearToken(m[1], anchor.Year())
+	month := parseChineseOrDigitMonth(m[2])
+	if !validMonth(month) {
+		return "", "", false
+	}
+	end := previousMonthPeriod(anchor)
+	return formatPeriodValue(y, month), end, true
+}
+
 func extractRelativeYearMonthRange(q string, anchorYear int) (string, string, bool) {
 	re := regexp.MustCompile(`(今年|本年|去年)\s*([0-1]?\d|[一二三四五六七八九十两]{1,3})月?(?:底|末)?`)
 	if m := re.FindStringSubmatch(q); len(m) == 3 {
@@ -257,6 +275,11 @@ func extractRelativeMonthRange(q string, anchorYear, anchorMonth int) (string, s
 		}
 	}
 	return "", "", false
+}
+
+func previousMonthPeriod(anchor time.Time) string {
+	t := time.Date(anchor.Year(), anchor.Month(), 1, 0, 0, 0, 0, anchor.Location()).AddDate(0, -1, 0)
+	return t.Format("2006-01")
 }
 
 func resolveRelativeYearToken(raw string, anchorYear int) int {
