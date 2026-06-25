@@ -33,7 +33,7 @@ fi
 
 OUT_BASE="${AGENT_PATROL_OUTPUT_DIR:-tmp/financeqa-dry-run}"
 SUITE="${AGENT_PATROL_SUITE:-smoke}"
-SEED="${AGENT_PATROL_SEED:-$(date +%F-%H)}"
+SEED="${AGENT_PATROL_SEED:-$(date +%F-%H%M)}"
 RUN_ID="${AGENT_PATROL_RUN_ID:-$(date +%Y%m%dT%H%M%S)}"
 LOG_FILE="${AGENT_PATROL_LOG_FILE:-$OUT_BASE/dry-run.log}"
 LOCK_FILE="${AGENT_PATROL_LOCK_FILE:-$OUT_BASE/.financeqa-dry-run.lock}"

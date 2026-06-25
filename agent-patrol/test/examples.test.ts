@@ -121,6 +121,7 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(contents, /--suite "\$\{AGENT_PATROL_SUITE:-smoke\}"/);
   assert.match(contents, /tmp\/financeqa-dry-run/);
   assert.match(contents, /AGENT_PATROL_LIVE=1/);
+  assert.match(contents, /date \+%F-%H%M/);
   assert.match(contents, /OPENCLAW_AGENT_CMD="/);
   assert.match(contents, /FINANCEQA_MCP_READ_TOKEN_FILE/);
   assert.match(contents, /flock/);
