@@ -52,7 +52,7 @@ test("live OpenClaw SSH runner fails closed unless explicitly enabled", () => {
 
 test("financeqa preset generates varied daily sample pool", () => {
   const config = loadConfig("presets/financeqa.yaml", {
-    OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host lzh --question-file {questionFile} --session-id {sessionId}",
+    OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host clawdbot --question-file {questionFile} --session-id {sessionId}",
     FINANCEQA_MCP_URL: "http://127.0.0.1/stub"
   });
 
@@ -82,5 +82,7 @@ test("financeqa daily schedule examples only write local reports", () => {
   assert.match(contents, /--suite daily/);
   assert.match(contents, /tmp\/financeqa-daily/);
   assert.match(contents, /AGENT_PATROL_LIVE=1/);
+  assert.match(contents, /OPENCLAW_AGENT_CMD="/);
   assert.doesNotMatch(contents, /--deliver/);
+  assert.doesNotMatch(contents, /\blzh\b/);
 });
