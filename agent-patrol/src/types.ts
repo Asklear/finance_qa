@@ -34,6 +34,7 @@ export interface CaseTemplateConfig {
   questions?: string[];
   question?: string;
   fallbackQuestion?: string;
+  variables?: Record<string, string[]>;
   scoring?: Record<string, unknown>;
 }
 

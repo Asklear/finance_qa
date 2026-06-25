@@ -59,3 +59,42 @@ test("generateCases rejects unknown templates instead of using built-in business
 
   assert.throws(() => generateCases(config, { suite: "smoke", seed: "fixed" }), /unknown case template/i);
 });
+
+test("generateCases samples template variable combinations deterministically", () => {
+  const config = {
+    templates: {
+      finance_matrix: {
+        questions: [
+          "{{period}}，所有项目的{{metric}}是多少？",
+          "项目口径看，{{period}}还有多少{{metric}}？"
+        ],
+        variables: {
+          period: ["收入表中最新月份", "从2025年10月起到上一个完整自然月月底"],
+          metric: ["应收未收", "应付未付"]
+        },
+        scoring: { mustContainAny: [["项目口径", "所有项目"]] }
+      }
+    },
+    targets: {
+      finance: {
+        runner: { type: "openclaw_agent_cli" },
+        oracle: { type: "financeqa_readonly" },
+        suites: { smoke: { templates: ["finance_matrix"], caseCount: 3 } }
+      }
+    }
+  };
+
+  const first = generateCases(config, { suite: "smoke", seed: "2026-06-25" });
+  const second = generateCases(config, { suite: "smoke", seed: "2026-06-25" });
+  const nextDay = generateCases(config, { suite: "smoke", seed: "2026-06-26" });
+
+  assert.deepEqual(first, second);
+  assert.equal(first.length, 3);
+  assert.equal(new Set(first.map((item) => item.question)).size, 3);
+  assert.equal(first.some((item) => item.question.includes("收入表中最新月份")), true);
+  assert.equal(first.some((item) => item.question.includes("上一个完整自然月月底")), true);
+  assert.equal(first.some((item) => item.question.includes("应收未收")), true);
+  assert.equal(first.some((item) => item.question.includes("应付未付")), true);
+  assert.equal(first.some((item) => item.question.includes("{{")), false);
+  assert.notDeepEqual(nextDay.map((item) => item.question), first.map((item) => item.question));
+});

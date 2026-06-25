@@ -63,6 +63,14 @@ MVP scoring is deterministic string/amount matching, not an LLM judge.
 - `mustNotContain`: none of the listed terms may appear.
 - `amounts`: each amount must appear in a normalized numeric form.
 
+## Case Variation
+
+Templates can define `variables` and use `{{name}}` placeholders in `question` or `questions`. The generator expands question wording and variable combinations into a candidate pool, then samples by suite `caseCount` and seed.
+
+Sampling is deterministic for the same seed and rotates across template groups before taking additional variants. This keeps a daily patrol from over-selecting one topic when a template has many date or wording combinations.
+
+FinanceQA uses this to keep `smoke` small while drawing from a larger pool, and `daily` to cover more themes: latest-month revenue, project receivables, invoiced receivables, project payables, invoiced payables, and unpaid project lists.
+
 ## MVP Modules
 
 - `src/config.ts`: load YAML/JSON config, expand environment variables, validate runner and read-only policy shape.

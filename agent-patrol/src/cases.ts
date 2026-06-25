@@ -12,6 +12,13 @@ interface CaseTargetConfig {
   suites?: Record<string, SuiteConfig>;
 }
 
+interface CandidateCase {
+  templateName: string;
+  variantIndex: number;
+  question: string;
+  scoring: Record<string, unknown>;
+}
+
 export function generateCases(
   config: { targets: Record<string, CaseTargetConfig>; templates?: Record<string, CaseTemplateConfig> },
   options: GenerateOptions
@@ -31,53 +38,127 @@ function generateTargetCases(
 ): PatrolCase[] {
   const suite = target.suites?.[options.suite];
   const templates = suite?.templates ?? [];
-  const selected = templates.slice(0, suite?.caseCount ?? templates.length);
-  return selected.map((templateName, index) => {
+  const anchor = options.anchors?.[targetName] ?? {};
+  const candidates = templates.flatMap((templateName) => {
     const def = templateCatalog[templateName];
     if (!def) {
       throw new Error(`unknown case template: ${templateName}`);
     }
-    const anchor = options.anchors?.[targetName] ?? {};
-    const question = renderQuestion(def, anchor, `${options.seed}:${targetName}:${templateName}`);
+    return expandTemplate(templateName, def, anchor);
+  });
+  const selected = selectCandidates(candidates, suite?.caseCount, `${options.seed}:${targetName}:${options.suite}`);
+  return selected.map((candidate) => {
     return {
-      id: stableId(targetName, templateName, index),
+      id: stableId(targetName, candidate.templateName, candidate.variantIndex),
       target: targetName,
-      template: templateName,
-      question,
+      template: candidate.templateName,
+      question: candidate.question,
       actualRunner: target.runner.type,
       oracle: target.oracle.type,
-      scoring: def.scoring ?? {}
+      scoring: candidate.scoring
     };
   });
 }
 
-function renderQuestion(def: CaseTemplateConfig, anchor: { customers?: Array<{ name?: string }> }, seed: string): string {
-  if (def.question) {
-    const rendered = applyTemplate(def.question, anchor);
-    if (rendered) return rendered;
+function expandTemplate(
+  templateName: string,
+  def: CaseTemplateConfig,
+  anchor: { customers?: Array<{ name?: string }> }
+): CandidateCase[] {
+  const bases = questionBases(def);
+  const variables = variableCombinations(def.variables ?? {});
+  const candidates: CandidateCase[] = [];
+  for (const base of bases) {
+    for (const variableSet of variables) {
+      const rendered = applyTemplate(base, anchor, variableSet);
+      if (rendered) {
+        candidates.push({
+          templateName,
+          variantIndex: candidates.length,
+          question: rendered,
+          scoring: def.scoring ?? {}
+        });
+      }
+    }
   }
+  if (candidates.length > 0) return candidates;
+  if (def.fallbackQuestion) {
+    return [{
+      templateName,
+      variantIndex: 0,
+      question: def.fallbackQuestion,
+      scoring: def.scoring ?? {}
+    }];
+  }
+  throw new Error("template has no renderable question variants");
+}
+
+function questionBases(def: CaseTemplateConfig): string[] {
+  if (def.question) return [def.question];
   if (def.questions && def.questions.length > 0) {
-    return applyTemplate(choose(def.questions, seed), anchor) || choose(def.questions, seed);
+    return def.questions;
   }
   if (def.fallbackQuestion) {
-    return def.fallbackQuestion;
+    return [def.fallbackQuestion];
   }
   throw new Error("template has no question variants");
 }
 
-function applyTemplate(question: string, anchor: { customers?: Array<{ name?: string }> }): string {
+function applyTemplate(
+  question: string,
+  anchor: { customers?: Array<{ name?: string }> },
+  variables: Record<string, string>
+): string {
   const customerName = anchor.customers?.[0]?.name;
   if (!customerName && question.includes("{{customer.name}}")) {
     return "";
   }
-  return question.replace(/\{\{customer\.name\}\}/g, customerName ?? "");
+  return question
+    .replace(/\{\{customer\.name\}\}/g, customerName ?? "")
+    .replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_match, key: string) => variables[key] ?? "");
 }
 
-function choose(items: string[], seed: string): string {
-  if (items.length === 0) {
-    throw new Error("template has no question variants");
+function variableCombinations(variables: Record<string, string[]>): Array<Record<string, string>> {
+  const entries = Object.entries(variables);
+  if (entries.length === 0) return [{}];
+  return entries.reduce<Array<Record<string, string>>>((acc, [key, values]) => {
+    if (!Array.isArray(values) || values.length === 0) {
+      throw new Error(`template variable ${key} has no values`);
+    }
+    return acc.flatMap((item) => values.map((value) => ({ ...item, [key]: value })));
+  }, [{}]);
+}
+
+function selectCandidates(candidates: CandidateCase[], caseCount: number | undefined, seed: string): CandidateCase[] {
+  if (!caseCount || caseCount >= candidates.length) {
+    return candidates;
   }
-  return items[hash(seed) % items.length]!;
+  const groups = groupCandidates(candidates);
+  const startGroup = hash(seed) % groups.length;
+  const selected: CandidateCase[] = [];
+  for (let round = 0; selected.length < caseCount; round += 1) {
+    for (let offset = 0; offset < groups.length && selected.length < caseCount; offset += 1) {
+      const group = groups[(startGroup + offset) % groups.length]!;
+      const startItem = hash(`${seed}:${group[0]!.templateName}`) % group.length;
+      selected.push(group[(startItem + round) % group.length]!);
+    }
+  }
+  return selected;
+}
+
+function groupCandidates(candidates: CandidateCase[]): CandidateCase[][] {
+  const groups: CandidateCase[][] = [];
+  const indexByTemplate = new Map<string, number>();
+  for (const candidate of candidates) {
+    let index = indexByTemplate.get(candidate.templateName);
+    if (index === undefined) {
+      index = groups.length;
+      indexByTemplate.set(candidate.templateName, index);
+      groups.push([]);
+    }
+    groups[index]!.push(candidate);
+  }
+  return groups;
 }
 
 function stableId(target: string, template: string, index: number): string {

@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { main } from "../src/index.ts";
+import { loadConfig } from "../src/config.ts";
+import { generateCases } from "../src/cases.ts";
 
 test("generic command-agent stub example runs through the agent-patrol CLI", async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-command-stub-"));
@@ -46,4 +48,23 @@ test("live OpenClaw SSH runner fails closed unless explicitly enabled", () => {
 
   assert.equal(result.status, 2);
   assert.match(result.stderr, /AGENT_PATROL_LIVE=1/);
+});
+
+test("financeqa preset generates varied daily sample pool", () => {
+  const config = loadConfig("presets/financeqa.yaml", {
+    OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host lzh --question-file {questionFile} --session-id {sessionId}",
+    FINANCEQA_MCP_URL: "http://127.0.0.1/stub"
+  });
+
+  const cases = generateCases(config, { suite: "daily", seed: "2026-06-25" });
+  const questions = cases.map((item) => item.question);
+
+  assert.equal(cases.length, 8);
+  assert.equal(new Set(questions).size, 8);
+  assert.equal(questions.some((item) => item.includes("最新月份") || item.includes("最新可见月份")), true);
+  assert.equal(questions.some((item) => item.includes("上一个完整自然月月底")), true);
+  assert.equal(questions.some((item) => item.includes("应收未收")), true);
+  assert.equal(questions.some((item) => item.includes("应付未付") || item.includes("未付款")), true);
+  assert.equal(questions.some((item) => item.includes("已开票未回款") || item.includes("已开票未收款")), true);
+  assert.equal(questions.some((item) => item.includes("已收票未付款")), true);
 });
