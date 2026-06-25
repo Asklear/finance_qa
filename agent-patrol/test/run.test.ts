@@ -123,6 +123,71 @@ test("runSuite captures FinanceQA reference and writes per-case evidence", async
   assert.equal(evidenceRows[0].score.pass, true);
 });
 
+test("runSuite detects agent/reference mismatch through reference-driven scoring", async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-reference-driven-"));
+  const config = {
+    report: { minAccuracy: 0.9 },
+    templates: {
+      receivable: {
+        questions: ["从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？"],
+        scoring: {
+          referenceChecks: {
+            amounts: { labels: ["项目应收", "应收未收"] },
+            periods: true,
+            sources: true,
+            perspectives: true
+          }
+        }
+      }
+    },
+    targets: {
+      finance_qa: {
+        runner: {
+          type: "command_agent",
+          command: "unused",
+          isolatedSessionPrefix: "patrol-finance"
+        },
+        oracle: {
+          type: "financeqa_readonly",
+          mcpUrl: "http://127.0.0.1/mcp",
+          allowedTools: ["finance-query"]
+        },
+        suites: { smoke: { templates: ["receivable"], caseCount: 1 } }
+      }
+    }
+  };
+
+  const result = await runSuite(config, {
+    suite: "smoke",
+    seed: "fixed",
+    outDir,
+    executeAgent: async (item: { sessionId: string }): Promise<AgentEnvelope> => ({
+      source: "agent",
+      answer: "从2025年10月起到2026年5月底，项目应收 146,688.40 元。来源：《fin-revcost-0601.xlsx》",
+      sessionId: item.sessionId
+    }),
+    executeReference: async () => ({
+      source: "financeqa_mcp",
+      tool: "finance-query",
+      answer: "2025-10~2026-04 老板口径先看项目汇总：项目应收 10943576.36 元。来源：《fin-revenue-0422.xlsx》《fin-revcost-0601.xlsx》"
+    })
+  });
+
+  assert.equal(result.aggregate.passed, 0);
+  assert.deepEqual(result.scores[0]?.failureDetails.map((failure) => failure.type), [
+    "agent_changed_amount",
+    "missing_source",
+    "period_mismatch",
+    "perspective_mismatch",
+    "scorer_term_miss"
+  ]);
+  const evidencePath = path.join(outDir, "failed_cases", "finance_qa_receivable_001.json");
+  assert.equal(fs.existsSync(evidencePath), true);
+  const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+  assert.equal(evidence.score.failureDetails[0].type, "agent_changed_amount");
+  assert.match(evidence.reference.answer, /10943576\.36/);
+});
+
 test("runSuite applies runner timeout to command agents", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-timeout-"));
   const scriptPath = path.join(dir, "slow_agent.mjs");

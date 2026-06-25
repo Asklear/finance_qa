@@ -181,3 +181,115 @@ test("scoreCase orders finance evidence failures before auxiliary term failures"
     "scorer_term_miss"
   ]);
 });
+
+test("scoreCase derives finance checks from FinanceQA reference without fixed expected amounts", () => {
+  const score = scoreCase({
+    id: "case-9",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["项目应收", "应收未收"] },
+        periods: true,
+        sources: true,
+        perspectives: true
+      }
+    },
+    actual: {
+      source: "agent",
+      answer: "从2025年10月起到2026年5月底，项目应收 146,688.40 元。来源：《fin-revcost-0601.xlsx》"
+    },
+    reference: {
+      source: "financeqa_mcp",
+      answer: "2025-10~2026-04 老板口径先看项目汇总：项目应收 10943576.36 元。来源：《fin-revenue-0422.xlsx》《fin-revcost-0601.xlsx》"
+    }
+  });
+
+  assert.equal(score.pass, false);
+  assert.deepEqual(score.failureDetails.map((failure) => failure.type), [
+    "agent_changed_amount",
+    "missing_source",
+    "period_mismatch",
+    "perspective_mismatch",
+    "scorer_term_miss"
+  ]);
+  assert.deepEqual(score.failures, [
+    "missing_amount:项目应收=10943576.36",
+    "missing_source:fin-revenue-0422.xlsx",
+    "period_mismatch:2026-04",
+    "perspective_mismatch:老板口径",
+    "missing_any_term:老板口径|项目汇总"
+  ]);
+});
+
+test("scoreCase accepts equivalent period formats and ten-thousand yuan amounts from reference checks", () => {
+  const score = scoreCase({
+    id: "case-10",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["项目应收"] },
+        periods: true,
+        sources: true,
+        perspectives: true
+      }
+    },
+    actual: {
+      source: "agent",
+      answer: "2025年10月至2026年4月，老板口径项目汇总：项目应收 1094.36 万元。来源：《fin-revenue-0422.xlsx》"
+    },
+    reference: {
+      source: "financeqa_mcp",
+      answer: "2025-10~2026-04 老板口径先看项目汇总：项目应收 10943576.36 元。来源：《fin-revenue-0422.xlsx》"
+    }
+  });
+
+  assert.equal(score.pass, true);
+  assert.deepEqual(score.failures, []);
+});
+
+test("scoreCase compares labeled headline amounts instead of any repeated detail amount", () => {
+  const score = scoreCase({
+    id: "case-11",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["已收票未付款"] },
+        periods: true,
+        sources: true
+      }
+    },
+    actual: {
+      source: "agent",
+      answer: "2026年5月，汇总：已收票未付款 2,018,430.15 元。明细：行业商品数据采购合同 未付款 636,000.00 元。来源：《fin-revcost-0601.xlsx》"
+    },
+    reference: {
+      source: "financeqa_mcp",
+      answer: "2026-05 老板口径先看项目汇总：已收票未付款 636000.00 元。来源：《fin-revcost-0601.xlsx》"
+    }
+  });
+
+  assert.equal(score.pass, false);
+  assert.deepEqual(score.failureDetails.map((failure) => failure.type), ["agent_changed_amount"]);
+  assert.deepEqual(score.failures, ["missing_amount:已收票未付款=636000"]);
+});
+
+test("scoreCase accepts labeled heading amount on the next line", () => {
+  const score = scoreCase({
+    id: "case-12",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["项目结算"] },
+        periods: true,
+        sources: true
+      }
+    },
+    actual: {
+      source: "agent",
+      answer: "2026年5月，项目结算营收：\n\n**912,725.41 元**\n\n来源：《fin-revcost-0601.xlsx》"
+    },
+    reference: {
+      source: "financeqa_mcp",
+      answer: "2026-05 老板口径先看项目汇总：项目结算 912725.41 元。来源：《fin-revcost-0601.xlsx》"
+    }
+  });
+
+  assert.equal(score.pass, true);
+  assert.deepEqual(score.failures, []);
+});

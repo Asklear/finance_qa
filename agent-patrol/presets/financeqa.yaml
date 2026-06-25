@@ -18,6 +18,11 @@ templates:
         - "收入表中最新月份"
         - "最新可见月份"
     scoring:
+      referenceChecks:
+        amounts:
+          labels: ["项目结算", "营收", "收入"]
+        periods: true
+        sources: true
       mustContainAny:
         - ["项目结算", "营收", "收入"]
 
@@ -32,6 +37,11 @@ templates:
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      referenceChecks:
+        amounts:
+          labels: ["项目应收", "应收未收"]
+        periods: true
+        sources: true
       mustContain:
         - "应收未收"
       mustContainAny:
@@ -48,6 +58,11 @@ templates:
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      referenceChecks:
+        amounts:
+          labels: ["已开票未回款", "已开票未收款"]
+        periods: true
+        sources: true
       mustContainAny:
         - ["已开票未回款", "已开票未收款"]
         - ["项目口径", "所有项目", "项目应收"]
@@ -63,6 +78,11 @@ templates:
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      referenceChecks:
+        amounts:
+          labels: ["项目应付", "应付未付", "项目成本"]
+        periods: true
+        sources: true
       mustContainAny:
         - ["项目口径", "所有项目", "项目应付", "项目成本"]
         - ["应付未付", "项目应付", "已收票未付款"]
@@ -78,6 +98,11 @@ templates:
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      referenceChecks:
+        amounts:
+          labels: ["已收票未付款", "已收票但未付款"]
+        periods: true
+        sources: true
       mustContainAny:
         - ["已收票未付款", "已收票但未付款"]
         - ["项目口径", "所有项目", "项目成本", "项目应付", "项目金额"]
@@ -88,6 +113,11 @@ templates:
       - "列一下2025年至2026年还有未付款的项目和金额。"
       - "项目成本口径看，25年至26年未付款项目分别是多少？"
     scoring:
+      referenceChecks:
+        amounts:
+          labels: ["已收票未付款", "项目应付", "应付未付", "项目成本", "未付款"]
+        periods: true
+        sources: true
       mustContainAny:
         - ["项目成本", "项目口径", "项目应付"]
         - ["未付款", "应付未付", "已收票未付款"]

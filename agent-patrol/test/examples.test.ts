@@ -69,6 +69,21 @@ test("financeqa preset generates varied daily sample pool", () => {
   assert.equal(questions.some((item) => item.includes("已收票未付款")), true);
 });
 
+test("financeqa preset scores finance answers against FinanceQA MCP references", () => {
+  const config = loadConfig("presets/financeqa.yaml", {
+    OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host clawdbot --question-file {questionFile} --session-id {sessionId}",
+    FINANCEQA_MCP_URL: "http://127.0.0.1/stub"
+  });
+
+  for (const [name, template] of Object.entries(config.templates ?? {})) {
+    const referenceChecks = template.scoring?.referenceChecks as Record<string, unknown> | undefined;
+    assert.ok(referenceChecks, `${name} missing referenceChecks`);
+    assert.equal(referenceChecks.periods, true, `${name} should compare reference periods`);
+    assert.equal(referenceChecks.sources, true, `${name} should compare reference sources`);
+    assert.notEqual(referenceChecks.perspectives, true, `${name} should not hard-fail reference boilerplate wording`);
+  }
+});
+
 test("financeqa daily schedule examples only write local reports", () => {
   const files = [
     "examples/schedules/financeqa-daily.env.example",
