@@ -1,0 +1,59 @@
+version: 1
+timezone: Asia/Shanghai
+report:
+  minAccuracy: 0.9
+  outputDir: tmp/patrol-financeqa
+
+writeToolPatterns:
+  - "^finance-(sync|upload)$"
+
+templates:
+  finance_latest_month_revenue:
+    questions:
+      - "收入表中最新月份的营收是多少？"
+      - "按最新可见月份，看一下当月营收。"
+
+  finance_project_receivable_unpaid:
+    questions:
+      - "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？"
+      - "项目口径看，从2025年10月起到上一个完整自然月月底，还有多少应收未收？"
+    scoring:
+      mustContain:
+        - "应收未收"
+      mustContainAny:
+        - ["项目口径", "所有项目", "项目应收"]
+
+  finance_project_payable_unpaid:
+    questions:
+      - "从2025年10月起到上一个完整自然月月底，所有项目的应付未付是多少？"
+      - "项目口径看，从2025年10月起到上一个完整自然月月底，还有多少应付未付？"
+    scoring:
+      mustContainAny:
+        - ["项目口径", "所有项目", "项目应付", "项目成本"]
+        - ["应付未付", "项目应付", "已收票未付款"]
+
+targets:
+  finance_qa:
+    kind: openclaw_finance_agent
+    runner:
+      type: openclaw_agent_cli
+      command: ${OPENCLAW_AGENT_CMD}
+      agent: main
+      isolatedSessionPrefix: patrol-finance
+      requireSessionIsolation: true
+    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    oracle:
+      type: financeqa_readonly
+      mcpUrl: ${FINANCEQA_MCP_URL}
+      bearerTokenEnv: FINANCEQA_MCP_READ_TOKEN
+      allowedTools:
+        - finance-query
+        - finance-host-data
+        - finance-dimensions
+    suites:
+      smoke:
+        caseCount: 3
+        templates:
+          - finance_latest_month_revenue
+          - finance_project_receivable_unpaid
+          - finance_project_payable_unpaid

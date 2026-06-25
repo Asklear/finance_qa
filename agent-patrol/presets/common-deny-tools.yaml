@@ -1,0 +1,6 @@
+writeToolPatterns:
+  - "^finance-(sync|upload)$"
+  - "^(create|update|cancel|pause|resume)_"
+  - "^upsert_"
+  - "^write_"
+  - "_write$"

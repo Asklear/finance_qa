@@ -1,0 +1,70 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { loadConfig } from "../src/config.ts";
+
+test("loadConfig expands environment variables and validates agent/oracle shape", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-config-"));
+  const configPath = path.join(dir, "patrol.yaml");
+  fs.writeFileSync(configPath, `
+version: 1
+targets:
+  finance:
+    kind: openclaw_finance_agent
+    runner:
+      type: openclaw_agent_cli
+      command: "\${OPENCLAW_CMD}"
+      isolatedSessionPrefix: patrol-finance
+      requireSessionIsolation: true
+    oracle:
+      type: financeqa_readonly
+      mcpUrl: "\${FINANCE_URL}"
+      allowedTools: [finance-query]
+`, "utf8");
+
+  const config = loadConfig(configPath, {
+    OPENCLAW_CMD: "openclaw agent --json --message {question}",
+    FINANCE_URL: "http://127.0.0.1:3009/mcp"
+  });
+
+  assert.equal(config.report.minAccuracy, 0.9);
+  assert.equal(config.targets.finance.runner.command, "openclaw agent --json --message {question}");
+  assert.equal(config.targets.finance.oracle.mcpUrl, "http://127.0.0.1:3009/mcp");
+});
+
+test("loadConfig rejects targets without actual agent runner", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-config-"));
+  const configPath = path.join(dir, "patrol.yaml");
+  fs.writeFileSync(configPath, `
+targets:
+  bad:
+    oracle:
+      mcpUrl: http://127.0.0.1/mcp
+      allowedTools: [finance-query]
+`, "utf8");
+
+  assert.throws(() => loadConfig(configPath, {}), /bad.*runner/i);
+});
+
+test("loadConfig preserves unresolved environment placeholders for offline generation", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-config-"));
+  const configPath = path.join(dir, "patrol.yaml");
+  fs.writeFileSync(configPath, `
+targets:
+  finance:
+    runner:
+      type: openclaw_agent_cli
+      command: "\${OPENCLAW_CMD}"
+    oracle:
+      type: financeqa_readonly
+      mcpUrl: "\${FINANCE_URL}"
+      allowedTools: [finance-query]
+`, "utf8");
+
+  const config = loadConfig(configPath, {});
+
+  assert.equal(config.targets.finance?.runner.command, "${OPENCLAW_CMD}");
+  assert.equal(config.targets.finance?.oracle.mcpUrl, "${FINANCE_URL}");
+});

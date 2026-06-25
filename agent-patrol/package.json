@@ -1,0 +1,25 @@
+{
+  "name": "@financeqa/agent-patrol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Low-intrusion agent patrol runner for OpenClaw and Claude Agent SDK based business agents.",
+  "bin": {
+    "agent-patrol": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.2",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.0.4",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

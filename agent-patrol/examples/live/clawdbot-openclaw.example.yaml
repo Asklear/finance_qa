@@ -1,0 +1,33 @@
+version: 1
+timezone: Asia/Shanghai
+report:
+  minAccuracy: 0.9
+  outputDir: tmp/live-clawdbot-openclaw
+
+templates:
+  openclaw_echo_smoke:
+    questions:
+      - "请只回答：AGENT_PATROL_OK"
+    scoring:
+      mustContain:
+        - "AGENT_PATROL_OK"
+
+targets:
+  clawdbot_openclaw:
+    kind: openclaw_agent_live_smoke
+    runner:
+      type: openclaw_agent_ssh
+      command: node examples/runners/openclaw_ssh_runner.mjs --host ${AGENT_PATROL_OPENCLAW_HOST} --question-file {questionFile} --session-id {sessionId} --thinking off --timeout 180
+      isolatedSessionPrefix: patrol-clawdbot-openclaw
+      requireSessionIsolation: true
+    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    oracle:
+      type: readonly_smoke
+      mcpUrl: http://127.0.0.1/stub
+      allowedTools:
+        - openclaw-agent
+    suites:
+      smoke:
+        caseCount: 1
+        templates:
+          - openclaw_echo_smoke

@@ -1,0 +1,49 @@
+version: 1
+timezone: Asia/Shanghai
+report:
+  minAccuracy: 0.9
+  outputDir: tmp/patrol-bossa
+
+templates:
+  bossa_sales_overview_customer_only:
+    questions:
+      - "现在销售盘子怎么样？只看客户项目。"
+      - "客户口径看一下当前商机分布。"
+
+  bossa_customer_detail:
+    question: "{{customer.name}} 最近进展怎么样？"
+    fallbackQuestion: "一个活跃客户 最近进展怎么样？"
+
+  bossa_recent_email_activity:
+    questions:
+      - "最近邮件有什么值得注意的动静？"
+      - "最近客户邮件里有哪些推进信号？"
+
+targets:
+  bossa:
+    kind: bossa_claude_agent
+    runner:
+      type: claude_agent_sdk
+      command: ${BOSSA_PATROL_AGENT_CMD}
+      profile: default
+      userId: ${BOSSA_PATROL_USER_ID}
+      isolatedSessionPrefix: patrol-bossa
+      disableDelivery: true
+    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    oracle:
+      type: bossa_readonly_mcp
+      mcpUrl: ${BOSSA_OPENCLAW_MCP_URL}
+      bearerTokenEnv: BOSSA_OPENCLAW_MCP_TOKEN
+      allowedTools:
+        - get_all_deals
+        - search_customers
+        - get_customer_overview
+        - get_opportunity_overview
+        - list_recent_emails
+    suites:
+      smoke:
+        caseCount: 3
+        templates:
+          - bossa_sales_overview_customer_only
+          - bossa_customer_detail
+          - bossa_recent_email_activity

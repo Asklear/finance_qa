@@ -1,0 +1,34 @@
+version: 1
+timezone: Asia/Shanghai
+report:
+  minAccuracy: 0.9
+  outputDir: tmp/patrol
+
+templates:
+  generic_status_check:
+    questions:
+      - "请概括当前业务状态。"
+      - "看一下现在最重要的业务进展。"
+    scoring:
+      mustContain: []
+
+targets:
+  demo_agent:
+    kind: generic_agent
+    runner:
+      type: command_agent
+      command: ${AGENT_PATROL_CMD}
+      isolatedSessionPrefix: patrol-demo
+      requireSessionIsolation: true
+    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    oracle:
+      type: readonly_mcp
+      mcpUrl: ${AGENT_PATROL_MCP_URL}
+      bearerTokenEnv: AGENT_PATROL_MCP_TOKEN
+      allowedTools:
+        - read_status
+    suites:
+      smoke:
+        caseCount: 1
+        templates:
+          - generic_status_check

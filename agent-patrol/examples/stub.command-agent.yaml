@@ -1,0 +1,33 @@
+version: 1
+timezone: Asia/Shanghai
+report:
+  minAccuracy: 0.9
+  outputDir: tmp/stub-command-agent
+
+templates:
+  command_agent_smoke:
+    questions:
+      - "请只回答：AGENT_PATROL_OK"
+    scoring:
+      mustContain:
+        - "AGENT_PATROL_OK"
+
+targets:
+  command_agent_stub:
+    kind: command_agent_stub
+    runner:
+      type: command_agent
+      command: node examples/stubs/command_agent_stub.mjs --question-file {questionFile} --session-id {sessionId}
+      isolatedSessionPrefix: patrol-command-stub
+      requireSessionIsolation: true
+    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    oracle:
+      type: readonly_stub
+      mcpUrl: http://127.0.0.1/stub
+      allowedTools:
+        - read_status
+    suites:
+      smoke:
+        caseCount: 1
+        templates:
+          - command_agent_smoke
