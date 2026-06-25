@@ -139,3 +139,13 @@ npm run start -- run --config presets/financeqa.yaml --suite smoke --out tmp/liv
 ```
 
 For the default `main` agent on `lzh`, do not pass `--agent main`: that path maps to the protected `agent:main:main` session and defeats explicit patrol session IDs. The runner rejects this when session isolation is required.
+
+## Local Scheduling
+
+Schedule templates live in `examples/schedules/`:
+
+- `financeqa-daily.cron.example`: cron entry for three daily local-report runs.
+- `financeqa-daily.service` and `financeqa-daily.timer`: systemd timer equivalent.
+- `financeqa-daily.env.example`: environment variables shared by both examples.
+
+These examples are not installed automatically. They run `presets/financeqa.yaml` with `--suite daily`, write reports under `tmp/financeqa-daily/`, and do not pass OpenClaw delivery flags. Run the manual command in `examples/schedules/README.md` before enabling a timer.

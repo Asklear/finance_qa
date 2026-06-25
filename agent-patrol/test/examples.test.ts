@@ -68,3 +68,19 @@ test("financeqa preset generates varied daily sample pool", () => {
   assert.equal(questions.some((item) => item.includes("已开票未回款") || item.includes("已开票未收款")), true);
   assert.equal(questions.some((item) => item.includes("已收票未付款")), true);
 });
+
+test("financeqa daily schedule examples only write local reports", () => {
+  const files = [
+    "examples/schedules/financeqa-daily.env.example",
+    "examples/schedules/financeqa-daily.cron.example",
+    "examples/schedules/financeqa-daily.service",
+    "examples/schedules/financeqa-daily.timer"
+  ];
+  const contents = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
+
+  assert.match(contents, /presets\/financeqa\.yaml/);
+  assert.match(contents, /--suite daily/);
+  assert.match(contents, /tmp\/financeqa-daily/);
+  assert.match(contents, /AGENT_PATROL_LIVE=1/);
+  assert.doesNotMatch(contents, /--deliver/);
+});
