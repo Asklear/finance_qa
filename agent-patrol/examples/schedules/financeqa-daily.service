@@ -1,9 +1,8 @@
 [Unit]
-Description=Agent Patrol FinanceQA daily local report
+Description=Agent Patrol FinanceQA low-frequency dry-run local report
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/finance_qa/agent-patrol
 EnvironmentFile=/opt/finance_qa/agent-patrol/examples/schedules/financeqa-daily.env
-ExecStart=/bin/bash -lc 'mkdir -p tmp/financeqa-daily && npm run start -- run --config presets/financeqa.yaml --suite daily --seed "$(date +%%F-%%H)" --out "tmp/financeqa-daily/$(date +%%Y%%m%%dT%%H%%M%%S)"'
-
+ExecStart=/opt/finance_qa/agent-patrol/examples/schedules/run-financeqa-dry-run.sh

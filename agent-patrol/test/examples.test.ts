@@ -84,22 +84,30 @@ test("financeqa preset scores finance answers against FinanceQA MCP references",
   }
 });
 
-test("financeqa daily schedule examples only write local reports", () => {
+test("financeqa low-frequency dry-run schedule examples only write local reports", () => {
   const files = [
+    "examples/schedules/README.md",
     "examples/schedules/financeqa-daily.env.example",
     "examples/schedules/financeqa-daily.cron.example",
     "examples/schedules/financeqa-daily.service",
-    "examples/schedules/financeqa-daily.timer"
+    "examples/schedules/financeqa-daily.timer",
+    "examples/schedules/run-financeqa-dry-run.sh"
   ];
   const contents = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  const scriptMode = fs.statSync("examples/schedules/run-financeqa-dry-run.sh").mode;
 
   assert.match(contents, /presets\/financeqa\.yaml/);
-  assert.match(contents, /--suite daily/);
-  assert.match(contents, /tmp\/financeqa-daily/);
+  assert.match(contents, /--suite "\$\{AGENT_PATROL_SUITE:-smoke\}"/);
+  assert.match(contents, /tmp\/financeqa-dry-run/);
   assert.match(contents, /AGENT_PATROL_LIVE=1/);
   assert.match(contents, /OPENCLAW_AGENT_CMD="/);
+  assert.match(contents, /FINANCEQA_MCP_READ_TOKEN_FILE/);
+  assert.match(contents, /flock/);
+  assert.match(contents, /09,17/);
+  assert.doesNotMatch(contents, /09,13,18/);
   assert.match(contents, /openclaw-finance/);
-  assert.match(contents, /non-production|非生产/i);
+  assert.match(contents, /non-production|非生产|dry-run/i);
   assert.doesNotMatch(contents, /--deliver/);
   assert.doesNotMatch(contents, /\blzh\b/);
+  assert.notEqual(scriptMode & 0o111, 0);
 });

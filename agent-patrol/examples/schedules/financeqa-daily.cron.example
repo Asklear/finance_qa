@@ -1,7 +1,6 @@
 SHELL=/bin/bash
 AGENT_PATROL_ROOT=/opt/finance_qa/agent-patrol
 
-# Run three local-report-only FinanceQA patrols per day.
+# Run two low-frequency local-report-only FinanceQA dry-runs per day.
 # Copy financeqa-daily.env.example to financeqa-daily.env and adjust paths before installing.
-10 9,13,18 * * * cd "$AGENT_PATROL_ROOT" && set -a && source examples/schedules/financeqa-daily.env && set +a && mkdir -p tmp/financeqa-daily && npm run start -- run --config presets/financeqa.yaml --suite daily --seed "$(date +\%F-\%H)" --out "tmp/financeqa-daily/$(date +\%Y\%m\%dT\%H\%M\%S)" >> tmp/financeqa-daily/cron.log 2>&1
-
+20 9,17 * * * cd "$AGENT_PATROL_ROOT" && AGENT_PATROL_ENV_FILE=examples/schedules/financeqa-daily.env examples/schedules/run-financeqa-dry-run.sh

@@ -1,11 +1,10 @@
 [Unit]
-Description=Run Agent Patrol FinanceQA daily local report
+Description=Run Agent Patrol FinanceQA low-frequency dry-run local report
 
 [Timer]
-OnCalendar=*-*-* 09,13,18:10:00
+OnCalendar=*-*-* 09,17:20:00
 Persistent=true
-RandomizedDelaySec=5m
+RandomizedDelaySec=10m
 
 [Install]
 WantedBy=timers.target
-

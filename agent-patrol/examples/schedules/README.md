@@ -1,6 +1,6 @@
-# FinanceQA Daily Patrol Schedules
+# FinanceQA Low-frequency Dry-run Schedules
 
-These examples run the real OpenClaw FinanceQA path and write local report artifacts only. They do not send IM messages and do not call OpenClaw with delivery flags.
+These examples run the real OpenClaw FinanceQA path as a low-frequency dry-run and write local report artifacts only. They do not send IM messages and do not call OpenClaw with delivery flags.
 
 Before installing either cron or systemd templates:
 
@@ -8,7 +8,8 @@ Before installing either cron or systemd templates:
 2. Point `AGENT_PATROL_OPENCLAW_HOST` at a non-production OpenClaw host.
 3. Confirm that host has `openclaw-finance` installed and test data loaded.
 4. Adjust `/opt/finance_qa/agent-patrol` to the actual checkout path.
-5. Confirm the command manually:
+5. Confirm `FINANCEQA_MCP_URL` and `FINANCEQA_MCP_READ_TOKEN_FILE` point at a read-only FinanceQA MCP endpoint/token.
+6. Confirm the command manually:
 
 ```bash
 ssh "$AGENT_PATROL_OPENCLAW_HOST" 'test -d /root/.openclaw/extensions/openclaw-finance'
@@ -16,10 +17,8 @@ ssh "$AGENT_PATROL_OPENCLAW_HOST" 'test -d /root/.openclaw/extensions/openclaw-f
 
 ```bash
 cd /opt/finance_qa/agent-patrol
-set -a
-source examples/schedules/financeqa-daily.env
-set +a
-npm run start -- run --config presets/financeqa.yaml --suite daily --out tmp/financeqa-daily/manual
+AGENT_PATROL_ENV_FILE=examples/schedules/financeqa-daily.env \
+examples/schedules/run-financeqa-dry-run.sh
 ```
 
-Reports are written under `tmp/financeqa-daily/`.
+The default schedule runs two `smoke` suite dry-runs per day, with jitter in the systemd timer. Reports are written under `tmp/financeqa-dry-run/`.

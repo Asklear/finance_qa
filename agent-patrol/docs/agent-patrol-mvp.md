@@ -145,8 +145,9 @@ For the default `main` agent, do not pass `--agent main`: that path can map to t
 
 Schedule templates live in `examples/schedules/`:
 
-- `financeqa-daily.cron.example`: cron entry for three daily local-report runs.
-- `financeqa-daily.service` and `financeqa-daily.timer`: systemd timer equivalent.
+- `run-financeqa-dry-run.sh`: shared low-frequency dry-run entrypoint with a non-overlap lock.
+- `financeqa-daily.cron.example`: cron entry for two daily local-report dry-runs.
+- `financeqa-daily.service` and `financeqa-daily.timer`: systemd timer equivalent with jitter.
 - `financeqa-daily.env.example`: environment variables shared by both examples.
 
-These examples are not installed automatically. They run `presets/financeqa.yaml` with `--suite daily`, write reports under `tmp/financeqa-daily/`, and do not pass OpenClaw delivery flags. Run the manual command in `examples/schedules/README.md` before enabling a timer.
+These examples are not installed automatically. They run `presets/financeqa.yaml` with `--suite smoke`, write reports under `tmp/financeqa-dry-run/`, and do not pass OpenClaw delivery flags. Run the manual command in `examples/schedules/README.md` before enabling a timer.
