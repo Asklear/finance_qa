@@ -50,6 +50,27 @@ test("live OpenClaw SSH runner fails closed unless explicitly enabled", () => {
   assert.match(result.stderr, /AGENT_PATROL_LIVE=1/);
 });
 
+test("live OpenClaw local runner fails closed unless explicitly enabled", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-live-local-runner-"));
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "请只回答：AGENT_PATROL_OK", "utf8");
+
+  const result = spawnSync("node", [
+    "examples/runners/openclaw_local_runner.mjs",
+    "--question-file",
+    questionFile,
+    "--session-id",
+    "patrol-test"
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, AGENT_PATROL_LIVE: "" }
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /AGENT_PATROL_LIVE=1/);
+});
+
 test("financeqa preset generates varied daily sample pool", () => {
   const config = loadConfig("presets/financeqa.yaml", {
     OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host clawdbot --question-file {questionFile} --session-id {sessionId}",

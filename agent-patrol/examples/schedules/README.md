@@ -5,14 +5,14 @@ These examples run the real OpenClaw FinanceQA path as a low-frequency dry-run a
 Before installing either cron or systemd templates:
 
 1. Copy `financeqa-daily.env.example` to `financeqa-daily.env`.
-2. Point `AGENT_PATROL_OPENCLAW_HOST` at a non-production OpenClaw host.
+2. Install this checkout on a non-production OpenClaw host.
 3. Confirm that host has `openclaw-finance` installed and test data loaded.
 4. Adjust `/opt/finance_qa/agent-patrol` to the actual checkout path.
 5. Confirm `FINANCEQA_MCP_URL` and `FINANCEQA_MCP_READ_TOKEN_FILE` point at a read-only FinanceQA MCP endpoint/token.
 6. Confirm the command manually:
 
 ```bash
-ssh "$AGENT_PATROL_OPENCLAW_HOST" 'test -d /root/.openclaw/extensions/openclaw-finance'
+test -d /root/.openclaw/extensions/openclaw-finance
 ```
 
 ```bash

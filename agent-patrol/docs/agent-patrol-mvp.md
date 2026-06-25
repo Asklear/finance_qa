@@ -150,4 +150,4 @@ Schedule templates live in `examples/schedules/`:
 - `financeqa-daily.service` and `financeqa-daily.timer`: systemd timer equivalent with jitter.
 - `financeqa-daily.env.example`: environment variables shared by both examples.
 
-These examples are not installed automatically. They run `presets/financeqa.yaml` with `--suite smoke`, write reports under `tmp/financeqa-dry-run/`, and do not pass OpenClaw delivery flags. Run the manual command in `examples/schedules/README.md` before enabling a timer.
+These examples are not installed automatically. They are intended to run on a non-production OpenClaw host, use `examples/runners/openclaw_local_runner.mjs`, run `presets/financeqa.yaml` with `--suite smoke`, write reports under `tmp/financeqa-dry-run/`, and do not pass OpenClaw delivery flags. Run the manual command in `examples/schedules/README.md` before enabling a timer.
