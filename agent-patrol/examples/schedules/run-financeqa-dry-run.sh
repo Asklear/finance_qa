@@ -31,9 +31,21 @@ fi
 
 : "${FINANCEQA_MCP_READ_TOKEN:?FINANCEQA_MCP_READ_TOKEN or FINANCEQA_MCP_READ_TOKEN_FILE is required}"
 
+generate_seed() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen
+    return
+  fi
+  if [[ -r /proc/sys/kernel/random/uuid ]]; then
+    cat /proc/sys/kernel/random/uuid
+    return
+  fi
+  date +%s%N
+}
+
 OUT_BASE="${AGENT_PATROL_OUTPUT_DIR:-tmp/financeqa-dry-run}"
 SUITE="${AGENT_PATROL_SUITE:-smoke}"
-SEED="${AGENT_PATROL_SEED:-$(date +%F-%H%M)}"
+SEED="${AGENT_PATROL_SEED:-$(generate_seed)}"
 RUN_ID="${AGENT_PATROL_RUN_ID:-$(date +%Y%m%dT%H%M%S)}"
 LOG_FILE="${AGENT_PATROL_LOG_FILE:-$OUT_BASE/dry-run.log}"
 LOCK_FILE="${AGENT_PATROL_LOCK_FILE:-$OUT_BASE/.financeqa-dry-run.lock}"
