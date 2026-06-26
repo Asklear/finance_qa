@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { main } from "../src/index.ts";
 import { loadConfig } from "../src/config.ts";
 import { generateCases } from "../src/cases.ts";
@@ -105,6 +106,111 @@ test("financeqa preset defines reference-check labels for finance answer compari
   }
 });
 
+test("financeqa canonical golden runner uses template-derived query instead of raw question", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-golden-"));
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "老板随口问：上个月项目还有多少钱没收？", "utf8");
+  const seenBodies: string[] = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      seenBodies.push(body);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        jsonrpc: "2.0",
+        id: "golden",
+        result: {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              final_answer: "2025-10~2026-05 项目应收 800000.00 元。来源：《fin-revenue-0601.xlsx》",
+              data: {
+                period_from: "2025-10",
+                period_to: "2026-05",
+                metrics: { "应收": 800000 },
+                contract_summary: { receivable_amount: 800000 },
+                source_note: "来源：《fin-revenue-0601.xlsx》"
+              }
+            })
+          }]
+        }
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  try {
+    const result = await spawnNode([
+      "examples/golden/financeqa_canonical_golden.mjs",
+      "--template", "finance_project_receivable_unpaid",
+      "--question-file", questionFile,
+      "--as-of-date", "2026-06-26"
+    ], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        FINANCEQA_MCP_URL: `http://127.0.0.1:${address.port}/mcp`,
+        FINANCEQA_MCP_READ_TOKEN: "test-token"
+      }
+    }, { timeoutMs: 5_000 });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.result.source, "financeqa_canonical_golden");
+    assert.match(payload.result.final_answer, /项目应收 800000\.00 元/);
+    assert.equal(payload.result.structured.metric, "项目应收");
+    assert.equal(payload.result.structured.amount, 800000);
+    assert.equal(payload.result.structured.period.from, "2025-10");
+    assert.equal(payload.result.structured.period.to, "2026-05");
+
+    const request = JSON.parse(seenBodies[0]);
+    assert.equal(request.params.name, "finance-query");
+    assert.equal(request.params.arguments.query, "2025年10月至2026年5月，所有项目的应收未收是多少？");
+    assert.doesNotMatch(request.params.arguments.query, /老板随口问/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("financeqa canonical golden runner fails closed for unsupported templates", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-golden-unsupported-"));
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "未知问题", "utf8");
+
+  const result = spawnSync("node", [
+    "examples/golden/financeqa_canonical_golden.mjs",
+    "--template", "unknown_template",
+    "--question-file", questionFile,
+    "--as-of-date", "2026-06-26"
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      FINANCEQA_MCP_URL: "http://127.0.0.1:1/mcp",
+      FINANCEQA_MCP_READ_TOKEN: "test-token"
+    }
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unsupported FinanceQA golden template/);
+});
+
+test("spawnNode helper kills hung children", async () => {
+  const result = await spawnNode(["-e", "setInterval(() => {}, 1000)"], {
+    cwd: process.cwd()
+  }, { timeoutMs: 50 });
+
+  assert.equal(result.timedOut, true);
+  assert.match(result.stderr, /timed out after 50ms/);
+});
+
 test("financeqa low-frequency dry-run schedule examples only write local reports", () => {
   const files = [
     "examples/cleanup/claude-session-cleanup.sh",
@@ -129,6 +235,8 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.doesNotMatch(contents, /date \+%F-%H/);
   assert.match(contents, /OPENCLAW_AGENT_CMD="/);
   assert.match(contents, /FINANCEQA_MCP_READ_TOKEN_FILE/);
+  assert.match(contents, /FINANCEQA_GOLDEN_CMD/);
+  assert.match(contents, /financeqa_canonical_golden\.mjs/);
   assert.match(contents, /flock/);
   assert.match(contents, /AGENT_PATROL_CLEANUP_CMD/);
   assert.match(contents, /AGENT_PATROL_CLEANUP_KINDS/);
@@ -146,6 +254,41 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.doesNotMatch(contents, /\blzh\b/);
   assert.notEqual(scriptMode & 0o111, 0);
 });
+
+function spawnNode(
+  args: string[],
+  options: SpawnOptionsWithoutStdio,
+  control: { timeoutMs?: number } = {}
+): Promise<{ status: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", args, options);
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const timeoutMs = control.timeoutMs ?? 30_000;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stderr += `spawnNode timed out after ${timeoutMs}ms\n`;
+      child.kill("SIGTERM");
+    }, timeoutMs);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr, timedOut });
+    });
+  });
+}
 
 test("agent cleanup examples prune only expired patrol session files", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-cleanup-"));
