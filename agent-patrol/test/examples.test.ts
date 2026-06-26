@@ -344,6 +344,8 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   const scriptMode = fs.statSync("examples/schedules/run-financeqa-dry-run.sh").mode;
 
   assert.match(contents, /presets\/financeqa\.yaml/);
+  assert.match(contents, /AGENT_PATROL_CONFIG=presets\/financeqa\.yaml/);
+  assert.match(contents, /--config "\$CONFIG"/);
   assert.match(contents, /--suite "\$\{AGENT_PATROL_SUITE:-smoke\}"/);
   assert.match(contents, /tmp\/financeqa-dry-run/);
   assert.match(contents, /AGENT_PATROL_LIVE=1/);

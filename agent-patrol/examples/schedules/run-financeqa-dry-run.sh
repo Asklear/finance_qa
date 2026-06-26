@@ -67,6 +67,7 @@ run_cleanup_command() {
 }
 
 OUT_BASE="${AGENT_PATROL_OUTPUT_DIR:-tmp/financeqa-dry-run}"
+CONFIG="${AGENT_PATROL_CONFIG:-presets/financeqa.yaml}"
 SUITE="${AGENT_PATROL_SUITE:-smoke}"
 SEED="${AGENT_PATROL_SEED:-$(generate_seed)}"
 RUN_ID="${AGENT_PATROL_RUN_ID:-$(date +%Y%m%dT%H%M%S)}"
@@ -84,10 +85,10 @@ if command -v flock >/dev/null 2>&1; then
 fi
 
 {
-  echo "$(date -Is) start FinanceQA dry-run suite=$SUITE seed=$SEED"
+  echo "$(date -Is) start FinanceQA dry-run config=$CONFIG suite=$SUITE seed=$SEED"
   set +e
   npm run start -- run \
-    --config presets/financeqa.yaml \
+    --config "$CONFIG" \
     --suite "${AGENT_PATROL_SUITE:-smoke}" \
     --seed "$SEED" \
     --out "$OUT_BASE/$RUN_ID"
@@ -98,6 +99,6 @@ fi
   if [[ "$cleanup_rc" -ne 0 ]]; then
     echo "$(date -Is) agent session cleanup failed exit=$cleanup_rc"
   fi
-  echo "$(date -Is) finish FinanceQA dry-run suite=$SUITE seed=$SEED out=$OUT_BASE/$RUN_ID exit=$npm_rc"
+  echo "$(date -Is) finish FinanceQA dry-run config=$CONFIG suite=$SUITE seed=$SEED out=$OUT_BASE/$RUN_ID exit=$npm_rc"
   exit "$npm_rc"
 } >> "$LOG_FILE" 2>&1
