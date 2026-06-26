@@ -256,6 +256,73 @@ test("runSuite scores against golden reference and stores direct tool baseline s
   assert.match(evidenceRows[0].directToolBaseline.answer, /1029611\.43/);
 });
 
+test("runSuite executes golden reference before direct baseline when both use the same target", async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-golden-before-direct-"));
+  const events: string[] = [];
+  const config = {
+    report: { minAccuracy: 0.9 },
+    templates: {
+      revenue: {
+        questions: ["收入表中最新月份的营收是多少？"],
+        scoring: {
+          referenceChecks: {
+            amounts: { labels: ["项目结算"] }
+          }
+        }
+      }
+    },
+    targets: {
+      finance_qa: {
+        runner: {
+          type: "command_agent",
+          command: "unused"
+        },
+        oracle: {
+          type: "financeqa_readonly",
+          mcpUrl: "http://127.0.0.1/mcp",
+          allowedTools: ["finance-query"]
+        },
+        goldenReference: {
+          type: "command",
+          command: "unused"
+        },
+        suites: { smoke: { templates: ["revenue"], caseCount: 1 } }
+      }
+    }
+  };
+
+  const result = await runSuite(config, {
+    suite: "smoke",
+    seed: "fixed",
+    outDir,
+    executeAgent: async (): Promise<AgentEnvelope> => ({
+      source: "agent",
+      answer: "项目结算 800000.00 元。"
+    }),
+    executeReference: async () => {
+      events.push("direct:start");
+      return {
+        source: "financeqa_mcp",
+        tool: "finance-query",
+        answer: "项目结算 700000.00 元。"
+      };
+    },
+    executeGoldenReference: async () => {
+      events.push("golden:start");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      events.push("golden:end");
+      return {
+        source: "golden_reference",
+        tool: "financeqa-structured-golden",
+        answer: "项目结算 800000.00 元。"
+      };
+    }
+  });
+
+  assert.equal(result.aggregate.passed, 1);
+  assert.deepEqual(events, ["golden:start", "golden:end", "direct:start"]);
+});
+
 test("runSuite fails closed when configured golden reference returns no result", async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-missing-golden-reference-"));
   const config = {

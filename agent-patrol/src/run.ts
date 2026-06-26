@@ -77,12 +77,11 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
       durationMs,
       actual
     });
-    const directToolBaselinePromise = safeExecuteReference({ executeReference, patrolCase, target });
     const configuredGoldenReference = Boolean(target.goldenReference);
     const goldenReference = configuredGoldenReference
       ? await safeExecuteGoldenReference({ executeGolden, patrolCase, target })
       : undefined;
-    const directToolBaseline = await directToolBaselinePromise;
+    const directToolBaseline = await safeExecuteReference({ executeReference, patrolCase, target });
     const reference = configuredGoldenReference ? goldenReference : directToolBaseline;
     const score = scoreCase({
       id: patrolCase.id,

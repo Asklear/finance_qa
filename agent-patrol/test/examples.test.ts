@@ -217,10 +217,10 @@ test("financeqa canonical golden runner covers every financeqa preset template",
     },
     {
       template: "finance_unpaid_projects",
-      expectedQuery: "2025年至2026年未付款的项目及对应金额有哪些？",
-      metric: "未付款",
+      expectedQuery: "2025年10月至2026年5月，按项目列出已收票未付款金额。",
+      metric: "已收票未付款",
       amount: 600000,
-      period: { from: "2025-01", to: "2026-05" }
+      period: { from: "2025-10", to: "2026-05" }
     }
   ];
 
