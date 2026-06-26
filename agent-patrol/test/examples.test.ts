@@ -4,6 +4,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 import { spawn, spawnSync, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { main } from "../src/index.ts";
 import { loadConfig } from "../src/config.ts";
@@ -104,6 +105,297 @@ test("financeqa preset defines reference-check labels for finance answer compari
     assert.equal(referenceChecks.sources, true, `${name} should compare reference sources`);
     assert.notEqual(referenceChecks.perspectives, true, `${name} should not hard-fail reference boilerplate wording`);
   }
+});
+
+test("financeqa snapshot reference provider computes project receivable without FinanceQA MCP", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-"));
+  const snapshotPath = path.join(dir, "financeqa-snapshot.json");
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "项目口径看，从2025年10月起到上一个完整自然月月底还有多少应收未收？", "utf8");
+  fs.writeFileSync(snapshotPath, JSON.stringify({
+    metadata: {
+      generated_at: "2026-06-26T18:10:00+08:00",
+      source_database: "bossagent_app",
+      source_schema: "tenant_uhub_etl_shadow"
+    },
+    tables: {
+      fin_fund_income: [
+        { year_month: "2025-10", settlement_amount: 1000, received_amount: 200, invoice_amount: 500 },
+        { year_month: "2026-05", settlement_amount: 300, received_amount: 100, invoice_amount: 150 },
+        { year_month: "2026-06", settlement_amount: 999, received_amount: 0, invoice_amount: 0 }
+      ],
+      fin_file_mappings: [
+        {
+          table_type: "fund-income",
+          period: "2025-Q4",
+          file_name: "收入Q4.xlsx",
+          source_version_id: "收入Q4.xlsx:hash-q4",
+          updated_at: "2026-06-26T18:00:00+08:00"
+        },
+        {
+          table_type: "fund-income",
+          period: "2026-Q2",
+          file_name: "收入Q2.xlsx",
+          source_version_id: "收入Q2.xlsx:hash-q2",
+          updated_at: "2026-06-26T18:00:00+08:00"
+        }
+      ]
+    }
+  }), "utf8");
+
+  const result = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_project_receivable_unpaid",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--as-of-date", "2026-06-26"
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      FINANCEQA_MCP_URL: "http://127.0.0.1:1/must-not-be-called"
+    }
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.result.source, "financeqa_snapshot_reference");
+  assert.equal(payload.result.structured.metric, "项目应收");
+  assert.equal(payload.result.structured.amount, 1000);
+  assert.deepEqual(payload.result.structured.period, { from: "2025-10", to: "2026-05" });
+  assert.deepEqual(payload.result.structured.source.files, ["收入Q4.xlsx", "收入Q2.xlsx"]);
+  assert.equal(payload.result.structured.row_count, 2);
+  assert.match(payload.result.final_answer, /2025-10~2026-05/);
+  assert.match(payload.result.final_answer, /项目应收 1000\.00 元/);
+  assert.equal(payload.result.structured.totals.settlement, 1300);
+});
+
+test("financeqa snapshot reference provider reads gzip snapshots and computes latest revenue month", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-gzip-"));
+  const snapshotPath = path.join(dir, "financeqa-snapshot.json.gz");
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "收入表中最新月份的营收是多少？", "utf8");
+  fs.writeFileSync(snapshotPath, zlib.gzipSync(JSON.stringify({
+    metadata: {
+      generated_at: "2026-06-26T18:10:00+08:00",
+      source_database: "bossagent_app",
+      source_schema: "tenant_uhub_etl_shadow"
+    },
+    tables: {
+      fin_fund_income: [
+        { year_month: "2026-04", settlement_amount: 900, received_amount: 800, invoice_amount: 850 },
+        { year_month: "2026-05", settlement_amount: 1200, received_amount: 1000, invoice_amount: 1100 }
+      ],
+      fin_file_mappings: [
+        {
+          table_type: "fund-income",
+          period: "2026-Q2",
+          file_name: "优集收入、成本计算表 - 上传.xlsx",
+          source_version_id: "优集收入、成本计算表 - 上传.xlsx:c34368e51eb0",
+          updated_at: "2026-06-26T18:00:00+08:00"
+        }
+      ]
+    }
+  })));
+
+  const result = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_latest_month_revenue",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--as-of-date", "2026-06-26"
+  ], {
+    cwd: process.cwd(),
+    env: process.env
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.result.structured.metric, "项目结算");
+  assert.equal(payload.result.structured.amount, 1200);
+  assert.deepEqual(payload.result.structured.period, { from: "2026-05", to: "2026-05" });
+  assert.match(payload.result.final_answer, /2026-05/);
+  assert.match(payload.result.final_answer, /项目结算 1200\.00 元/);
+  assert.match(payload.result.final_answer, /优集收入、成本计算表 - 上传\.xlsx/);
+});
+
+test("financeqa snapshot reference provider nets merged groups against member movements", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-merged-"));
+  const snapshotPath = path.join(dir, "financeqa-snapshot.json");
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "项目口径看，从2025年10月起到上一个完整自然月月底还有多少应收未收？", "utf8");
+  fs.writeFileSync(snapshotPath, JSON.stringify({
+    metadata: {
+      generated_at: "2026-06-26T18:10:00+08:00",
+      source_database: "bossagent_app",
+      source_schema: "tenant_uhub_etl_shadow"
+    },
+    tables: {
+      fin_contracts: [
+        { contract_id: "R1", customer_name: "客户A", contract_content: "收入项目A" },
+        { contract_id: "R2", customer_name: "客户A", contract_content: "收入项目B" }
+      ],
+      fin_fund_income: [
+        { contract_id: "R2", year_month: "2026-05", settlement_amount: 0, received_amount: 600, invoice_amount: 0 },
+        { contract_id: "R2", year_month: "2026-05", settlement_amount: 0, received_amount: 100, invoice_amount: 0 }
+      ],
+      fin_fund_income_groups: [
+        {
+          id: 1,
+          customer_name: "客户A",
+          year_month: "2026-05",
+          source_start_row: 3,
+          source_end_row: 4,
+          settlement_amount: 1000,
+          received_amount: 400,
+          invoice_amount: 1000
+        }
+      ],
+      fin_fund_income_group_members: [
+        { group_id: 1, contract_id: "R1", source_row_number: 3 },
+        { group_id: 1, contract_id: "R2", source_row_number: 4 }
+      ]
+    }
+  }), "utf8");
+
+  const result = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_project_receivable_unpaid",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--as-of-date", "2026-06-26"
+  ], {
+    cwd: process.cwd(),
+    env: process.env
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.result.structured.amount, 0);
+  assert.equal(payload.result.structured.totals.open, 0);
+  assert.equal(payload.result.structured.totals.settlement, 1000);
+  assert.equal(payload.result.structured.totals.movement, 1100);
+});
+
+test("financeqa snapshot reference provider computes cost invoice open with offsets and item details", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-cost-"));
+  const snapshotPath = path.join(dir, "financeqa-snapshot.json");
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "项目成本口径看，25年至26年未付款的项目及对应金额有哪些？", "utf8");
+  fs.writeFileSync(snapshotPath, JSON.stringify({
+    metadata: {
+      generated_at: "2026-06-26T18:10:00+08:00",
+      source_database: "bossagent_app",
+      source_schema: "tenant_uhub_etl_shadow"
+    },
+    tables: {
+      fin_contracts: [
+        { contract_id: "S1", customer_name: "供应商A", contract_content: "成本项目A" },
+        { contract_id: "S2", customer_name: "供应商A", contract_content: "成本项目B" }
+      ],
+      fin_cost_settlements: [
+        {
+          contract_id: "S1",
+          year_month: "2026-05",
+          settlement_amount: 1000,
+          paid_amount: 300,
+          invoice_amount: 900,
+          invoice_open_offset_amount: 100
+        }
+      ],
+      fin_cost_settlement_groups: [
+        {
+          id: 10,
+          customer_name: "供应商A",
+          year_month: "2026-05",
+          settlement_amount: 500,
+          paid_amount: 100,
+          invoice_amount: 500,
+          invoice_open_offset_amount: 50
+        }
+      ],
+      fin_cost_settlement_group_members: [
+        { group_id: 10, contract_id: "S2", source_row_number: 7 }
+      ]
+    }
+  }), "utf8");
+
+  const payable = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_project_payable_unpaid",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--as-of-date", "2026-06-26"
+  ], {
+    cwd: process.cwd(),
+    env: process.env
+  }, { timeoutMs: 5_000 });
+  assert.equal(payable.status, 0, payable.stderr);
+  const payablePayload = JSON.parse(payable.stdout);
+  assert.equal(payablePayload.result.structured.metric, "项目应付");
+  assert.equal(payablePayload.result.structured.amount, 1100);
+  assert.equal(payablePayload.result.structured.totals.invoice_open, 850);
+
+  const unpaidProjects = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_unpaid_projects",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--as-of-date", "2026-06-26"
+  ], {
+    cwd: process.cwd(),
+    env: process.env
+  }, { timeoutMs: 5_000 });
+  assert.equal(unpaidProjects.status, 0, unpaidProjects.stderr);
+  const unpaidPayload = JSON.parse(unpaidProjects.stdout);
+  assert.equal(unpaidPayload.result.structured.metric, "已收票未付款");
+  assert.equal(unpaidPayload.result.structured.amount, 850);
+  assert.deepEqual(unpaidPayload.result.structured.items.map((item: { name: string; amount: number }) => [item.name, item.amount]), [
+    ["供应商A/成本项目A", 500],
+    ["供应商A/成本项目B", 350]
+  ]);
+  assert.match(unpaidPayload.result.final_answer, /明细前2项/);
+  assert.match(unpaidPayload.result.final_answer, /供应商A\/成本项目A 500\.00 元/);
+});
+
+test("financeqa snapshot reference provider defaults as-of date to Asia Shanghai", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-local-date-"));
+  const snapshotPath = path.join(dir, "financeqa-snapshot.json");
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "项目口径看，从2025年10月起到上一个完整自然月月底还有多少应收未收？", "utf8");
+  fs.writeFileSync(snapshotPath, JSON.stringify({
+    metadata: {
+      generated_at: "2026-06-01T00:30:00+08:00",
+      source_database: "bossagent_app",
+      source_schema: "tenant_uhub_etl_shadow"
+    },
+    tables: {
+      fin_fund_income: [
+        { year_month: "2026-04", settlement_amount: 100, received_amount: 0, invoice_amount: 0 },
+        { year_month: "2026-05", settlement_amount: 200, received_amount: 0, invoice_amount: 0 }
+      ]
+    }
+  }), "utf8");
+
+  const result = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_project_receivable_unpaid",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--now-epoch-ms", String(Date.parse("2026-05-31T16:30:00.000Z"))
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      TZ: "UTC"
+    }
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.result.audit.as_of_date, "2026-06-01");
+  assert.deepEqual(payload.result.structured.period, { from: "2025-10", to: "2026-05" });
+  assert.equal(payload.result.structured.amount, 300);
 });
 
 test("financeqa canonical golden runner uses template-derived query instead of raw question", async () => {
@@ -355,6 +647,8 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(contents, /FINANCEQA_MCP_READ_TOKEN_FILE/);
   assert.match(contents, /FINANCEQA_GOLDEN_CMD/);
   assert.match(contents, /financeqa_canonical_golden\.mjs/);
+  assert.match(contents, /FINANCEQA_REFERENCE_SNAPSHOT/);
+  assert.match(contents, /financeqa_snapshot_reference\.mjs/);
   assert.match(contents, /flock/);
   assert.match(contents, /AGENT_PATROL_CLEANUP_CMD/);
   assert.match(contents, /AGENT_PATROL_CLEANUP_KINDS/);
@@ -371,6 +665,24 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.doesNotMatch(contents, /--deliver/);
   assert.doesNotMatch(contents, /\blzh\b/);
   assert.notEqual(scriptMode & 0o111, 0);
+});
+
+test("financeqa snapshot export example is read-only and table-whitelisted", () => {
+  const contents = fs.readFileSync("examples/golden/export_financeqa_snapshot.sh", "utf8");
+
+  assert.match(contents, /psql/);
+  assert.match(contents, /gzip/);
+  assert.match(contents, /fin_contracts/);
+  assert.match(contents, /fin_fund_income/);
+  assert.match(contents, /fin_fund_income_groups/);
+  assert.match(contents, /fin_fund_income_group_members/);
+  assert.match(contents, /fin_cost_settlements/);
+  assert.match(contents, /fin_cost_settlement_groups/);
+  assert.match(contents, /fin_cost_settlement_group_members/);
+  assert.match(contents, /fin_file_mappings/);
+  assert.doesNotMatch(contents, /fin_journal/);
+  assert.doesNotMatch(contents, /fin_bank_statement/);
+  assert.doesNotMatch(contents, /\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b|\bTRUNCATE\b/i);
 });
 
 function spawnNode(
