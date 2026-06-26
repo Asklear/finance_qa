@@ -90,7 +90,7 @@ test("financeqa preset generates varied daily sample pool", () => {
   assert.equal(questions.some((item) => item.includes("已收票未付款")), true);
 });
 
-test("financeqa preset scores finance answers against FinanceQA MCP references", () => {
+test("financeqa preset defines reference-check labels for finance answer comparison", () => {
   const config = loadConfig("presets/financeqa.yaml", {
     OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host clawdbot --question-file {questionFile} --session-id {sessionId}",
     FINANCEQA_MCP_URL: "http://127.0.0.1/stub"

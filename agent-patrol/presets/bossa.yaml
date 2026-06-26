@@ -29,7 +29,7 @@ targets:
       userId: ${BOSSA_PATROL_USER_ID}
       isolatedSessionPrefix: patrol-bossa
       disableDelivery: true
-    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    # Read-only direct-tool baseline metadata, not a business golden reference.
     oracle:
       type: bossa_readonly_mcp
       mcpUrl: ${BOSSA_OPENCLAW_MCP_URL}

@@ -54,7 +54,7 @@ export function buildCommandInvocation(template: string, values: Record<string, 
   return { command: argv[0]!, args: argv.slice(1) };
 }
 
-function runProcess(invocation: CommandInvocation, options: { cwd?: string; timeoutMs: number }): Promise<string> {
+export function runProcess(invocation: CommandInvocation, options: { cwd?: string; timeoutMs: number }): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,

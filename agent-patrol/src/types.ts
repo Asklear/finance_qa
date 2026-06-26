@@ -5,6 +5,13 @@ export interface OracleConfig {
   mcpUrl?: string;
   bearerTokenEnv?: string;
   allowedTools: string[];
+  timeoutMs?: number;
+}
+
+export interface GoldenReferenceConfig {
+  type: string;
+  command?: string;
+  timeoutMs?: number;
 }
 
 export interface RunnerConfig {
@@ -23,6 +30,7 @@ export interface TargetConfig {
   kind?: string;
   runner: RunnerConfig;
   oracle: OracleConfig;
+  goldenReference?: GoldenReferenceConfig;
   suites?: Record<string, SuiteConfig>;
 }
 
@@ -71,7 +79,7 @@ export interface AgentEnvelope {
 }
 
 export interface ReferenceEnvelope {
-  source: "financeqa_mcp" | "readonly_mcp" | string;
+  source: "golden_reference" | "financeqa_mcp" | "readonly_mcp" | string;
   tool?: string;
   answer?: string;
   error?: string;
@@ -85,6 +93,8 @@ export interface CaseEvidence {
   question: string;
   expected: Record<string, unknown>;
   actual: AgentEnvelope;
+  goldenReference?: ReferenceEnvelope;
+  directToolBaseline?: ReferenceEnvelope;
   reference?: ReferenceEnvelope;
   score: {
     caseId?: string;

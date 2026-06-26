@@ -20,13 +20,22 @@ targets:
       command: ${AGENT_PATROL_CMD}
       isolatedSessionPrefix: patrol-demo
       requireSessionIsolation: true
-    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    # Read-only direct-tool baseline metadata, not a business golden reference.
     oracle:
       type: readonly_mcp
       mcpUrl: ${AGENT_PATROL_MCP_URL}
       bearerTokenEnv: AGENT_PATROL_MCP_TOKEN
+      # Optional direct-baseline timeout. Defaults to 120000.
+      # timeoutMs: 120000
       allowedTools:
         - read_status
+    # Optional: if configured, scoring uses this structured golden answer and
+    # fails closed when it is missing. The command must print JSON with answer,
+    # final_answer, finalAnswer, or MCP-style result.content[].text.
+    # goldenReference:
+    #   type: command
+    #   command: ${AGENT_PATROL_GOLDEN_CMD}
+    #   timeoutMs: 120000
     suites:
       smoke:
         caseCount: 1

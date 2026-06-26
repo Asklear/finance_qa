@@ -1,7 +1,7 @@
 import { generateCases } from "./cases.ts";
 import { runDoctor } from "./doctor.ts";
 import { writeReport } from "./report.ts";
-import { executeReadonlyReference, type ExecuteReferenceInput } from "./reference.ts";
+import { executeGoldenReference, executeReadonlyReference, type ExecuteReferenceInput } from "./reference.ts";
 import { runCommandAgent } from "./runners/command_runner.ts";
 import { scoreCase, type CaseScore } from "./scorer.ts";
 import type { AgentEnvelope, CaseEvidence, PatrolCase, PatrolConfig, ReferenceEnvelope, TargetConfig } from "./types.ts";
@@ -14,6 +14,7 @@ export interface ExecuteAgentInput {
 
 export type ExecuteAgent = (input: ExecuteAgentInput) => Promise<AgentEnvelope>;
 export type ExecuteReference = (input: ExecuteReferenceInput) => Promise<ReferenceEnvelope | undefined>;
+export type ExecuteGoldenReference = (input: ExecuteReferenceInput) => Promise<ReferenceEnvelope | undefined>;
 
 export interface RunSuiteOptions {
   suite: string;
@@ -21,6 +22,7 @@ export interface RunSuiteOptions {
   outDir: string;
   executeAgent?: ExecuteAgent;
   executeReference?: ExecuteReference;
+  executeGoldenReference?: ExecuteGoldenReference;
 }
 
 export interface RunSuiteResult {
@@ -52,6 +54,7 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
   const cases = generateCases(config, { suite: options.suite, seed: options.seed });
   const executeAgent = options.executeAgent ?? defaultExecuteAgent;
   const executeReference = options.executeReference ?? executeReadonlyReference;
+  const executeGolden = options.executeGoldenReference ?? executeGoldenReference;
   const results: RunSuiteResult["results"] = [];
   const scores: CaseScore[] = [];
   const evidence: CaseEvidence[] = [];
@@ -74,11 +77,19 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
       durationMs,
       actual
     });
-    const reference = await executeReference({ patrolCase, target });
+    const directToolBaselinePromise = safeExecuteReference({ executeReference, patrolCase, target });
+    const configuredGoldenReference = Boolean(target.goldenReference);
+    const goldenReference = configuredGoldenReference
+      ? await safeExecuteGoldenReference({ executeGolden, patrolCase, target })
+      : undefined;
+    const directToolBaseline = await directToolBaselinePromise;
+    const reference = configuredGoldenReference ? goldenReference : directToolBaseline;
     const score = scoreCase({
       id: patrolCase.id,
       expected: patrolCase.scoring,
       actual,
+      goldenReference,
+      directToolBaseline,
       reference
     });
     scores.push(score);
@@ -89,6 +100,8 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
       question: patrolCase.question,
       expected: patrolCase.scoring,
       actual,
+      goldenReference,
+      directToolBaseline,
       reference,
       score
     });
@@ -143,5 +156,100 @@ function aggregateScores(scores: CaseScore[], minAccuracy: number, durationMs: n
     accuracy,
     durationMs,
     thresholdPassed: accuracy >= minAccuracy
+  };
+}
+
+async function safeExecuteReference(input: {
+  executeReference: ExecuteReference;
+  patrolCase: PatrolCase;
+  target: TargetConfig;
+}): Promise<ReferenceEnvelope | undefined> {
+  const timeoutMs = input.target.oracle.timeoutMs ?? 120_000;
+  const operation = input.executeReference({ patrolCase: input.patrolCase, target: input.target })
+    .catch((err: unknown) => directBaselineError(input.target, err));
+  return withTimeout(operation, timeoutMs, () => directBaselineTimeout(input.target, timeoutMs));
+}
+
+async function safeExecuteGoldenReference(input: {
+  executeGolden: ExecuteGoldenReference;
+  patrolCase: PatrolCase;
+  target: TargetConfig;
+}): Promise<ReferenceEnvelope> {
+  const timeoutMs = input.target.goldenReference?.timeoutMs ?? 120_000;
+  const operation = input.executeGolden({ patrolCase: input.patrolCase, target: input.target })
+    .catch((err: unknown) => goldenReferenceError(input.patrolCase.target, err));
+  const reference = await withTimeout(operation, timeoutMs, () => goldenReferenceTimeout(input.patrolCase.target, timeoutMs));
+  return normalizeGoldenReference(reference, input.patrolCase.target);
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, onTimeout: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(onTimeout()), timeoutMs);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function directBaselineTimeout(target: TargetConfig, timeoutMs: number): ReferenceEnvelope {
+  return directBaselineError(target, new Error(`direct tool baseline timed out after ${timeoutMs}ms`));
+}
+
+function directBaselineError(target: TargetConfig, err: unknown): ReferenceEnvelope {
+  return {
+    source: directBaselineSource(target),
+    tool: target.oracle.allowedTools?.[0],
+    error: err instanceof Error ? err.message : String(err)
+  };
+}
+
+function directBaselineSource(target: TargetConfig): ReferenceEnvelope["source"] {
+  if (target.oracle.type === "financeqa_readonly") return "financeqa_mcp";
+  return "readonly_mcp";
+}
+
+function goldenReferenceTimeout(targetName: string, timeoutMs: number): ReferenceEnvelope {
+  return {
+    source: "golden_reference",
+    tool: "command",
+    error: `golden reference for target ${targetName} timed out after ${timeoutMs}ms`
+  };
+}
+
+function goldenReferenceError(targetName: string, err: unknown): ReferenceEnvelope {
+  return {
+    source: "golden_reference",
+    tool: "command",
+    error: `golden reference for target ${targetName} failed: ${err instanceof Error ? err.message : String(err)}`
+  };
+}
+
+function normalizeGoldenReference(reference: ReferenceEnvelope | undefined, targetName: string): ReferenceEnvelope {
+  if (!reference) return missingGoldenReference(targetName);
+  if (reference.source !== "golden_reference") {
+    return {
+      source: "golden_reference",
+      tool: reference.tool,
+      error: `golden reference executor returned source ${reference.source}; expected source golden_reference`,
+      raw: reference
+    };
+  }
+  if (!reference.answer && !reference.error) {
+    return {
+      ...reference,
+      error: "golden reference returned no extractable answer"
+    };
+  }
+  return reference;
+}
+
+function missingGoldenReference(targetName: string): ReferenceEnvelope {
+  return {
+    source: "golden_reference",
+    tool: "command",
+    error: `golden reference is configured for target ${targetName} but did not return a result`
   };
 }

@@ -144,3 +144,139 @@ test("writeReport writes failed evidence package with actual and reference answe
   assert.deepEqual(summaryJson.failedCases[0].failureTypes, ["agent_changed_amount"]);
   assert.equal(summaryJson.failedCases[0].evidenceFile, "failed_cases/finance-case-1.json");
 });
+
+test("writeReport labels golden reference separately from direct tool baseline", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-report-golden-"));
+  writeReport(dir, {
+    manifest: { suite: "finance" },
+    cases: [{ id: "finance-case-2" }],
+    results: [{
+      caseId: "finance-case-2",
+      question: "项目应付是多少？",
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：项目应付 500.00 元",
+        sessionId: "patrol-session-2"
+      }
+    }],
+    evidence: [{
+      caseId: "finance-case-2",
+      target: "finance_qa",
+      question: "项目应付是多少？",
+      expected: { referenceChecks: { amounts: { labels: ["项目应付"] } } },
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：项目应付 500.00 元",
+        sessionId: "patrol-session-2"
+      },
+      goldenReference: {
+        source: "golden_reference",
+        tool: "financeqa-structured-golden",
+        answer: "Golden：项目应付 600.00 元"
+      },
+      directToolBaseline: {
+        source: "financeqa_mcp",
+        tool: "finance-query",
+        answer: "Direct baseline：项目应付 700.00 元"
+      },
+      reference: {
+        source: "golden_reference",
+        tool: "financeqa-structured-golden",
+        answer: "Golden：项目应付 600.00 元"
+      },
+      score: {
+        caseId: "finance-case-2",
+        pass: false,
+        invalid: false,
+        failures: ["missing_amount:项目应付=600"],
+        failureDetails: [{ type: "agent_changed_amount", message: "actual answer does not contain expected amount but golden reference does" }],
+        warnings: []
+      }
+    }],
+    scores: [{
+      caseId: "finance-case-2",
+      pass: false,
+      failures: ["missing_amount:项目应付=600"],
+      failureDetails: [{ type: "agent_changed_amount", message: "actual answer does not contain expected amount but golden reference does" }]
+    }],
+    aggregate: { total: 1, passed: 0, accuracy: 0 }
+  });
+
+  const summary = fs.readFileSync(path.join(dir, "summary.md"), "utf8");
+  assert.match(summary, /Golden Reference: Golden/);
+  assert.match(summary, /Direct Baseline: Direct baseline/);
+
+  const failedPackage = JSON.parse(fs.readFileSync(path.join(dir, "failed_cases", "finance-case-2.json"), "utf8"));
+  assert.match(failedPackage.goldenReference.answer, /600\.00/);
+  assert.match(failedPackage.directToolBaseline.answer, /700\.00/);
+
+  const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+  assert.match(summaryJson.failedCases[0].goldenReferenceAnswer, /600\.00/);
+  assert.match(summaryJson.failedCases[0].directToolBaselineAnswer, /700\.00/);
+});
+
+test("writeReport surfaces missing golden reference error next to direct baseline", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-report-missing-golden-"));
+  writeReport(dir, {
+    manifest: { suite: "finance" },
+    cases: [{ id: "finance-case-3" }],
+    results: [{
+      caseId: "finance-case-3",
+      question: "收入表中最新月份的营收是多少？",
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：项目结算 800000.00 元",
+        sessionId: "patrol-session-3"
+      }
+    }],
+    evidence: [{
+      caseId: "finance-case-3",
+      target: "finance_qa",
+      question: "收入表中最新月份的营收是多少？",
+      expected: { referenceChecks: { amounts: { labels: ["项目结算"] } } },
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：项目结算 800000.00 元",
+        sessionId: "patrol-session-3"
+      },
+      goldenReference: {
+        source: "golden_reference",
+        tool: "command",
+        error: "golden reference is configured for target finance_qa but did not return a result"
+      },
+      directToolBaseline: {
+        source: "financeqa_mcp",
+        tool: "finance-query",
+        answer: "Direct baseline：项目结算 800000.00 元"
+      },
+      reference: {
+        source: "golden_reference",
+        tool: "command",
+        error: "golden reference is configured for target finance_qa but did not return a result"
+      },
+      score: {
+        caseId: "finance-case-3",
+        pass: false,
+        invalid: false,
+        failures: ["missing_reference:golden_reference"],
+        failureDetails: [{ type: "missing_reference", message: "golden reference is missing, empty, or failed" }],
+        warnings: []
+      }
+    }],
+    scores: [{
+      caseId: "finance-case-3",
+      pass: false,
+      failures: ["missing_reference:golden_reference"],
+      failureDetails: [{ type: "missing_reference", message: "golden reference is missing, empty, or failed" }]
+    }],
+    aggregate: { total: 1, passed: 0, accuracy: 0 }
+  });
+
+  const summary = fs.readFileSync(path.join(dir, "summary.md"), "utf8");
+  assert.match(summary, /Golden Reference Error: golden reference is configured/);
+  assert.match(summary, /Direct Baseline: Direct baseline/);
+
+  const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+  assert.match(summaryJson.failedCases[0].goldenReferenceError, /did not return a result/);
+  assert.match(summaryJson.failedCases[0].directToolBaselineAnswer, /800000\.00/);
+});

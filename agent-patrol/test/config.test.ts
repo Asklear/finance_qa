@@ -22,16 +22,24 @@ targets:
       type: financeqa_readonly
       mcpUrl: "\${FINANCE_URL}"
       allowedTools: [finance-query]
+    goldenReference:
+      type: command
+      command: "\${FINANCEQA_GOLDEN_CMD}"
+      timeoutMs: 45000
 `, "utf8");
 
   const config = loadConfig(configPath, {
     OPENCLAW_CMD: "openclaw agent --json --message {question}",
-    FINANCE_URL: "http://127.0.0.1:3009/mcp"
+    FINANCE_URL: "http://127.0.0.1:3009/mcp",
+    FINANCEQA_GOLDEN_CMD: "node golden.mjs --question-file {questionFile}"
   });
 
   assert.equal(config.report.minAccuracy, 0.9);
   assert.equal(config.targets.finance.runner.command, "openclaw agent --json --message {question}");
   assert.equal(config.targets.finance.oracle.mcpUrl, "http://127.0.0.1:3009/mcp");
+  assert.equal(config.targets.finance.goldenReference?.type, "command");
+  assert.equal(config.targets.finance.goldenReference?.command, "node golden.mjs --question-file {questionFile}");
+  assert.equal(config.targets.finance.goldenReference?.timeoutMs, 45000);
 });
 
 test("loadConfig rejects targets without actual agent runner", () => {

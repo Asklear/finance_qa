@@ -20,7 +20,7 @@ targets:
       command: node examples/runners/openclaw_ssh_runner.mjs --host ${AGENT_PATROL_OPENCLAW_HOST} --question-file {questionFile} --session-id {sessionId} --thinking off --timeout 180
       isolatedSessionPrefix: patrol-clawdbot-openclaw
       requireSessionIsolation: true
-    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    # Read-only direct-tool baseline metadata, not a business golden reference.
     oracle:
       type: readonly_smoke
       mcpUrl: http://127.0.0.1/stub

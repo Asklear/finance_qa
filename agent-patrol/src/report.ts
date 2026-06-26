@@ -62,7 +62,13 @@ function renderSummary(input: ReportInput): string {
       if ((row.failureTypes ?? []).length > 0) lines.push(`  - Failure Types: ${row.failureTypes!.join(", ")}`);
       if (row.question) lines.push(`  - Question: ${row.question}`);
       if (row.answer) lines.push(`  - Answer: ${truncate(row.answer, 240)}`);
-      if (row.referenceAnswer) lines.push(`  - Reference: ${truncate(row.referenceAnswer, 240)}`);
+      if (row.goldenReferenceAnswer) lines.push(`  - Golden Reference: ${truncate(row.goldenReferenceAnswer, 240)}`);
+      if (row.goldenReferenceError) lines.push(`  - Golden Reference Error: ${truncate(row.goldenReferenceError, 240)}`);
+      if (row.directToolBaselineAnswer) lines.push(`  - Direct Baseline: ${truncate(row.directToolBaselineAnswer, 240)}`);
+      if (row.directToolBaselineError) lines.push(`  - Direct Baseline Error: ${truncate(row.directToolBaselineError, 240)}`);
+      if (!row.goldenReferenceAnswer && !row.directToolBaselineAnswer && row.referenceAnswer) {
+        lines.push(`  - Reference: ${truncate(row.referenceAnswer, 240)}`);
+      }
       if (row.sessionId) lines.push(`  - Session: ${row.sessionId}`);
       if (row.evidenceFile) lines.push(`  - Evidence: ${row.evidenceFile}`);
     }
@@ -86,6 +92,10 @@ function failedCaseRows(input: ReportInput): Array<{
   question?: string;
   answer?: string;
   referenceAnswer?: string;
+  goldenReferenceAnswer?: string;
+  goldenReferenceError?: string;
+  directToolBaselineAnswer?: string;
+  directToolBaselineError?: string;
   sessionId?: string;
   evidenceFile?: string;
 }> {
@@ -108,6 +118,10 @@ function failedCaseRows(input: ReportInput): Array<{
     question?: string;
     answer?: string;
     referenceAnswer?: string;
+    goldenReferenceAnswer?: string;
+    goldenReferenceError?: string;
+    directToolBaselineAnswer?: string;
+    directToolBaselineError?: string;
     sessionId?: string;
     evidenceFile?: string;
   }> = [];
@@ -119,6 +133,8 @@ function failedCaseRows(input: ReportInput): Array<{
     const evidence = evidenceByCase.get(caseId);
     const actual = asRecord(evidence?.actual) ?? asRecord(result?.actual);
     const reference = asRecord(evidence?.reference);
+    const goldenReference = asRecord(evidence?.goldenReference);
+    const directToolBaseline = asRecord(evidence?.directToolBaseline);
     const row: {
       caseId: string;
       failures: string[];
@@ -126,6 +142,10 @@ function failedCaseRows(input: ReportInput): Array<{
       question?: string;
       answer?: string;
       referenceAnswer?: string;
+      goldenReferenceAnswer?: string;
+      goldenReferenceError?: string;
+      directToolBaselineAnswer?: string;
+      directToolBaselineError?: string;
       sessionId?: string;
       evidenceFile?: string;
     } = {
@@ -134,6 +154,10 @@ function failedCaseRows(input: ReportInput): Array<{
       question: stringValue(evidence?.question) ?? stringValue(result?.question),
       answer: stringValue(actual?.answer) ?? stringValue(result?.answer),
       referenceAnswer: stringValue(reference?.answer),
+      goldenReferenceAnswer: stringValue(goldenReference?.answer),
+      goldenReferenceError: stringValue(goldenReference?.error),
+      directToolBaselineAnswer: stringValue(directToolBaseline?.answer),
+      directToolBaselineError: stringValue(directToolBaseline?.error),
       sessionId: stringValue(actual?.sessionId) ?? stringValue(actual?.sessionKey),
       evidenceFile: evidence ? failedEvidenceRelativePath(caseId) : undefined
     };

@@ -20,7 +20,7 @@ targets:
       command: node examples/stubs/command_agent_stub.mjs --question-file {questionFile} --session-id {sessionId}
       isolatedSessionPrefix: patrol-command-stub
       requireSessionIsolation: true
-    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    # Read-only direct-tool baseline metadata, not a business golden reference.
     oracle:
       type: readonly_stub
       mcpUrl: http://127.0.0.1/stub

@@ -132,15 +132,25 @@ targets:
       isolatedSessionPrefix: patrol-finance
       requireSessionIsolation: true
       timeoutMs: 360000
-    # MVP: this is read-only tool policy metadata, not a business-answer oracle.
+    # Read-only direct finance-query baseline for diagnostics. Do not treat this
+    # as the FinanceQA golden answer when measuring daily business accuracy.
     oracle:
       type: financeqa_readonly
       mcpUrl: ${FINANCEQA_MCP_URL}
       bearerTokenEnv: FINANCEQA_MCP_READ_TOKEN
+      # Optional direct-baseline timeout. Defaults to 120000ms.
+      # timeoutMs: 120000
       allowedTools:
         - finance-query
         - finance-host-data
         - finance-dimensions
+    # Configure a real structured golden command before using this preset as a
+    # 90% accuracy gate. Leaving it absent keeps direct finance-query as a
+    # diagnostic baseline / backward-compatible reference.
+    # goldenReference:
+    #   type: command
+    #   command: ${FINANCEQA_GOLDEN_CMD}
+    #   timeoutMs: 120000
     suites:
       smoke:
         caseCount: 3

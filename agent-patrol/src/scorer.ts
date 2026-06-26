@@ -17,6 +17,8 @@ interface ScoreInput {
   id: string;
   expected: ExpectedRules;
   actual: Partial<AgentEnvelope>;
+  goldenReference?: Partial<ReferenceEnvelope>;
+  directToolBaseline?: Partial<ReferenceEnvelope>;
   reference?: Partial<ReferenceEnvelope>;
 }
 
@@ -42,7 +44,8 @@ export function scoreCase(input: ScoreInput): CaseScore {
   const failureDetails: CaseFailure[] = [];
   const warnings: string[] = [];
   const answer = input.actual.answer ?? "";
-  const referenceAnswer = input.reference?.answer ?? "";
+  const scoringReference = input.goldenReference ?? input.reference;
+  const referenceAnswer = scoringReference?.answer ?? "";
   const expected = mergeExpectedRules(input.expected, referenceAnswer);
 
   if (input.actual.source !== "agent") {
@@ -51,10 +54,15 @@ export function scoreCase(input: ScoreInput): CaseScore {
       actual: input.actual.source
     });
   }
-  if (input.reference?.source === "financeqa_mcp" && !referenceAnswer) {
+  if (scoringReference?.source === "golden_reference" && !referenceAnswer) {
+    addFailure(failures, failureDetails, "missing_reference:golden_reference", "missing_reference", {
+      message: "golden reference is missing, empty, or failed",
+      reference: scoringReference.error ?? scoringReference
+    });
+  } else if (scoringReference?.source === "financeqa_mcp" && !referenceAnswer) {
     addFailure(failures, failureDetails, "missing_reference:financeqa_mcp", "missing_reference", {
       message: "FinanceQA MCP reference is missing, empty, or failed",
-      reference: input.reference.error ?? input.reference
+      reference: scoringReference.error ?? scoringReference
     });
   }
   for (const amount of expected.amounts ?? []) {

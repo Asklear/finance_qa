@@ -108,6 +108,37 @@ test("scoreCase detects agent_changed_amount when reference contains expected am
   assert.equal(score.failureDetails[0]?.type, "agent_changed_amount");
 });
 
+test("scoreCase uses golden reference for reference checks and keeps direct baseline diagnostic only", () => {
+  const score = scoreCase({
+    id: "case-6a",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["项目应付"] },
+        periods: true,
+        sources: true
+      }
+    },
+    actual: {
+      source: "agent",
+      answer: "2025-10~2026-05 项目应付 636000.00 元。"
+    },
+    goldenReference: {
+      source: "golden_reference",
+      tool: "financeqa-structured-golden",
+      answer: "2025-10~2026-05 项目应付 636000.00 元。来源：《fin-revcost-0601.xlsx》"
+    },
+    directToolBaseline: {
+      source: "financeqa_mcp",
+      tool: "finance-query",
+      answer: "2025-10~2026-04 项目应付 1029611.43 元。来源：《fin-revcost-0506.xlsx》"
+    }
+  });
+
+  assert.equal(score.pass, false);
+  assert.deepEqual(score.failures, ["missing_source:fin-revcost-0601.xlsx"]);
+  assert.deepEqual(score.failureDetails.map((failure) => failure.type), ["missing_source"]);
+});
+
 test("scoreCase marks missing FinanceQA MCP reference as insufficient evidence", () => {
   const score = scoreCase({
     id: "case-6b",
