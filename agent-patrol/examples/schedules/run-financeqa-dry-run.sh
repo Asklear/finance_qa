@@ -43,6 +43,28 @@ generate_seed() {
   date +%s%N
 }
 
+cleanup_patrol_sessions() {
+  local session_dir="${AGENT_PATROL_OPENCLAW_SESSION_DIR:-/root/.openclaw/agents/main/sessions}"
+  local retention_days="${AGENT_PATROL_SESSION_RETENTION_DAYS:-3}"
+
+  if [[ "${AGENT_PATROL_CLEANUP_SESSIONS:-1}" != "1" ]]; then
+    echo "$(date -Is) skip OpenClaw patrol session cleanup: disabled"
+    return 0
+  fi
+  if [[ ! "$retention_days" =~ ^[0-9]+$ ]]; then
+    echo "$(date -Is) skip OpenClaw patrol session cleanup: invalid retention_days=$retention_days"
+    return 0
+  fi
+  if [[ ! -d "$session_dir" ]]; then
+    echo "$(date -Is) skip OpenClaw patrol session cleanup: missing session_dir=$session_dir"
+    return 0
+  fi
+
+  local deleted
+  deleted="$(find "$session_dir" -maxdepth 1 -type f -name 'patrol-finance-*.jsonl' -mtime +"$retention_days" -print -delete | wc -l | tr -d ' ')"
+  echo "$(date -Is) cleaned OpenClaw patrol sessions deleted=$deleted retention_days=$retention_days session_dir=$session_dir"
+}
+
 OUT_BASE="${AGENT_PATROL_OUTPUT_DIR:-tmp/financeqa-dry-run}"
 SUITE="${AGENT_PATROL_SUITE:-smoke}"
 SEED="${AGENT_PATROL_SEED:-$(generate_seed)}"
@@ -62,10 +84,15 @@ fi
 
 {
   echo "$(date -Is) start FinanceQA dry-run suite=$SUITE seed=$SEED"
+  set +e
   npm run start -- run \
     --config presets/financeqa.yaml \
     --suite "${AGENT_PATROL_SUITE:-smoke}" \
     --seed "$SEED" \
     --out "$OUT_BASE/$RUN_ID"
-  echo "$(date -Is) finish FinanceQA dry-run suite=$SUITE seed=$SEED out=$OUT_BASE/$RUN_ID"
+  npm_rc=$?
+  set -e
+  cleanup_patrol_sessions
+  echo "$(date -Is) finish FinanceQA dry-run suite=$SUITE seed=$SEED out=$OUT_BASE/$RUN_ID exit=$npm_rc"
+  exit "$npm_rc"
 } >> "$LOG_FILE" 2>&1

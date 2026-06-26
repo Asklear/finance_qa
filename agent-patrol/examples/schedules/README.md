@@ -21,4 +21,4 @@ AGENT_PATROL_ENV_FILE=examples/schedules/financeqa-daily.env \
 examples/schedules/run-financeqa-dry-run.sh
 ```
 
-The default schedule runs two `smoke` suite dry-runs per day, with jitter in the systemd timer. Reports are written under `tmp/financeqa-dry-run/`.
+The default schedule runs two `smoke` suite dry-runs per day, with jitter in the systemd timer. Reports are written under `tmp/financeqa-dry-run/`. The script also prunes old OpenClaw patrol transcripts matching `patrol-finance-*.jsonl`; tune `AGENT_PATROL_SESSION_RETENTION_DAYS` in the env file.

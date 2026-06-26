@@ -126,6 +126,9 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(contents, /OPENCLAW_AGENT_CMD="/);
   assert.match(contents, /FINANCEQA_MCP_READ_TOKEN_FILE/);
   assert.match(contents, /flock/);
+  assert.match(contents, /AGENT_PATROL_SESSION_RETENTION_DAYS/);
+  assert.match(contents, /cleanup_patrol_sessions/);
+  assert.match(contents, /patrol-finance-\*\.jsonl/);
   assert.match(contents, /09,17/);
   assert.doesNotMatch(contents, /09,13,18/);
   assert.match(contents, /openclaw-finance/);
