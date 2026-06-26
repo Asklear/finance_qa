@@ -107,6 +107,10 @@ test("financeqa preset scores finance answers against FinanceQA MCP references",
 
 test("financeqa low-frequency dry-run schedule examples only write local reports", () => {
   const files = [
+    "examples/cleanup/claude-session-cleanup.sh",
+    "examples/cleanup/hermes-json-cleanup.sh",
+    "examples/cleanup/openclaw-jsonl-cleanup.sh",
+    "examples/cleanup/run-agent-cleanups.sh",
     "examples/schedules/README.md",
     "examples/schedules/financeqa-daily.env.example",
     "examples/schedules/financeqa-daily.cron.example",
@@ -126,9 +130,14 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(contents, /OPENCLAW_AGENT_CMD="/);
   assert.match(contents, /FINANCEQA_MCP_READ_TOKEN_FILE/);
   assert.match(contents, /flock/);
+  assert.match(contents, /AGENT_PATROL_CLEANUP_CMD/);
+  assert.match(contents, /AGENT_PATROL_CLEANUP_KINDS/);
   assert.match(contents, /AGENT_PATROL_SESSION_RETENTION_DAYS/);
-  assert.match(contents, /cleanup_patrol_sessions/);
-  assert.match(contents, /patrol-finance-\*\.jsonl/);
+  assert.match(contents, /openclaw-jsonl-cleanup\.sh/);
+  assert.match(contents, /hermes-json-cleanup\.sh/);
+  assert.match(contents, /claude-session-cleanup\.sh/);
+  assert.match(contents, /patrol-\*\.jsonl/);
+  assert.match(contents, /patrol-\*\.json/);
   assert.match(contents, /09,17/);
   assert.doesNotMatch(contents, /09,13,18/);
   assert.match(contents, /openclaw-finance/);
@@ -136,4 +145,58 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.doesNotMatch(contents, /--deliver/);
   assert.doesNotMatch(contents, /\blzh\b/);
   assert.notEqual(scriptMode & 0o111, 0);
+});
+
+test("agent cleanup examples prune only expired patrol session files", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-cleanup-"));
+  const oldStamp = "202001010000";
+
+  const cases = [
+    {
+      script: "examples/cleanup/openclaw-jsonl-cleanup.sh",
+      envKey: "AGENT_PATROL_OPENCLAW_SESSION_DIR",
+      oldPatrol: "patrol-finance-old.jsonl",
+      freshPatrol: "patrol-finance-fresh.jsonl",
+      regular: "regular-session.jsonl"
+    },
+    {
+      script: "examples/cleanup/hermes-json-cleanup.sh",
+      envKey: "AGENT_PATROL_HERMES_SESSION_DIR",
+      oldPatrol: "patrol-hermes-old.json",
+      freshPatrol: "patrol-hermes-fresh.json",
+      regular: "session_cron_keep.json"
+    },
+    {
+      script: "examples/cleanup/claude-session-cleanup.sh",
+      envKey: "AGENT_PATROL_CLAUDE_SESSION_DIR",
+      oldPatrol: "patrol-claude-old.jsonl",
+      freshPatrol: "patrol-claude-fresh.jsonl",
+      regular: "conversation-keep.jsonl"
+    }
+  ];
+
+  for (const item of cases) {
+    const sessionDir = path.join(dir, item.envKey);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    for (const name of [item.oldPatrol, item.freshPatrol, item.regular]) {
+      fs.writeFileSync(path.join(sessionDir, name), "{}", "utf8");
+    }
+    spawnSync("touch", ["-t", oldStamp, path.join(sessionDir, item.oldPatrol)], { encoding: "utf8" });
+    spawnSync("touch", ["-t", oldStamp, path.join(sessionDir, item.regular)], { encoding: "utf8" });
+
+    const result = spawnSync("bash", [item.script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        [item.envKey]: sessionDir,
+        AGENT_PATROL_SESSION_RETENTION_DAYS: "1"
+      }
+    });
+
+    assert.equal(result.status, 0, `${item.script} failed: ${result.stderr}`);
+    assert.equal(fs.existsSync(path.join(sessionDir, item.oldPatrol)), false, `${item.oldPatrol} should be removed`);
+    assert.equal(fs.existsSync(path.join(sessionDir, item.freshPatrol)), true, `${item.freshPatrol} should stay`);
+    assert.equal(fs.existsSync(path.join(sessionDir, item.regular)), true, `${item.regular} should stay`);
+  }
 });

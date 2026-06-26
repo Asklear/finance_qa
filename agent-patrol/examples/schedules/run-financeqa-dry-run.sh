@@ -43,26 +43,27 @@ generate_seed() {
   date +%s%N
 }
 
-cleanup_patrol_sessions() {
-  local session_dir="${AGENT_PATROL_OPENCLAW_SESSION_DIR:-/root/.openclaw/agents/main/sessions}"
-  local retention_days="${AGENT_PATROL_SESSION_RETENTION_DAYS:-3}"
+run_cleanup_command() {
+  local cleanup_cmd="${AGENT_PATROL_CLEANUP_CMD:-}"
 
   if [[ "${AGENT_PATROL_CLEANUP_SESSIONS:-1}" != "1" ]]; then
-    echo "$(date -Is) skip OpenClaw patrol session cleanup: disabled"
+    echo "$(date -Is) skip agent session cleanup: disabled"
     return 0
   fi
-  if [[ ! "$retention_days" =~ ^[0-9]+$ ]]; then
-    echo "$(date -Is) skip OpenClaw patrol session cleanup: invalid retention_days=$retention_days"
+  if [[ -z "$cleanup_cmd" ]]; then
+    echo "$(date -Is) skip agent session cleanup: no AGENT_PATROL_CLEANUP_CMD"
     return 0
   fi
-  if [[ ! -d "$session_dir" ]]; then
-    echo "$(date -Is) skip OpenClaw patrol session cleanup: missing session_dir=$session_dir"
-    return 0
+  if [[ -x "$cleanup_cmd" ]]; then
+    "$cleanup_cmd"
+    return
+  fi
+  if [[ -f "$cleanup_cmd" ]]; then
+    bash "$cleanup_cmd"
+    return
   fi
 
-  local deleted
-  deleted="$(find "$session_dir" -maxdepth 1 -type f -name 'patrol-finance-*.jsonl' -mtime +"$retention_days" -print -delete | wc -l | tr -d ' ')"
-  echo "$(date -Is) cleaned OpenClaw patrol sessions deleted=$deleted retention_days=$retention_days session_dir=$session_dir"
+  echo "$(date -Is) skip agent session cleanup: missing cleanup_cmd=$cleanup_cmd"
 }
 
 OUT_BASE="${AGENT_PATROL_OUTPUT_DIR:-tmp/financeqa-dry-run}"
@@ -92,7 +93,11 @@ fi
     --out "$OUT_BASE/$RUN_ID"
   npm_rc=$?
   set -e
-  cleanup_patrol_sessions
+  cleanup_rc=0
+  run_cleanup_command || cleanup_rc=$?
+  if [[ "$cleanup_rc" -ne 0 ]]; then
+    echo "$(date -Is) agent session cleanup failed exit=$cleanup_rc"
+  fi
   echo "$(date -Is) finish FinanceQA dry-run suite=$SUITE seed=$SEED out=$OUT_BASE/$RUN_ID exit=$npm_rc"
   exit "$npm_rc"
 } >> "$LOG_FILE" 2>&1
