@@ -178,6 +178,122 @@ test("financeqa canonical golden runner uses template-derived query instead of r
   }
 });
 
+test("financeqa canonical golden runner covers every financeqa preset template", async () => {
+  const cases = [
+    {
+      template: "finance_latest_month_revenue",
+      expectedQuery: "收入表中最新月份的营收是多少？",
+      metric: "项目结算",
+      amount: 100000,
+      period: { from: "2026-05", to: "2026-05" }
+    },
+    {
+      template: "finance_project_receivable_unpaid",
+      expectedQuery: "2025年10月至2026年5月，所有项目的应收未收是多少？",
+      metric: "项目应收",
+      amount: 200000,
+      period: { from: "2025-10", to: "2026-05" }
+    },
+    {
+      template: "finance_project_invoiced_receivable_unpaid",
+      expectedQuery: "2025年10月至2026年5月，所有项目已开票未回款是多少？",
+      metric: "已开票未回款",
+      amount: 300000,
+      period: { from: "2025-10", to: "2026-05" }
+    },
+    {
+      template: "finance_project_payable_unpaid",
+      expectedQuery: "2025年10月至2026年5月，所有项目的应付未付是多少？",
+      metric: "项目应付",
+      amount: 400000,
+      period: { from: "2025-10", to: "2026-05" }
+    },
+    {
+      template: "finance_project_invoiced_payable_unpaid",
+      expectedQuery: "2025年10月至2026年5月，所有项目已收票未付款是多少？",
+      metric: "已收票未付款",
+      amount: 500000,
+      period: { from: "2025-10", to: "2026-05" }
+    },
+    {
+      template: "finance_unpaid_projects",
+      expectedQuery: "2025年至2026年未付款的项目及对应金额有哪些？",
+      metric: "未付款",
+      amount: 600000,
+      period: { from: "2025-01", to: "2026-05" }
+    }
+  ];
+
+  for (const item of cases) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-golden-template-"));
+    const questionFile = path.join(dir, "question.txt");
+    fs.writeFileSync(questionFile, `老板问法不参与金标语义：${item.template}`, "utf8");
+    const seenBodies: string[] = [];
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        seenBodies.push(body);
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: "golden",
+          result: {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                final_answer: `${item.period.from}~${item.period.to} ${item.metric} ${item.amount.toFixed(2)} 元。来源：《golden-fixture.xlsx》`,
+                data: {
+                  period_from: item.period.from,
+                  period_to: item.period.to,
+                  metrics: { [item.metric]: item.amount },
+                  source_note: "来源：《golden-fixture.xlsx》"
+                }
+              })
+            }]
+          }
+        }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    try {
+      const result = await spawnNode([
+        "examples/golden/financeqa_canonical_golden.mjs",
+        "--template", item.template,
+        "--question-file", questionFile,
+        "--as-of-date", "2026-06-26"
+      ], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          FINANCEQA_MCP_URL: `http://127.0.0.1:${address.port}/mcp`,
+          FINANCEQA_MCP_READ_TOKEN: "test-token"
+        }
+      }, { timeoutMs: 5_000 });
+
+      assert.equal(result.status, 0, `${item.template}: ${result.stderr}`);
+      const payload = JSON.parse(result.stdout);
+      assert.equal(payload.result.structured.metric, item.metric, item.template);
+      assert.equal(payload.result.structured.amount, item.amount, item.template);
+      assert.deepEqual(payload.result.structured.period, item.period, item.template);
+
+      const request = JSON.parse(seenBodies[0]);
+      assert.equal(request.params.name, "finance-query", item.template);
+      assert.equal(request.params.arguments.query, item.expectedQuery, item.template);
+      assert.doesNotMatch(request.params.arguments.query, /老板问法不参与金标语义/);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
 test("financeqa canonical golden runner fails closed for unsupported templates", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-golden-unsupported-"));
   const questionFile = path.join(dir, "question.txt");
