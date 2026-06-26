@@ -72,6 +72,7 @@ export interface PatrolCase {
 export interface AgentEnvelope {
   source: "agent" | "direct_mcp" | string;
   answer: string;
+  error?: string;
   sessionId?: string;
   sessionKey?: string;
   toolCalls?: Array<{ name?: string; [key: string]: unknown }>;

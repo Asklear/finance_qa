@@ -67,7 +67,7 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
     }
     const sessionId = makeSessionId(target, patrolCase, options.seed);
     const caseStartedAt = Date.now();
-    const actual = await executeAgent({ patrolCase, target, sessionId });
+    const actual = await safeExecuteAgent({ executeAgent, patrolCase, target, sessionId });
     const durationMs = Date.now() - caseStartedAt;
     results.push({
       caseId: patrolCase.id,
@@ -139,6 +139,32 @@ async function defaultExecuteAgent(input: ExecuteAgentInput): Promise<AgentEnvel
       userId: input.target.runner.userId ?? ""
     }
   });
+}
+
+async function safeExecuteAgent(input: {
+  executeAgent: ExecuteAgent;
+  patrolCase: PatrolCase;
+  target: TargetConfig;
+  sessionId: string;
+}): Promise<AgentEnvelope> {
+  try {
+    return await input.executeAgent({
+      patrolCase: input.patrolCase,
+      target: input.target,
+      sessionId: input.sessionId
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      source: "agent",
+      answer: `Agent runner failed: ${message}`,
+      error: message,
+      sessionId: input.sessionId,
+      raw: {
+        error: message
+      }
+    };
+  }
 }
 
 function makeSessionId(target: TargetConfig, patrolCase: PatrolCase, seed: string): string {

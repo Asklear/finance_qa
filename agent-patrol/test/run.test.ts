@@ -483,7 +483,7 @@ test("runSuite rejects non-golden envelopes from configured golden executor", as
   assert.deepEqual(result.scores[0]?.failureDetails.map((failure) => failure.type), ["missing_reference"]);
 });
 
-test("runSuite applies runner timeout to command agents", async () => {
+test("runSuite records runner timeout as failed evidence instead of aborting the report", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-timeout-"));
   const scriptPath = path.join(dir, "slow_agent.mjs");
   const outDir = path.join(dir, "out");
@@ -518,8 +518,15 @@ setTimeout(() => {
     }
   };
 
-  await assert.rejects(
-    () => runSuite(config, { suite: "smoke", seed: "fixed", outDir }),
-    /timed out after 50ms/
-  );
+  const result = await runSuite(config, { suite: "smoke", seed: "fixed", outDir });
+
+  assert.equal(result.aggregate.total, 1);
+  assert.equal(result.aggregate.passed, 0);
+  assert.match(result.evidence[0]?.actual.error ?? "", /timed out after 50ms/);
+  assert.deepEqual(result.scores[0]?.failureDetails.map((failure) => failure.type), [
+    "agent_runner_error",
+    "scorer_term_miss"
+  ]);
+  assert.equal(fs.existsSync(path.join(outDir, "summary.json")), true);
+  assert.equal(fs.existsSync(path.join(outDir, "case_evidence.jsonl")), true);
 });

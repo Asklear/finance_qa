@@ -54,6 +54,12 @@ export function scoreCase(input: ScoreInput): CaseScore {
       actual: input.actual.source
     });
   }
+  if (input.actual.error) {
+    addFailure(failures, failureDetails, "agent_runner_error", "agent_runner_error", {
+      message: "agent runner failed before producing a valid answer",
+      actual: input.actual.error
+    });
+  }
   if (scoringReference?.source === "golden_reference" && !referenceAnswer) {
     addFailure(failures, failureDetails, "missing_reference:golden_reference", "missing_reference", {
       message: "golden reference is missing, empty, or failed",
