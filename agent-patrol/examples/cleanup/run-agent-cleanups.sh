@@ -2,7 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KINDS="${AGENT_PATROL_CLEANUP_KINDS:-openclaw,hermes,claude}"
+KINDS="${AGENT_PATROL_CLEANUP_KINDS:-}"
+
+if [[ -z "${KINDS//[[:space:]]/}" ]]; then
+  echo "$(date -Is) skip agent cleanup: no AGENT_PATROL_CLEANUP_KINDS"
+  exit 0
+fi
 
 run_one() {
   local kind="$1"

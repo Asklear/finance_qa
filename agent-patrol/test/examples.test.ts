@@ -200,3 +200,52 @@ test("agent cleanup examples prune only expired patrol session files", () => {
     assert.equal(fs.existsSync(path.join(sessionDir, item.regular)), true, `${item.regular} should stay`);
   }
 });
+
+test("agent cleanup dispatcher requires explicitly configured kinds", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-cleanup-dispatcher-"));
+  const oldStamp = "202001010000";
+  const files = [
+    {
+      envKey: "AGENT_PATROL_OPENCLAW_SESSION_DIR",
+      name: "patrol-openclaw-old.jsonl"
+    },
+    {
+      envKey: "AGENT_PATROL_HERMES_SESSION_DIR",
+      name: "patrol-hermes-old.json"
+    },
+    {
+      envKey: "AGENT_PATROL_CLAUDE_SESSION_DIR",
+      name: "patrol-claude-old.jsonl"
+    }
+  ];
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    AGENT_PATROL_SESSION_RETENTION_DAYS: "1"
+  };
+
+  for (const item of files) {
+    const sessionDir = path.join(dir, item.envKey);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const file = path.join(sessionDir, item.name);
+    fs.writeFileSync(file, "{}", "utf8");
+    spawnSync("touch", ["-t", oldStamp, file], { encoding: "utf8" });
+    env[item.envKey] = sessionDir;
+  }
+  delete env.AGENT_PATROL_CLEANUP_KINDS;
+
+  const result = spawnSync("bash", ["examples/cleanup/run-agent-cleanups.sh"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /skip agent cleanup: no AGENT_PATROL_CLEANUP_KINDS/);
+  for (const item of files) {
+    assert.equal(
+      fs.existsSync(path.join(dir, item.envKey, item.name)),
+      true,
+      `${item.name} should stay when cleanup kinds are not configured`
+    );
+  }
+});

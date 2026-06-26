@@ -21,4 +21,4 @@ AGENT_PATROL_ENV_FILE=examples/schedules/financeqa-daily.env \
 examples/schedules/run-financeqa-dry-run.sh
 ```
 
-The default schedule runs two `smoke` suite dry-runs per day, with jitter in the systemd timer. Reports are written under `tmp/financeqa-dry-run/`. The script can run `AGENT_PATROL_CLEANUP_CMD` after each run; the example cleanup command prunes old OpenClaw, Hermes, and Claude patrol transcripts matching `patrol-*` only. Tune `AGENT_PATROL_SESSION_RETENTION_DAYS` and `AGENT_PATROL_CLEANUP_KINDS` in the env file.
+The default schedule runs two `smoke` suite dry-runs per day, with jitter in the systemd timer. Reports are written under `tmp/financeqa-dry-run/`. The script can run `AGENT_PATROL_CLEANUP_CMD` after each run; `AGENT_PATROL_CLEANUP_KINDS` must explicitly match the agent runner(s) used by that patrol job, such as `openclaw`, `hermes`, `claude`, or a comma-separated list. Do not enable cleanup for agent runtimes that the patrol job does not use. The cleanup adapters prune old `patrol-*` transcripts only. Tune `AGENT_PATROL_SESSION_RETENTION_DAYS` in the env file.
