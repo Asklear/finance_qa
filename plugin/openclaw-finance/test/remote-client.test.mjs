@@ -103,6 +103,51 @@ test("RemoteMCPClient reports auth failures without leaking token", async () => 
   });
 });
 
+test("finance prompt hook strips relevant memories before prefetching facts", async () => {
+  const toolCalls = [];
+  await withFinancePluginHarness(toolCalls, async ({ hooks }) => {
+    const wrappedQuestion = `<relevant-memories>
+The following are stored memories for user "mem0-tqt". Use them to personalize your response:
+- As of 2026-06-25, 项目口径从2025年10月到2026年5月的应收未收总额为146,688.40 元。
+</relevant-memories>
+
+[Sat 2026-06-27 07:01 UTC] 从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？`;
+
+    await hooks.get("before_prompt_build")({
+      prompt: wrappedQuestion,
+      messages: [{ role: "user", content: [{ type: "text", text: wrappedQuestion }] }]
+    });
+
+    assert.equal(toolCalls[0].arguments.query, "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？");
+  });
+});
+
+test("finance-query execute keeps clean tool query after polluted prompt hook", async () => {
+  const toolCalls = [];
+  await withFinancePluginHarness(toolCalls, async ({ hooks, tools }) => {
+    const lzhWrappedPrompt = `Conversation info (untrusted metadata):
+\`\`\`json
+{
+  "message_id": "openclaw-weixin:test",
+  "timestamp": "Fri 2026-06-26 13:51 GMT+8"
+}
+\`\`\`
+
+帮我做一个 润泽科技公司深度分析。包含公司概况 核心业务 财务数据 竞争格局 能力优势等`;
+
+    await hooks.get("before_prompt_build")({
+      prompt: lzhWrappedPrompt,
+      messages: [{ role: "user", content: [{ type: "text", text: lzhWrappedPrompt }] }]
+    });
+
+    await tools.get("finance-query").execute("call-clean-query", {
+      query: "润泽科技 客户 合同 收入 回款"
+    });
+
+    assert.equal(toolCalls.at(-1).arguments.query, "润泽科技 客户 合同 收入 回款");
+  });
+});
+
 async function withServer(handler, run) {
   const server = http.createServer(async (req, res) => {
     let body = "";
@@ -131,4 +176,59 @@ async function withServer(handler, run) {
 function writeJSON(res, payload) {
   res.setHeader("Content-Type", "application/json");
   res.end(JSON.stringify(payload));
+}
+
+async function withFinancePluginHarness(toolCalls, run) {
+  await withServer(async (req, res, body) => {
+    const message = JSON.parse(body || "{}");
+    assert.equal(req.headers.authorization, "Bearer test-token");
+    if (message.method === "initialize") {
+      res.setHeader("Mcp-Session-Id", "finance-test-session");
+      writeJSON(res, {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: { serverInfo: { name: "financeqa-mcp" }, capabilities: {} }
+      });
+      return;
+    }
+
+    assert.equal(req.headers["mcp-session-id"], "finance-test-session");
+    assert.equal(message.method, "tools/call");
+    assert.equal(message.params.name, "finance-query");
+    toolCalls.push(message.params);
+    writeJSON(res, {
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ success: true, final_answer: "ok" })
+          }
+        ]
+      }
+    });
+  }, async (url) => {
+    const moduleUrl = `../dist/index.esm.js?test=${Date.now()}-${Math.random()}`;
+    const { default: plugin } = await import(moduleUrl);
+    const tools = new Map();
+    const hooks = new Map();
+    plugin.register({
+      getPluginConfig() {
+        return {
+          transport: "remote",
+          mcp_url: url,
+          mcp_token: "test-token",
+          timeout_ms: 5000
+        };
+      },
+      registerTool(tool, options) {
+        tools.set(options?.name || tool.name, tool);
+      },
+      on(name, handler) {
+        hooks.set(name, handler);
+      }
+    });
+    await run({ hooks, tools });
+  });
 }

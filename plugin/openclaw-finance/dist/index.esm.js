@@ -176,6 +176,25 @@ const FINANCE_KEYWORDS = [
   "货币资金"
 ];
 
+const FINANCE_QUERY_PROTECTION_TERMS = [
+  "账上",
+  "科目余额",
+  "资产负债表",
+  "利润表",
+  "序时账",
+  "银行流水",
+  "银行卡",
+  "银行账户",
+  "官方余额表",
+  "财务口径",
+  "项目口径",
+  "合同口径",
+  "实际到账",
+  "实际支出",
+  "应收账款",
+  "应付账款"
+];
+
 // MCP Client for communicating with financeqa serve
 class MCPClient {
   constructor(binaryPath) {
@@ -480,8 +499,10 @@ function errorResult(error) {
 
 function userVisibleText(value) {
   return String(value || "")
-    .replace(/Sender \(untrusted metadata\):\s*```json[\s\S]*?```\s*/g, "")
-    .replace(/\[[^\]]*GMT[^\]]*\]\s*/g, "")
+    .replace(/<relevant-memories\b[^>]*>[\s\S]*?<\/relevant-memories>\s*/gi, "")
+    .replace(/(?:Conversation info|Sender) \(untrusted metadata\):\s*```(?:json)?[\s\S]*?```\s*/gi, "")
+    .replace(/^\s*\[[^\]\n]*(?:UTC|GMT[^\]\n]*)\]\s*/i, "")
+    .replace(/\[[^\]\n]*GMT[^\]\n]*\]\s*/g, "")
     .trim();
 }
 
@@ -557,11 +578,26 @@ function contextualFinanceQuestion(currentQuestion, messages) {
   return `${previous}；${current}`;
 }
 
+function missingProtectedFinanceTerms(protectedQuestion, rawQuestion) {
+  const protectedText = userVisibleText(protectedQuestion);
+  const rawText = userVisibleText(rawQuestion);
+  if (!protectedText || !rawText || protectedText === rawText) return [];
+  return FINANCE_QUERY_PROTECTION_TERMS.filter((term) => protectedText.includes(term) && !rawText.includes(term));
+}
+
+function shouldPreferProtectedFinanceQuestion(protectedQuestion, rawQuestion) {
+  const protectedText = userVisibleText(protectedQuestion);
+  const rawText = userVisibleText(rawQuestion);
+  if (!protectedText || !rawText || protectedText === rawText) return false;
+  if (!isFinanceQuestion(protectedText) || !isFinanceQuestion(rawText)) return false;
+  return missingProtectedFinanceTerms(protectedText, rawText).length > 0;
+}
+
 function financeQuestionForPromptEvent(event) {
-  const prompt = userVisibleText(event?.prompt || "");
-  if (isFinanceQuestion(prompt)) return contextualFinanceQuestion(prompt, event?.messages);
   const latestUserText = latestUserTextFromMessages(event?.messages);
   if (isFinanceQuestion(latestUserText)) return contextualFinanceQuestion(latestUserText, event?.messages);
+  const prompt = userVisibleText(event?.prompt || "");
+  if (isFinanceQuestion(prompt)) return contextualFinanceQuestion(prompt, event?.messages);
   if (isRetryOrContinuation(prompt) || isRetryOrContinuation(latestUserText)) {
     return latestFinanceQuestionFromMessages(event?.messages);
   }
@@ -699,8 +735,18 @@ function createFinanceTool(name, description, parameters) {
     async execute(_toolCallId, rawParams) {
       const protectedQuestion = name === "finance-query" ? latestFinanceQuestionForTool : "";
       if (name === "finance-query") latestFinanceQuestionForTool = "";
-      const params = protectedQuestion
-        ? { ...(rawParams || {}), query: protectedQuestion }
+      const rawParamsObject = rawParams && typeof rawParams === "object" ? rawParams : {};
+      const rawQuery = name === "finance-query" ? userVisibleText(rawParamsObject.query || "") : "";
+      const shouldUseProtectedQuestion = protectedQuestion && (
+        !rawQuery ||
+        isRetryOrContinuation(rawQuery) ||
+        isContextDependentFinanceFollowup(rawQuery) ||
+        shouldPreferProtectedFinanceQuestion(protectedQuestion, rawQuery)
+      );
+      const params = name === "finance-query"
+        ? (rawQuery || shouldUseProtectedQuestion
+          ? { ...rawParamsObject, query: shouldUseProtectedQuestion ? protectedQuestion : rawQuery }
+          : rawParams)
         : rawParams;
       return callFinanceTool(name, params);
     }
