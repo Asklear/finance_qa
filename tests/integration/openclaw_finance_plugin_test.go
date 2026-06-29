@@ -285,6 +285,10 @@ if (!directHookResult?.prependSystemContext?.includes("标准金额：1946918.51
   console.error("direct finance prompt should expose total as a protected fact:", JSON.stringify(directHookResult));
   process.exit(1);
 }
+if (!directHookResult?.prependSystemContext?.includes("老板可见回复必须出现的精确片段")) {
+  console.error("direct finance prompt should list exact boss-visible fact atoms:", JSON.stringify(directHookResult));
+  process.exit(1);
+}
 if (!directHookResult?.prependSystemContext?.includes("final_answer 是事实锚点，不是固定话术模板")) {
   console.error("direct finance prompt should treat final_answer as factual anchor, not a fixed wording template:", JSON.stringify(directHookResult));
   process.exit(1);

@@ -614,6 +614,7 @@ function mustCallFinanceQuerySystemContext(latestQuestion, currentFacts) {
     "重写时必须保留 final_answer 中的关键金额、期间、指标口径、来源和来源更新时间；不要换算金额单位，除非用户明确要求。",
     "指标和口径标签必须从 final_answer 逐字保留；不要把“已开票未回款”“已收票未付款”“项目应收（应收未收）”“项目成本口径”“项目口径”等改写成近义词。",
     "如果本次核对结果提供了标准指标标签、业务口径或标准金额，老板可见回复必须保留这些事实原子，但仍可自然改写句式和排版。",
+    "如果本次核对结果列出“老板可见回复必须出现的精确片段”，所有片段都必须在最终回复中原样出现。",
     "不要删掉 final_answer 中修饰指标的业务前缀，例如“项目成本口径”“项目口径”“应收未收”。",
     "不要把 final_answer 的 YYYY-MM 或 YYYY-MM~YYYY-MM 期间改成相对时间或其他月份；例如不能把 2025-10~2026-05 改成至今、现在或 2025-10~2026-06。",
     "来源和来源更新时间必须从 final_answer 逐字复制；不要删改文件名、sheet 名、后缀、时间格式或标点。",
@@ -694,6 +695,16 @@ function compactFinanceRows(rows, maxRows = 20) {
   });
 }
 
+function requiredBossVisibleAtoms(payload) {
+  const atoms = [];
+  for (const value of [payload?.period, payload?.metric_label, payload?.total]) {
+    if (value === undefined || value === null || value === "") continue;
+    const atom = String(value).trim();
+    if (atom && !atoms.includes(atom)) atoms.push(atom);
+  }
+  return atoms;
+}
+
 async function financeQuerySystemFacts(question) {
   const result = await callFinanceTool("finance-query", { query: question });
   const payload = compactFinancePayload(parseToolResultPayload(result));
@@ -707,6 +718,8 @@ async function financeQuerySystemFacts(question) {
   if (payload.business_basis) lines.push(`业务口径：${payload.business_basis}`);
   if (payload.metric) lines.push(`标准指标：${payload.metric}`);
   if (payload.total !== undefined && payload.total !== null && payload.total !== "") lines.push(`标准金额：${payload.total}`);
+  const requiredAtoms = requiredBossVisibleAtoms(payload);
+  if (requiredAtoms.length) lines.push(`老板可见回复必须出现的精确片段：${JSON.stringify(requiredAtoms)}`);
   if (payload.source_note) lines.push(`来源说明：${payload.source_note}`);
   if (payload.source_update_note) lines.push(`来源更新时间：${payload.source_update_note}`);
   if (payload.period) lines.push(`期间：${payload.period}`);
