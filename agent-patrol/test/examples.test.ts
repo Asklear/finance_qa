@@ -988,6 +988,14 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(productionContents, /AGENT_PATROL_REFERENCE_EXPORT_CMD/);
   assert.match(productionContents, /AGENT_PATROL_REPORT_RETENTION_DAYS/);
   assert.doesNotMatch(productionContents, /AGENT_PATROL_PREPARE_CMD=.*prepare-financeqa-snapshot-mirror/);
+  for (const serviceFile of [
+    "examples/schedules/financeqa-daily.service",
+    "examples/schedules/financeqa-production-hourly.service"
+  ]) {
+    const service = fs.readFileSync(serviceFile, "utf8");
+    assert.match(service, /Environment=AGENT_PATROL_ENV_FILE=\/opt\/finance_qa\/agent-patrol\/examples\/schedules\/.*\.env/);
+    assert.doesNotMatch(service, /EnvironmentFile=/);
+  }
   assert.notEqual(scriptMode & 0o111, 0);
 });
 

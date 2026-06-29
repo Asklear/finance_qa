@@ -5,5 +5,5 @@ Description=Agent Patrol FinanceQA hourly production dry-run local report
 Type=oneshot
 WorkingDirectory=/opt/finance_qa/agent-patrol
 Environment=PATH=/root/.nvm/versions/node/v22.22.2/bin:/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=/opt/finance_qa/agent-patrol/examples/schedules/financeqa-production-hourly.env
+Environment=AGENT_PATROL_ENV_FILE=/opt/finance_qa/agent-patrol/examples/schedules/financeqa-production-hourly.env
 ExecStart=/opt/finance_qa/agent-patrol/examples/schedules/run-financeqa-dry-run.sh

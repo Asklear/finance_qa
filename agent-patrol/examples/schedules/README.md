@@ -23,6 +23,8 @@ examples/schedules/run-financeqa-dry-run.sh
 
 The default schedule runs two `smoke` suite dry-runs per day, with jitter in the systemd timer. Reports are written under `tmp/financeqa-dry-run/`. The wrapper treats a generated `summary.json` as schedule success and records business accuracy separately in `dry-run.log` as `business_status=threshold_passed` or `business_status=threshold_failed`; set `AGENT_PATROL_FAIL_ON_THRESHOLD=1` only when a scheduler should fail on low accuracy. Without a configured structured `goldenReference`, these reports use direct `finance-query` only as a diagnostic baseline. Do not use that mode as a 90% business-accuracy gate.
 
+The systemd service templates pass `AGENT_PATROL_ENV_FILE` to the wrapper instead of relying on systemd `EnvironmentFile=` expansion. This keeps quoted commands and same-file references such as `${FINANCEQA_REFERENCE_SNAPSHOT}` evaluated by bash `source`, matching manual dry-runs.
+
 For FinanceQA dry-runs that need structured golden evidence, prefer a local snapshot reference:
 
 ```bash

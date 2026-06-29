@@ -4,5 +4,5 @@ Description=Agent Patrol FinanceQA low-frequency dry-run local report
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/finance_qa/agent-patrol
-EnvironmentFile=/opt/finance_qa/agent-patrol/examples/schedules/financeqa-daily.env
+Environment=AGENT_PATROL_ENV_FILE=/opt/finance_qa/agent-patrol/examples/schedules/financeqa-daily.env
 ExecStart=/opt/finance_qa/agent-patrol/examples/schedules/run-financeqa-dry-run.sh

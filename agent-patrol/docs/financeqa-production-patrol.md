@@ -31,6 +31,8 @@ OnCalendar=*-*-* *:07:00
 RandomizedDelaySec=5m
 ```
 
+The systemd service sets `AGENT_PATROL_ENV_FILE=/opt/finance_qa/agent-patrol/examples/schedules/financeqa-production-hourly.env` and lets the wrapper source that file. Do not replace it with systemd `EnvironmentFile=`, because same-file references in command variables need bash expansion.
+
 ## Reference Source
 
 The golden reference comes from a read-only snapshot export of the live `fin_*` tables using:
