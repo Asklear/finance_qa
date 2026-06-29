@@ -24,30 +24,34 @@ func buildContractAggregateResultMessage(selection contractAggregateSelection, s
 func buildContractAggregateMetricParts(selection contractAggregateSelection, summary contractAggregateSummary) []string {
 	parts := make([]string, 0, 3)
 	if selection.IncludeRevenue {
-		parts = append(parts, fmt.Sprintf("项目结算 %.2f 元", summary.RevenueSettlement))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractAggregateMetricLabel("收入"), summary.RevenueSettlement))
 	}
 	if selection.IncludeCost {
-		parts = append(parts, fmt.Sprintf("项目成本 %.2f 元", summary.CostSettlement))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractAggregateMetricLabel("成本"), summary.CostSettlement))
 	}
 	if selection.IncludeProfit {
-		parts = append(parts, fmt.Sprintf("利润 %.2f 元", summary.Profit))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractAggregateMetricLabel("利润"), summary.Profit))
 	}
 	if selection.IncludeReceivable {
-		parts = append(parts, fmt.Sprintf("项目应收 %.2f 元", summary.RevenueReceivable))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractReceivableMetricLabel(summary), summary.RevenueReceivable))
 	}
 	if selection.IncludePayable {
-		parts = append(parts, fmt.Sprintf("项目应付 %.2f 元", summary.CostPayable))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractAggregateMetricLabel("应付"), summary.CostPayable))
 	}
 	if selection.IncludeInvoiceAR {
-		parts = append(parts, fmt.Sprintf("已开票未回款 %.2f 元", summary.RevenueInvoiceOpen))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractAggregateMetricLabel("已开票未回款"), summary.RevenueInvoiceOpen))
 	}
 	if selection.IncludeInvoiceAP {
-		parts = append(parts, fmt.Sprintf("已收票未付款 %.2f 元", summary.CostInvoiceOpen))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractAggregateMetricLabel("已收票未付款"), summary.CostInvoiceOpen))
 	}
 	if len(parts) == 0 {
-		parts = append(parts, fmt.Sprintf("项目结算 %.2f 元", summary.RevenueSettlement))
+		parts = append(parts, fmt.Sprintf("%s %.2f 元", contractAggregateMetricLabel("收入"), summary.RevenueSettlement))
 	}
 	return parts
+}
+
+func contractReceivableMetricLabel(summary contractAggregateSummary) string {
+	return contractAggregateMetricLabel("应收")
 }
 
 func buildContractAggregateMarginNote(selection contractAggregateSelection, summary contractAggregateSummary) string {
@@ -106,7 +110,7 @@ func buildContractAggregateSupplement(selection contractAggregateSelection, summ
 	case selection.IncludeReceivable && !selection.IncludePayable:
 		return fmt.Sprintf("补充项目结算 %.2f 元、已到账 %.2f 元；其中已开票未回款 %.2f 元。%s%s", round2(summary.RevenueSettlement), round2(summary.RevenueReceived), round2(summary.RevenueInvoiceOpen), buildRevenueReceivableCustomerSentence(summary), buildRevenueReceivableDetailSentence(summary.RevenueItems))
 	case selection.IncludePayable && !selection.IncludeReceivable:
-		return fmt.Sprintf("补充项目成本 %.2f 元、已付款 %.2f 元；其中已收票未付款 %.2f 元。", round2(summary.CostSettlement), round2(summary.CostPaid), round2(summary.CostInvoiceOpen))
+		return fmt.Sprintf("补充项目成本 %.2f 元、已付款 %.2f 元。%s", round2(summary.CostSettlement), round2(summary.CostPaid), buildCostPayableDetailSentence(summary.CostItems))
 	case selection.IncludeInvoiceAR && !selection.IncludeInvoiceAP:
 		detail := buildRevenueInvoiceOpenDetailSentence(summary.RevenueInvoiceOpenItems)
 		return fmt.Sprintf("补充已开票 %.2f 元、已到账 %.2f 元。%s", round2(summary.RevenueInvoiced), round2(summary.RevenueReceived), detail)
@@ -261,6 +265,22 @@ func buildCostDetailSentence(items []contractAggregateOpenItem) string {
 		parts = append(parts, fmt.Sprintf("%s 结算 %.2f 元、已付款 %.2f 元、已收票 %.2f 元", label, round2(item.SettlementAmount), round2(item.ReceivedAmount), round2(item.InvoiceAmount)))
 	}
 	return contractAggregateDetailSentence(parts, len(items), "明细：")
+}
+
+func buildCostPayableDetailSentence(items []contractAggregateOpenItem) string {
+	openItems := filterOpenContractAggregateItems(items)
+	if len(openItems) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(openItems))
+	for i, item := range openItems {
+		if i >= 3 {
+			break
+		}
+		label := contractAggregateItemLabel(item)
+		parts = append(parts, fmt.Sprintf("%s 项目成本 %.2f 元、已付款 %.2f 元、未付款 %.2f 元", label, round2(item.SettlementAmount), round2(item.ReceivedAmount), round2(item.OpenAmount)))
+	}
+	return contractAggregateDetailSentence(parts, len(openItems), "明细：")
 }
 
 func buildRevenueInvoiceOpenDetailSentence(items []contractAggregateOpenItem) string {

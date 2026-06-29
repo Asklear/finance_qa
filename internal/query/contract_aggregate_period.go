@@ -37,6 +37,20 @@ func (e *Engine) resolveContractAggregatePeriodCoverage(spec QuerySpec, requeste
 		return coverage
 	}
 	if e.contractFinanceHasRowsForAllSpecs(specs, coverage.RequestedFrom, coverage.RequestedTo, like) {
+		if contractAggregateShouldUseActualDataBounds(spec.OriginalQuestion) {
+			if actualFrom, actualTo, ok := e.contractFinanceDataBoundsForAllSpecs(specs, coverage.RequestedFrom, coverage.RequestedTo, like); ok {
+				if projectFrom, projectOK := e.earliestContractProjectDataPeriod(coverage.RequestedFrom, coverage.RequestedTo, like); projectOK && projectFrom < actualFrom {
+					actualFrom = projectFrom
+				}
+				coverage.ActualFrom = actualFrom
+				coverage.ActualTo = actualTo
+				if coverage.Adjusted() {
+					coverage.Note = fmt.Sprintf("[项目口径覆盖] requested=%s actual=%s reason=请求宽区间前后存在无项目数据月份，按项目表实际覆盖期间回答",
+						displayPeriod(coverage.RequestedFrom, coverage.RequestedTo),
+						displayPeriod(coverage.ActualFrom, coverage.ActualTo))
+				}
+			}
+		}
 		return coverage
 	}
 	if !contractAggregateCanUseLatestAvailablePeriod(spec.OriginalQuestion) {
@@ -67,6 +81,10 @@ func (e *Engine) resolveContractAggregatePeriodCoverage(spec QuerySpec, requeste
 	return coverage
 }
 
+func contractAggregateShouldUseActualDataBounds(question string) bool {
+	return contractAggregateWantsDetailItems(question)
+}
+
 func contractFinanceSpecsForRequestedMetrics(requestedMetrics []string) []contractFinanceTotalsSpec {
 	specs := make([]contractFinanceTotalsSpec, 0, 2)
 	if contractAggregateNeedsRevenueData(requestedMetrics) {
@@ -86,6 +104,111 @@ func (e *Engine) contractFinanceHasRowsForAllSpecs(specs []contractFinanceTotals
 		}
 	}
 	return len(specs) > 0
+}
+
+func (e *Engine) contractFinanceDataBoundsForAllSpecs(specs []contractFinanceTotalsSpec, from, to, like string) (string, string, bool) {
+	actualFrom := ""
+	actualTo := ""
+	for _, spec := range specs {
+		specFrom, specTo, ok := e.contractFinanceDataBounds(spec, from, to, like)
+		if !ok {
+			return "", "", false
+		}
+		if actualFrom == "" || specFrom > actualFrom {
+			actualFrom = specFrom
+		}
+		if actualTo == "" || specTo < actualTo {
+			actualTo = specTo
+		}
+	}
+	if actualFrom == "" || actualTo == "" || actualFrom > actualTo {
+		return "", "", false
+	}
+	return actualFrom, actualTo, true
+}
+
+func (e *Engine) earliestContractProjectDataPeriod(from, to, like string) (string, bool) {
+	earliest := ""
+	for _, spec := range []contractFinanceTotalsSpec{fundIncomeTotalsSpec(), costSettlementTotalsSpec()} {
+		specFrom, _, ok := e.contractFinanceDataBounds(spec, from, to, like)
+		if !ok {
+			continue
+		}
+		earliest = minPeriodString(earliest, specFrom)
+	}
+	if earliest == "" {
+		return "", false
+	}
+	return earliest, true
+}
+
+func (e *Engine) contractFinanceDataBounds(spec contractFinanceTotalsSpec, from, to, like string) (string, string, bool) {
+	if err := spec.validate(); err != nil {
+		return "", "", false
+	}
+	minPeriod, maxPeriod, ok := e.contractFinanceDirectDataBounds(spec, from, to, like)
+	if e.hasContractFinanceGroupTables(spec) {
+		groupMin, groupMax, groupOK := e.contractFinanceGroupDataBounds(spec, from, to, like)
+		if groupOK {
+			minPeriod = minPeriodString(minPeriod, groupMin)
+			maxPeriod = maxPeriodString(maxPeriod, groupMax)
+			ok = true
+		}
+	}
+	if !ok || minPeriod == "" || maxPeriod == "" {
+		return "", "", false
+	}
+	return minPeriod, maxPeriod, true
+}
+
+func (e *Engine) contractFinanceDirectDataBounds(spec contractFinanceTotalsSpec, from, to, like string) (string, string, bool) {
+	predicate := e.contractFinanceNonZeroPredicate("d", spec.DirectTable, spec.MovementColumn)
+	sqlText := fmt.Sprintf(`
+SELECT MIN(d.year_month), MAX(d.year_month)
+FROM %[1]s d
+JOIN fin_contracts c ON c.contract_id = d.contract_id
+WHERE d.year_month BETWEEN ? AND ?
+  AND %[2]s`, spec.DirectTable, predicate)
+	args := []any{from, to}
+	if strings.TrimSpace(like) != "" {
+		sqlText += ` AND (c.customer_name LIKE ? OR c.contract_content LIKE ?)`
+		args = append(args, like, like)
+	}
+	var minPeriod, maxPeriod sql.NullString
+	if err := e.db.QueryRow(sqlText, args...).Scan(&minPeriod, &maxPeriod); err != nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(minPeriod.String), strings.TrimSpace(maxPeriod.String), minPeriod.Valid && maxPeriod.Valid
+}
+
+func (e *Engine) contractFinanceGroupDataBounds(spec contractFinanceTotalsSpec, from, to, like string) (string, string, bool) {
+	filter, args := e.contractFinanceGroupAmountFilter(spec, from, to, like)
+	predicate := e.contractFinanceNonZeroPredicate("g", spec.GroupTable, spec.MovementColumn)
+	sqlText := fmt.Sprintf(`
+SELECT MIN(g.year_month), MAX(g.year_month)
+FROM %[1]s g
+WHERE %[2]s
+  AND %[3]s`, spec.GroupTable, filter, predicate)
+	var minPeriod, maxPeriod sql.NullString
+	if err := e.db.QueryRow(sqlText, args...).Scan(&minPeriod, &maxPeriod); err != nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(minPeriod.String), strings.TrimSpace(maxPeriod.String), minPeriod.Valid && maxPeriod.Valid
+}
+
+func (e *Engine) contractFinanceNonZeroPredicate(alias, tableName, movementColumn string) string {
+	cols := e.tableColumns(tableName)
+	amountPredicates := make([]string, 0, 3)
+	for _, col := range []string{"settlement_amount", movementColumn, "invoice_amount"} {
+		col = strings.TrimSpace(col)
+		if col != "" && cols[col] {
+			amountPredicates = append(amountPredicates, fmt.Sprintf("COALESCE(%s.%s, 0) <> 0", alias, col))
+		}
+	}
+	if len(amountPredicates) == 0 {
+		return "1=1"
+	}
+	return "(" + strings.Join(amountPredicates, " OR ") + ")"
 }
 
 func (e *Engine) latestContractFinancePeriodForSpecs(specs []contractFinanceTotalsSpec) string {
@@ -132,6 +255,21 @@ func (e *Engine) latestContractFinancePeriodFromTable(tableName, movementColumn 
 		return ""
 	}
 	return strings.TrimSpace(period.String)
+}
+
+func minPeriodString(a, b string) string {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	case b < a:
+		return b
+	default:
+		return a
+	}
 }
 
 func contractAggregateCanUseLatestAvailablePeriod(question string) bool {

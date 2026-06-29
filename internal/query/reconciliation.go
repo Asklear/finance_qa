@@ -13,7 +13,7 @@ func shouldUseReconciliation(q string) bool {
 		return containsAny(q, []string{"利润", "营收", "收入", "销售额", "成本"})
 	}
 	if strings.Contains(q, "营收情况") {
-		return true
+		return containsAny(q, []string{"为什么", "怎么回事", "差异", "拆开", "账上", "银行卡", "现金", "利润", "成本", "费用", "到账", "回款", "收款"})
 	}
 	if strings.Contains(q, "营收") && strings.Contains(q, "怎么样") {
 		return true

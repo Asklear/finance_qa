@@ -10,6 +10,8 @@ func buildContractAggregateResultData(selection contractAggregateSelection, summ
 		"period_to":         summary.PeriodTo,
 		"requested_period":  summary.RequestedPeriod,
 		"metric":            selection.PrimaryMetric,
+		"metric_label":      contractAggregateMetricLabel(selection.PrimaryMetric),
+		"business_basis":    contractAggregateBusinessBasis(selection.PrimaryMetric),
 		"requested_metrics": selection.RequestedMetrics,
 		"total":             round2(total),
 		"metrics":           buildContractAggregateMetricMap(selection, summary),
@@ -149,6 +151,9 @@ func buildContractAggregatePayloadSummary(selection contractAggregateSelection, 
 		payload["cost_paid"] = round2(summary.CostPaid)
 		payload["payable_amount"] = round2(summary.CostPayable)
 		payload["invoiced_unpaid_amount"] = round2(summary.CostInvoiceOpen)
+		if len(summary.CostItems) > 0 {
+			payload["payable_open_items"] = buildCostItemPayload(filterOpenContractAggregateItems(summary.CostItems))
+		}
 	}
 	if selection.IncludeInvoiceAP {
 		payload["cost_paid"] = round2(summary.CostPaid)
@@ -366,6 +371,7 @@ func buildContractAggregateAccountView(selection contractAggregateSelection, sum
 		"说明": "项目经营口径",
 	}
 	if selection.IncludeRevenue {
+		view["营收"] = round2(summary.RevenueSettlement)
 		view["项目结算"] = round2(summary.RevenueSettlement)
 		view["已开票"] = round2(summary.RevenueInvoiced)
 	}
@@ -385,7 +391,6 @@ func buildContractAggregateAccountView(selection contractAggregateSelection, sum
 	}
 	if selection.IncludePayable {
 		view["项目应付"] = round2(summary.CostPayable)
-		view["已收票未付款"] = round2(summary.CostInvoiceOpen)
 	}
 	if selection.IncludeInvoiceAR {
 		view["已开票未回款"] = round2(summary.RevenueInvoiceOpen)

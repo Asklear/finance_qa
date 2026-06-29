@@ -18,3 +18,16 @@ func TestBestCompanyMatchPrefersLongerFormalNameOnAliasTie(t *testing.T) {
 		t.Fatalf("bestCompanyMatch() score = %d, want positive match score", score)
 	}
 }
+
+func TestResolveTreatsDefaultCompanyPlaceholderAsEmpty(t *testing.T) {
+	companies := []string{
+		"DefaultCompany",
+		"南京优集数据科技有限公司",
+	}
+
+	got := Resolve("DefaultCompany", companies)
+
+	if got != "南京优集数据科技有限公司" {
+		t.Fatalf("Resolve(DefaultCompany) = %q, want real company", got)
+	}
+}

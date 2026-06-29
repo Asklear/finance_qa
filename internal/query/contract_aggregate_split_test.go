@@ -60,6 +60,9 @@ func TestBuildContractAggregateResultSnapshotIncludesCashAndAccountViews(t *test
 	if accountView["利润"] != float64(292) {
 		t.Fatalf("account_view[利润] = %v, want 292", accountView["利润"])
 	}
+	if accountView["营收"] != float64(1300) {
+		t.Fatalf("account_view[营收] = %v, want 1300", accountView["营收"])
+	}
 	if got := data["source_priority"]; got != "contract_first" {
 		t.Fatalf("source_priority = %v, want contract_first", got)
 	}
@@ -83,7 +86,7 @@ func TestBuildContractAggregateResultSnapshotUsesProjectLabelsForCompanyAggregat
 	}
 
 	message, data := buildContractAggregateResultSnapshot(spec, summary)
-	for _, want := range []string{"老板口径先看项目汇总", "项目结算 25321196.46 元", "项目成本 11159793.22 元", "项目应收 5361495.57 元", "项目应付 2249454.49 元"} {
+	for _, want := range []string{"老板口径先看项目汇总", "项目结算收入（营收） 25321196.46 元", "项目成本 11159793.22 元", "项目应收（应收未收） 5361495.57 元", "项目应付（应付未付/未付款） 2249454.49 元"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message should include %q, got: %s", want, message)
 		}

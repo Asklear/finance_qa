@@ -70,3 +70,45 @@ func contractAggregateMetricValue(metric string, summary contractAggregateSummar
 		return round2(summary.RevenueSettlement)
 	}
 }
+
+func contractAggregateMetricLabel(metric string) string {
+	switch strings.TrimSpace(metric) {
+	case "收入":
+		return "项目结算收入（营收）"
+	case "成本":
+		return "项目成本"
+	case "利润":
+		return "利润"
+	case "应收":
+		return "项目应收（应收未收）"
+	case "应付":
+		return "项目应付（应付未付/未付款）"
+	case "已开票未回款":
+		return "项目口径已开票未回款"
+	case "已收票未付款":
+		return "项目成本口径已收票未付款"
+	default:
+		return strings.TrimSpace(metric)
+	}
+}
+
+func contractAggregateBusinessBasis(metric string) string {
+	switch strings.TrimSpace(metric) {
+	case "收入":
+		return "项目口径：按合同资金收入/收入成本表的项目结算收入统计，不按银行到账或账上余额口径。"
+	case "成本":
+		return "项目成本口径：按合同成本结算金额统计。"
+	case "利润":
+		return "项目经营口径：项目结算收入减项目成本，作为项目毛利/利润。"
+	case "应收":
+		return "项目口径：项目结算收入减已到账，表示项目应收未收。"
+	case "应付":
+		return "项目成本口径：项目成本减已付款，表示应付未付/未付款，不按收入未回款口径。"
+	case "已开票未回款":
+		return "项目口径：已开票金额减已到账，表示收入侧已开票未回款。"
+	case "已收票未付款":
+		return "项目成本口径：已收票金额减已付款，表示供应商侧已收票未付款。"
+	default:
+		return "项目经营口径。"
+	}
+}

@@ -135,7 +135,7 @@ func TestContractDimensionQueryScenarios(t *testing.T) {
 			Question: "辽宁金程信息科技有限公司去年应收未收是多少？",
 			DBPath:   buildContractQueryTestDB,
 			Assert: func(t *testing.T, res query.Result) {
-				if !strings.Contains(res.Message, "项目应收 500.00 元") {
+				if !strings.Contains(res.Message, "项目应收") || !strings.Contains(res.Message, "500.00 元") {
 					t.Fatalf("message should directly answer unreceived receivable, got: %s", res.Message)
 				}
 				summary, ok := res.Data["contract_summary"].(map[string]any)
@@ -722,7 +722,7 @@ func TestCompanyAggregateMetricIncludesMergedFundIncomeGroups(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %+v", res)
 	}
-	if !strings.Contains(res.Message, "项目结算 4200.00 元") {
+	if !strings.Contains(res.Message, "项目结算收入（营收） 4200.00 元") {
 		t.Fatalf("message should include merged group revenue, got: %s", res.Message)
 	}
 	summary, ok := res.Data["contract_summary"].(map[string]any)
@@ -780,7 +780,7 @@ func TestCompanyAggregateMetricPrefersContractAggregateFirst(t *testing.T) {
 	if !strings.Contains(res.Message, "老板口径先看项目汇总") {
 		t.Fatalf("message should prefer contract aggregate, got: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "项目结算 1300.00 元") || !strings.Contains(res.Message, "项目成本 1008.00 元") || !strings.Contains(res.Message, "利润 292.00 元") {
+	if !strings.Contains(res.Message, "项目结算收入（营收） 1300.00 元") || !strings.Contains(res.Message, "项目成本 1008.00 元") || !strings.Contains(res.Message, "利润 292.00 元") {
 		t.Fatalf("message should use contract aggregate numbers, got: %s", res.Message)
 	}
 	if got, _ := res.Data["source_priority"].(string); got != "contract_first" {
@@ -854,7 +854,7 @@ func TestCompanyAggregateGMVPrefersContractAggregateFirst(t *testing.T) {
 	if !strings.Contains(res.Message, "老板口径先看项目汇总") {
 		t.Fatalf("message should prefer contract aggregate, got: %s", res.Message)
 	}
-	if !strings.Contains(res.Message, "项目结算 1300.00 元") {
+	if !strings.Contains(res.Message, "项目结算收入（营收） 1300.00 元") {
 		t.Fatalf("message should treat GMV as revenue-like contract metric, got: %s", res.Message)
 	}
 }

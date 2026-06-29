@@ -73,8 +73,20 @@ func WithAsOfAnchor(anchor time.Time) EngineOption {
 }
 
 func NewEngine(dbPath, company string, opts ...EngineOption) (*Engine, error) {
-	if err := dbpkg.Bootstrap(context.Background(), dbPath); err != nil {
-		return nil, fmt.Errorf("bootstrap db: %w", err)
+	return newEngine(dbPath, company, true, opts...)
+}
+
+// NewReadOnlyEngine opens an already bootstrapped database for read-only query
+// surfaces such as MCP finance-query. It avoids per-request schema writes.
+func NewReadOnlyEngine(dbPath, company string, opts ...EngineOption) (*Engine, error) {
+	return newEngine(dbPath, company, false, opts...)
+}
+
+func newEngine(dbPath, company string, bootstrap bool, opts ...EngineOption) (*Engine, error) {
+	if bootstrap {
+		if err := dbpkg.Bootstrap(context.Background(), dbPath); err != nil {
+			return nil, fmt.Errorf("bootstrap db: %w", err)
+		}
 	}
 	db, err := dbpkg.Open(context.Background(), dbPath)
 	if err != nil {

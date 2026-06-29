@@ -59,8 +59,12 @@ func detectRequestedMetricsWithConfig(q string, cfg RuleConfig) []string {
 
 func detectContractARAPMetric(q string) string {
 	switch {
+	case looksLikeSupplierInvoiceUnpaidRosterQuestion(q):
+		return "已收票未付款"
 	case looksLikeSupplierInvoiceUnpaidQuestion(q):
 		return "已收票未付款"
+	case looksLikeRevenueInvoiceOpenQuestion(q):
+		return "已开票未回款"
 	case containsAny(q, []string{"含未开票未付款", "未开票未付款", "未开票未回款", "应收未收"}):
 		return "应收"
 	case containsAny(q, []string{"客户未付款", "客户没付款", "客户未支付"}):
@@ -69,6 +73,8 @@ func detectContractARAPMetric(q string) string {
 		return "已收票未付款"
 	case containsAny(q, []string{"已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款"}):
 		return "已开票未回款"
+	case looksLikeProjectPayableUnpaidQuestion(q):
+		return "应付"
 	case containsAny(q, []string{"应付账款", "应付", "已收发票未付款", "已收票未付款", "收到发票未付款", "供应商发票未付款"}):
 		return "应付"
 	case containsAny(q, []string{"应收账款", "应收", "已开发票未收款", "已开票未收款", "已开票未回款", "已开票未付款"}):
@@ -78,14 +84,73 @@ func detectContractARAPMetric(q string) string {
 	}
 }
 
-func looksLikeSupplierInvoiceUnpaidQuestion(q string) bool {
-	if !containsAny(q, []string{"已开票未付款", "已开发票未付款", "开票未付款", "发票未付款", "未付款", "未支付"}) {
+func looksLikeRevenueInvoiceOpenQuestion(q string) bool {
+	if !containsAny(q, []string{"已开票", "已开发票", "开了票", "开发票"}) {
 		return false
 	}
+	if containsAny(q, []string{"收票", "已收票", "收到发票", "供应商发票"}) {
+		return false
+	}
+	return containsAny(q, []string{
+		"未回款", "未收款", "未到账",
+		"还没回款", "还没收款", "还没到账",
+		"没回款", "没收款", "没到账",
+		"没有回款", "没有收款", "没有到账",
+	})
+}
+
+func looksLikeSupplierInvoiceUnpaidQuestion(q string) bool {
 	if containsAny(q, []string{"未回款", "未收款", "客户未付款", "客户没付款", "客户未支付"}) {
 		return false
 	}
-	return containsAny(q, []string{"供应商", "采购", "成本", "应付", "收票", "收到发票", "已收发票", "已收票", "合同", "项目"})
+	if !containsAny(q, []string{"未付款", "未支付", "未付", "没付款", "没支付", "没有付款", "没有支付"}) {
+		return false
+	}
+	if containsAny(q, []string{"已收票", "收票", "收到发票", "已收发票", "供应商发票"}) {
+		return true
+	}
+	if containsAny(q, []string{"已开票未付款", "已开发票未付款", "开票未付款", "发票未付款"}) {
+		return containsAny(q, []string{"供应商", "采购", "成本", "应付", "合同", "项目"})
+	}
+	return false
+}
+
+func looksLikeSupplierInvoiceUnpaidRosterQuestion(q string) bool {
+	if containsAny(q, []string{"未回款", "未收款", "客户未付款", "客户没付款", "客户未支付", "应收"}) {
+		return false
+	}
+	if !containsAny(q, []string{"未付款", "未支付", "未付", "没付款", "没支付", "没有付款", "没有支付"}) {
+		return false
+	}
+	if !containsAny(q, []string{"项目", "合同", "供应商", "采购", "成本"}) {
+		return false
+	}
+	return containsAny(q, []string{
+		"项目及对应金额",
+		"项目和金额",
+		"项目分别",
+		"每个未付款项目",
+		"每个项目",
+		"哪些项目",
+		"有哪些项目",
+		"列一下",
+		"分别是多少",
+		"对应金额",
+		"金额分别",
+	})
+}
+
+func looksLikeProjectPayableUnpaidQuestion(q string) bool {
+	if !containsAny(q, []string{"未付款", "未支付", "未付", "没付款", "没支付", "没有付款", "没有支付", "应付未付"}) {
+		return false
+	}
+	if containsAny(q, []string{"未回款", "未收款", "客户未付款", "客户没付款", "客户未支付", "应收"}) {
+		return false
+	}
+	if looksLikeSupplierInvoiceUnpaidQuestion(q) || containsAny(q, []string{"已开票未回款", "已开票未收款", "已开发票未收款"}) {
+		return false
+	}
+	return containsAny(q, []string{"项目成本", "成本口径", "项目口径", "项目", "合同", "供应商", "采购", "应付", "成本"})
 }
 
 func detectCoreMetric(q string) string {

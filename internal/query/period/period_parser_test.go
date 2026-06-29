@@ -48,6 +48,16 @@ func TestExtractPeriodWithNowTreatsBareCumulativeAsYearToDate(t *testing.T) {
 	}
 }
 
+func TestExtractPeriodWithNowTreatsCurrentYearCumulativeAsYearToDate(t *testing.T) {
+	anchor := time.Date(2026, time.June, 28, 0, 0, 0, 0, time.UTC)
+
+	from, to := ExtractPeriodWithNow("飞未云科2026年累计销售额多少？", anchor)
+
+	if from != "2026-01" || to != "2026-06" {
+		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2026-01,2026-06)", from, to)
+	}
+}
+
 func TestExtractPeriodWithNowTreatsSameYearMonthDashAsRange(t *testing.T) {
 	anchor := time.Date(2026, time.May, 22, 0, 0, 0, 0, time.UTC)
 
@@ -85,6 +95,33 @@ func TestExtractPeriodWithNowSupportsExplicitStartToLastCompleteNaturalMonth(t *
 
 	if from != "2025-10" || to != "2026-05" {
 		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2025-10,2026-05)", from, to)
+	}
+}
+
+func TestExtractPeriodWithNowTreatsStartToNowAsCompleteMonthRange(t *testing.T) {
+	anchor := time.Date(2026, time.June, 28, 0, 0, 0, 0, time.UTC)
+
+	cases := []string{
+		"从2025年10月起至今，已开票但还没回款的项目金额是多少？",
+		"2025年10月至今项目口径应收未收多少？",
+		"从25年10月起到现在，按项目成本口径未付款合计多少？",
+	}
+
+	for _, q := range cases {
+		from, to := ExtractPeriodWithNow(q, anchor)
+		if from != "2025-10" || to != "2026-05" {
+			t.Fatalf("ExtractPeriodWithNow(%q) = (%s,%s), want (2025-10,2026-05)", q, from, to)
+		}
+	}
+}
+
+func TestExtractPeriodWithNowSupportsLooseTwoDigitYearRangeThroughLastCompleteMonth(t *testing.T) {
+	anchor := time.Date(2026, time.June, 28, 0, 0, 0, 0, time.UTC)
+
+	from, to := ExtractPeriodWithNow("25年至26年未付款的项目及对应金额有哪些？", anchor)
+
+	if from != "2025-01" || to != "2026-05" {
+		t.Fatalf("ExtractPeriodWithNow() = (%s,%s), want (2025-01,2026-05)", from, to)
 	}
 }
 

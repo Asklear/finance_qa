@@ -61,7 +61,7 @@ func (s *Service) runFinanceQuery(ctx context.Context, args map[string]any) (Too
 		return ToolRunResult{}, &ToolError{Code: -32602, Message: "Missing required argument", Data: "query"}
 	}
 
-	engine, err := query.NewEngine(s.config.DBPath, s.config.Company)
+	engine, err := query.NewReadOnlyEngine(s.config.DBPath, s.config.Company)
 	if err != nil {
 		return ToolRunResult{}, &ToolError{Code: -32603, Message: "Failed to create query engine", Data: err.Error()}
 	}
@@ -79,7 +79,7 @@ func (s *Service) runFinanceHostData(ctx context.Context, args map[string]any) (
 		queryStr = "输出全量财报原始数据给宿主LLM"
 	}
 
-	engine, err := query.NewEngine(s.config.DBPath, s.config.Company)
+	engine, err := query.NewReadOnlyEngine(s.config.DBPath, s.config.Company)
 	if err != nil {
 		return ToolRunResult{}, &ToolError{Code: -32603, Message: "Failed to create query engine", Data: err.Error()}
 	}

@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -249,7 +250,10 @@ type contractAggregateOpenBucket struct {
 }
 
 func contractAggregateWantsDetailItems(question string) bool {
-	return containsAny(question, []string{"明细", "列表", "有哪些", "哪些", "分别", "拆", "拆分", "构成"})
+	return containsAny(question, []string{
+		"明细", "列表", "列一下", "有哪些", "哪些", "分别", "拆", "拆分", "构成",
+		"项目和金额", "项目及金额", "项目及对应金额", "对应金额", "金额各是", "金额分别",
+	})
 }
 
 func contractAggregateWantsRevenueItems(question string, requestedMetrics []string, cfg RuleConfig) bool {
@@ -458,7 +462,11 @@ func (e *Engine) collectRevenueInvoiceOpenItems(periodFrom, periodTo, like strin
 }
 
 func (e *Engine) collectCostInvoiceOpenItems(periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
-	return e.collectContractAggregateInvoiceOpenItems(costSettlementTotalsSpec(), "cost_invoice_open_items", periodFrom, periodTo, like)
+	items, err := e.collectContractAggregateInvoiceOpenItems(costSettlementTotalsSpec(), "cost_invoice_open_items", periodFrom, periodTo, like)
+	if err != nil {
+		return nil, err
+	}
+	return rollupSingleContractMergedOpenItems(items), nil
 }
 
 func (e *Engine) collectContractAggregateInvoiceOpenItems(spec contractFinanceTotalsSpec, alias, periodFrom, periodTo, like string) ([]contractAggregateOpenItem, error) {
@@ -602,6 +610,58 @@ func (e *Engine) collectContractAggregateInvoiceOpenItemsFromSQL(sqlText string,
 		return nil, err
 	}
 	return items, nil
+}
+
+func rollupSingleContractMergedOpenItems(items []contractAggregateOpenItem) []contractAggregateOpenItem {
+	if len(items) == 0 {
+		return nil
+	}
+	type key struct {
+		customer string
+		content  string
+	}
+	merged := make(map[key]contractAggregateOpenItem, len(items))
+	for _, item := range items {
+		item.CustomerName = strings.TrimSpace(item.CustomerName)
+		item.ContractContent = normalizeSingleContractMergedContent(item.ContractContent)
+		k := key{customer: item.CustomerName, content: item.ContractContent}
+		current := merged[k]
+		current.CustomerName = item.CustomerName
+		current.ContractContent = item.ContractContent
+		current.SettlementAmount = round2(current.SettlementAmount + item.SettlementAmount)
+		current.InvoiceAmount = round2(current.InvoiceAmount + item.InvoiceAmount)
+		current.ReceivedAmount = round2(current.ReceivedAmount + item.ReceivedAmount)
+		current.OpenAmount = round2(current.OpenAmount + item.OpenAmount)
+		merged[k] = current
+	}
+	out := make([]contractAggregateOpenItem, 0, len(merged))
+	for _, item := range merged {
+		out = append(out, item)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].OpenAmount != out[j].OpenAmount {
+			return out[i].OpenAmount > out[j].OpenAmount
+		}
+		if out[i].CustomerName != out[j].CustomerName {
+			return out[i].CustomerName < out[j].CustomerName
+		}
+		return out[i].ContractContent < out[j].ContractContent
+	})
+	return out
+}
+
+func normalizeSingleContractMergedContent(content string) string {
+	content = strings.TrimSpace(content)
+	const prefix = "合并行合计（覆盖合同/项目："
+	const suffix = "）"
+	if !strings.HasPrefix(content, prefix) || !strings.HasSuffix(content, suffix) {
+		return content
+	}
+	covered := strings.TrimSuffix(strings.TrimPrefix(content, prefix), suffix)
+	if strings.TrimSpace(covered) == "" || strings.Contains(covered, "、") {
+		return content
+	}
+	return strings.TrimSpace(covered)
 }
 
 func contractAggregateSourceTablesForMetrics(requestedMetrics []string) []string {

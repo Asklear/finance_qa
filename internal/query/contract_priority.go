@@ -16,6 +16,9 @@ func shouldPreferContractAggregate(q string, intent Intent, family QueryFamily, 
 	if shouldUseContractFirstARAP(q) {
 		return true
 	}
+	if shouldUseLatestRevenueContractAggregate(q, cfg) {
+		return true
+	}
 	if intent == IntentARAPQuery || intent == IntentTaxQuery || intent == IntentAnalysis || intent == IntentHostPayload {
 		return false
 	}
@@ -35,4 +38,14 @@ func shouldPreferContractAggregate(q string, intent Intent, family QueryFamily, 
 		return false
 	}
 	return containsAny(q, cfg.ContractSummaryKeywords())
+}
+
+func shouldUseLatestRevenueContractAggregate(q string, cfg RuleConfig) bool {
+	if shouldUseExplicitFinancialAccountQuestion(q) {
+		return false
+	}
+	if !containsAny(q, cfg.MetricKeywords(metricKeyRevenue)) {
+		return false
+	}
+	return containsAny(q, []string{"最新月份", "最新一个月", "最新的月份", "最新月", "最近一个月"})
 }

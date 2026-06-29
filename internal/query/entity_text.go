@@ -103,6 +103,7 @@ func shouldSkipEntityFragmentWithConfig(fragment string, minLen int, cfg RuleCon
 	}
 	return containsAny(fragment, []string{
 		"帮我", "一下", "查询", "多少", "哪些", "价格", "一共", "支出", "报销",
+		"对应金额", "对应",
 		"经营", "分析", "风险", "健康", "评价", "应收", "应付", "账款", "费用",
 		"资金", "货币", "流水", "工资", "社保", "公积金", "人力成本", "薪酬",
 		"营收", "收入", "成本", "利润", "季度", "半年", "全年", "年度", "累计", "年内",

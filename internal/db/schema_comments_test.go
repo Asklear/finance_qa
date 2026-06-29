@@ -138,6 +138,48 @@ func TestBootstrapStructuredSourceCommentsCarryFunctionalDescription(t *testing.
 	}
 }
 
+func TestContractMainDefaultCommentsCoverOCRPartyTaxIDs(t *testing.T) {
+	t.Parallel()
+
+	comments := defaultColumnComments("contract_main")
+	for _, columnName := range []string{"buyer_tax_id", "seller_tax_id"} {
+		if strings.TrimSpace(comments[columnName]) == "" {
+			t.Fatalf("contract_main.%s should have a default column comment", columnName)
+		}
+	}
+}
+
+func TestFinanceSourceEmailMessageIDHasDefaultComment(t *testing.T) {
+	t.Parallel()
+
+	comments := defaultColumnComments("fin_cost_settlements")
+	if strings.TrimSpace(comments["source_email_message_id"]) == "" {
+		t.Fatal("fin_cost_settlements.source_email_message_id should have a default column comment")
+	}
+}
+
+func TestCostSettlementEnrichmentColumnsHaveDefaultComments(t *testing.T) {
+	t.Parallel()
+
+	comments := defaultColumnComments("fin_cost_settlements")
+	for _, columnName := range []string{
+		"customer_tax_id",
+		"po_number",
+		"settlement_period_start",
+		"settlement_period_end",
+		"calculation_formula",
+		"quantity_detail",
+		"service_scope_summary",
+		"buyer_contract_number",
+		"project_code",
+		"applicant_contact_info",
+	} {
+		if strings.TrimSpace(comments[columnName]) == "" {
+			t.Fatalf("fin_cost_settlements.%s should have a default column comment", columnName)
+		}
+	}
+}
+
 func TestFormatPostgresColumnCommentSQLQuotesPayloadSafely(t *testing.T) {
 	t.Parallel()
 

@@ -13,7 +13,10 @@ func Resolve(req string, companies []string) string {
 	}
 	q := strings.TrimSpace(req)
 	if q == "" {
-		return companies[0]
+		return defaultResolvedCompany(companies)
+	}
+	if isPlaceholderCompanyName(q) {
+		return defaultResolvedCompany(companies)
 	}
 
 	// 若用户输入的是简称，优先提升到包含该简称的最长正式公司名。
@@ -34,6 +37,27 @@ func Resolve(req string, companies []string) string {
 		return companies[0]
 	}
 	return best
+}
+
+func defaultResolvedCompany(companies []string) string {
+	for _, company := range companies {
+		if strings.TrimSpace(company) != "" && !isPlaceholderCompanyName(company) {
+			return company
+		}
+	}
+	if len(companies) == 0 {
+		return ""
+	}
+	return companies[0]
+}
+
+func isPlaceholderCompanyName(company string) bool {
+	switch strings.ToLower(strings.TrimSpace(company)) {
+	case "defaultcompany", "default_company":
+		return true
+	default:
+		return false
+	}
 }
 
 func ResolveMention(question string, companies []string) string {
@@ -120,7 +144,7 @@ func Aliases(company string) []string {
 		aliases = append(aliases, seg)
 	}
 
-		// 衍生更短别名（如“某某智能”->“某某”）。
+	// 衍生更短别名（如“某某智能”->“某某”）。
 	for _, a := range append([]string{}, aliases...) {
 		tmp := a
 		for _, s := range trimSuffixes {

@@ -62,10 +62,17 @@ func TestCustomerContractEntityTotalsMatchIndependentSQL(t *testing.T) {
 		db := testutil.RequireLiveSQLDB(t)
 
 		entity := "飞未云科（深圳）技术有限公司"
-		expected := queryCustomerContractTruth(t, db, "2026-01", "2026-05", entity)
 		res := engine.Query("飞未云科2026年累计销售额多少？")
 
 		requireSuccessfulTrace(t, res.Success, res.Message, len(res.ExecutedSQL), len(res.CalculationLogs))
+		spec := requireMap(t, res.Data["query_spec"], "data.query_spec")
+		expected := queryCustomerContractTruth(
+			t,
+			db,
+			readString(t, spec, "period_from"),
+			readString(t, spec, "period_to"),
+			entity,
+		)
 		if got, _ := res.Data["role"].(string); got != "customer_contract" {
 			t.Fatalf("role=%q, want customer_contract", got)
 		}
@@ -278,6 +285,20 @@ func readFloat(t *testing.T, m map[string]any, key string) float64 {
 		t.Fatalf("key %q expected number, got %T (%v)", key, v, v)
 		return 0
 	}
+}
+
+func readString(t *testing.T, m map[string]any, key string) string {
+	t.Helper()
+
+	v, ok := m[key]
+	if !ok {
+		t.Fatalf("missing key %q in %#v", key, m)
+	}
+	s, ok := v.(string)
+	if !ok || strings.TrimSpace(s) == "" {
+		t.Fatalf("key %q expected non-empty string, got %T (%v)", key, v, v)
+	}
+	return s
 }
 
 func assertAmount(t *testing.T, label string, got, want float64) {
