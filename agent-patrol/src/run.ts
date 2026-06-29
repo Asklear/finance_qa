@@ -1,5 +1,6 @@
 import { generateCases } from "./cases.ts";
 import { runDoctor } from "./doctor.ts";
+import { applyQuestionGenerators, type ExecuteQuestionGenerator } from "./question_generator.ts";
 import { writeReport } from "./report.ts";
 import { executeGoldenReference, executeReadonlyReference, type ExecuteReferenceInput } from "./reference.ts";
 import { runCommandAgent } from "./runners/command_runner.ts";
@@ -23,6 +24,7 @@ export interface RunSuiteOptions {
   executeAgent?: ExecuteAgent;
   executeReference?: ExecuteReference;
   executeGoldenReference?: ExecuteGoldenReference;
+  executeQuestionGenerator?: ExecuteQuestionGenerator;
 }
 
 export interface RunSuiteResult {
@@ -51,7 +53,15 @@ export async function runSuite(config: PatrolConfig, options: RunSuiteOptions): 
   if (!doctor.ok) {
     throw new Error("patrol doctor failed; fix config before run");
   }
-  const cases = generateCases(config, { suite: options.suite, seed: options.seed });
+  const cases = await applyQuestionGenerators(
+    generateCases(config, { suite: options.suite, seed: options.seed }),
+    {
+      targets: config.targets,
+      suite: options.suite,
+      seed: options.seed,
+      executeQuestionGenerator: options.executeQuestionGenerator
+    }
+  );
   const executeAgent = options.executeAgent ?? defaultExecuteAgent;
   const executeReference = options.executeReference ?? executeReadonlyReference;
   const executeGolden = options.executeGoldenReference ?? executeGoldenReference;

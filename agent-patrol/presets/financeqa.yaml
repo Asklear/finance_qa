@@ -13,11 +13,15 @@ templates:
       - "收入表中最新月份的营收是多少？"
       - "按最新可见月份，看一下当月营收。"
       - "{{latest_month_label}}，项目结算营收是多少？"
+    questionAnchors:
+      - ["收入表", "项目结算", "项目收入", "营收"]
     variables:
       latest_month_label:
         - "收入表中最新月份"
         - "最新可见月份"
     scoring:
+      amountLabelGroups:
+        - ["项目结算", "营收", "收入", "项目收入"]
       referenceChecks:
         amounts:
           labels: ["项目结算", "营收", "收入"]
@@ -31,12 +35,17 @@ templates:
       - "{{period}}，所有项目的应收未收是多少？"
       - "项目口径看，{{period}}，还有多少应收未收？"
       - "按项目应收口径，{{period}}未回款合计多少？"
+    questionAnchors:
+      - ["项目口径", "所有项目", "项目应收", "项目上"]
+      - ["应收未收", "未回款", "未收款", "没收回来"]
     variables:
       period:
         - "从2025年10月起到上一个完整自然月月底"
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      amountLabelGroups:
+        - ["项目应收", "应收未收", "未回款", "未收款", "没收回来"]
       referenceChecks:
         amounts:
           labels: ["项目应收", "应收未收"]
@@ -52,12 +61,17 @@ templates:
       - "{{period}}，所有项目已开票未回款是多少？"
       - "项目口径看，{{period}}已开票未收款还有多少？"
       - "{{period}}，已开票但还没回款的项目金额是多少？"
+    questionAnchors:
+      - ["项目口径", "所有项目", "项目"]
+      - ["已开票未回款", "已开票未收款", "已开票但还没回款"]
     variables:
       period:
         - "从2025年10月起到上一个完整自然月月底"
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      amountLabelGroups:
+        - ["已开票未回款", "已开票未收款", "已开票但未回款", "已开票但还没回款"]
       referenceChecks:
         amounts:
           labels: ["已开票未回款", "已开票未收款"]
@@ -72,12 +86,17 @@ templates:
       - "{{period}}，所有项目的应付未付是多少？"
       - "项目口径看，{{period}}，还有多少应付未付？"
       - "按项目成本口径，{{period}}未付款合计多少？"
+    questionAnchors:
+      - ["项目成本", "项目应付", "应付未付", "供应商"]
+      - ["应付未付", "未付款"]
     variables:
       period:
         - "从2025年10月起到上一个完整自然月月底"
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      amountLabelGroups:
+        - ["项目应付", "应付未付"]
       referenceChecks:
         amounts:
           labels: ["项目应付", "应付未付", "项目成本"]
@@ -92,12 +111,17 @@ templates:
       - "{{period}}，所有项目已收票未付款是多少？"
       - "项目口径看，{{period}}已收票但未付款还有多少？"
       - "{{period}}，已收票未付款的项目金额是多少？"
+    questionAnchors:
+      - ["项目口径", "所有项目", "项目成本", "项目应付", "项目金额"]
+      - ["已收票未付款", "已收票但未付款", "已收票未付"]
     variables:
       period:
         - "从2025年10月起到上一个完整自然月月底"
         - "2025年10月至上一个完整自然月月底"
         - "从2025年10月起至今"
     scoring:
+      amountLabelGroups:
+        - ["已收票未付款", "已收票但未付款", "已收票未付"]
       referenceChecks:
         amounts:
           labels: ["已收票未付款", "已收票但未付款"]
@@ -112,7 +136,13 @@ templates:
       - "25年至26年未付款的项目及对应金额有哪些？"
       - "列一下2025年至2026年还有未付款的项目和金额。"
       - "项目成本口径看，25年至26年未付款项目分别是多少？"
+    questionAnchors:
+      - ["项目", "项目成本", "项目应付", "应付未付", "供应商", "已收票未付款"]
+      - ["未付款", "应付未付", "已收票未付款"]
     scoring:
+      amountLabelGroups:
+        - ["已收票未付款", "已收票但未付款", "已收票未付"]
+        - ["项目应付", "应付未付"]
       referenceChecks:
         amounts:
           labels: ["已收票未付款", "项目应付", "应付未付", "项目成本", "未付款"]
@@ -132,6 +162,17 @@ targets:
       isolatedSessionPrefix: patrol-finance
       requireSessionIsolation: true
       timeoutMs: 360000
+    # Optional LLM question rewriter. It only rewrites the natural-language
+    # question after deterministic case selection; template/scoring/golden
+    # intent stays fixed. Point this to examples/question-generators/
+    # llm_command_rewriter.mjs and set AGENT_PATROL_LLM_CMD to any stdin-based
+    # LLM CLI. Prefer examples/question-generators/openai_compatible_chat.mjs
+    # behind that wrapper to avoid creating extra agent sessions. Invalid or
+    # unsafe questions fall back to the template question.
+    # questionGenerator:
+    #   type: command
+    #   command: ${AGENT_PATROL_QUESTION_GEN_CMD}
+    #   timeoutMs: 120000
     # Read-only direct finance-query baseline for diagnostics. Do not treat this
     # as the FinanceQA golden answer when measuring daily business accuracy.
     oracle:

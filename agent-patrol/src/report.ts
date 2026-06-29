@@ -45,6 +45,8 @@ function writeJson(filePath: string, value: unknown): void {
 function renderSummary(input: ReportInput): string {
   const accuracy = (input.aggregate.accuracy * 100).toFixed(2);
   const failed = input.aggregate.total - input.aggregate.passed;
+  const failedCases = failedCaseRows(input);
+  const categoryCounts = failureCategoryCounts(failedCases);
   const lines = [
     "# Agent Patrol Summary",
     "",
@@ -53,15 +55,27 @@ function renderSummary(input: ReportInput): string {
     `Failed: ${failed}`,
     ""
   ];
-  const failedCases = failedCaseRows(input);
+  const categoryNames = Object.keys(categoryCounts);
+  if (categoryNames.length > 0) {
+    lines.push("## Failure Categories", "");
+    for (const name of categoryNames) {
+      lines.push(`- ${name}: ${categoryCounts[name]}`);
+    }
+    lines.push("");
+  }
   if (failedCases.length > 0) {
     lines.push("## Failed Cases", "");
     for (const row of failedCases) {
       lines.push(`- ${row.caseId}`);
       if (row.failures.length > 0) lines.push(`  - Failures: ${row.failures.join(", ")}`);
       if ((row.failureTypes ?? []).length > 0) lines.push(`  - Failure Types: ${row.failureTypes!.join(", ")}`);
+      if ((row.failureCategories ?? []).length > 0) lines.push(`  - Failure Categories: ${row.failureCategories!.join(", ")}`);
       if (row.question) lines.push(`  - Question: ${row.question}`);
+      if (row.questionSource) lines.push(`  - Question Source: ${row.questionSource}`);
+      if (row.originalQuestion && row.originalQuestion !== row.question) lines.push(`  - Original Question: ${row.originalQuestion}`);
+      if (row.questionGeneratorWarning) lines.push(`  - Question Generator Warning: ${row.questionGeneratorWarning}`);
       if (row.answer) lines.push(`  - Answer: ${truncate(row.answer, 240)}`);
+      if ((row.agentTools ?? []).length > 0) lines.push(`  - Agent Tools: ${row.agentTools!.join(", ")}`);
       if (row.goldenReferenceAnswer) lines.push(`  - Golden Reference: ${truncate(row.goldenReferenceAnswer, 240)}`);
       if (row.goldenReferenceError) lines.push(`  - Golden Reference Error: ${truncate(row.goldenReferenceError, 240)}`);
       if (row.directToolBaselineAnswer) lines.push(`  - Direct Baseline: ${truncate(row.directToolBaselineAnswer, 240)}`);
@@ -78,10 +92,12 @@ function renderSummary(input: ReportInput): string {
 }
 
 function renderSummaryJson(input: ReportInput): unknown {
+  const failedCases = failedCaseRows(input);
   return {
     manifest: input.manifest,
     aggregate: input.aggregate,
-    failedCases: failedCaseRows(input)
+    failureCategoryCounts: failureCategoryCounts(failedCases),
+    failedCases
   };
 }
 
@@ -89,13 +105,18 @@ function failedCaseRows(input: ReportInput): Array<{
   caseId: string;
   failures: string[];
   failureTypes?: string[];
+  failureCategories?: string[];
   question?: string;
+  originalQuestion?: string;
+  questionSource?: string;
+  questionGeneratorWarning?: string;
   answer?: string;
   referenceAnswer?: string;
   goldenReferenceAnswer?: string;
   goldenReferenceError?: string;
   directToolBaselineAnswer?: string;
   directToolBaselineError?: string;
+  agentTools?: string[];
   sessionId?: string;
   evidenceFile?: string;
 }> {
@@ -111,17 +132,27 @@ function failedCaseRows(input: ReportInput): Array<{
     const caseId = stringValue(row?.caseId);
     if (caseId && row) evidenceByCase.set(caseId, row);
   }
+  const casesById = new Map<string, Record<string, unknown>>();
+  for (const item of input.cases) {
+    const row = asRecord(item);
+    const caseId = stringValue(row?.id);
+    if (caseId && row) casesById.set(caseId, row);
+  }
   const rows: Array<{
     caseId: string;
     failures: string[];
     failureTypes?: string[];
     question?: string;
+    originalQuestion?: string;
+    questionSource?: string;
+    questionGeneratorWarning?: string;
     answer?: string;
     referenceAnswer?: string;
     goldenReferenceAnswer?: string;
     goldenReferenceError?: string;
     directToolBaselineAnswer?: string;
     directToolBaselineError?: string;
+    agentTools?: string[];
     sessionId?: string;
     evidenceFile?: string;
   }> = [];
@@ -131,6 +162,7 @@ function failedCaseRows(input: ReportInput): Array<{
     const caseId = stringValue(score.caseId) ?? "unknown";
     const result = resultsByCase.get(caseId);
     const evidence = evidenceByCase.get(caseId);
+    const patrolCase = casesById.get(caseId);
     const actual = asRecord(evidence?.actual) ?? asRecord(result?.actual);
     const reference = asRecord(evidence?.reference);
     const goldenReference = asRecord(evidence?.goldenReference);
@@ -139,30 +171,43 @@ function failedCaseRows(input: ReportInput): Array<{
       caseId: string;
       failures: string[];
       failureTypes?: string[];
+      failureCategories?: string[];
       question?: string;
+      originalQuestion?: string;
+      questionSource?: string;
+      questionGeneratorWarning?: string;
       answer?: string;
       referenceAnswer?: string;
       goldenReferenceAnswer?: string;
       goldenReferenceError?: string;
       directToolBaselineAnswer?: string;
       directToolBaselineError?: string;
+      agentTools?: string[];
       sessionId?: string;
       evidenceFile?: string;
     } = {
       caseId,
       failures: stringArray(score.failures),
       question: stringValue(evidence?.question) ?? stringValue(result?.question),
+      originalQuestion: stringValue(patrolCase?.originalQuestion),
+      questionSource: stringValue(patrolCase?.questionSource),
+      questionGeneratorWarning: stringValue(patrolCase?.questionGeneratorWarning),
       answer: stringValue(actual?.answer) ?? stringValue(result?.answer),
       referenceAnswer: stringValue(reference?.answer),
       goldenReferenceAnswer: stringValue(goldenReference?.answer),
       goldenReferenceError: stringValue(goldenReference?.error),
       directToolBaselineAnswer: stringValue(directToolBaseline?.answer),
       directToolBaselineError: stringValue(directToolBaseline?.error),
+      agentTools: toolNames(actual?.toolCalls),
       sessionId: stringValue(actual?.sessionId) ?? stringValue(actual?.sessionKey),
       evidenceFile: evidence ? failedEvidenceRelativePath(caseId) : undefined
     };
+    if (row.agentTools?.length === 0) delete row.agentTools;
+    if (row.questionSource === "template") delete row.questionSource;
     const types = failureTypes(score.failureDetails);
     if (types.length > 0) row.failureTypes = types;
+    const categories = failureCategories(score.failureDetails);
+    if (categories.length > 0) row.failureCategories = categories;
     rows.push(row);
   }
   return rows;
@@ -217,9 +262,44 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function toolNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names = value
+    .map((item) => stringValue(asRecord(item)?.name))
+    .filter((item): item is string => Boolean(item));
+  return [...new Set(names)];
+}
+
 function failureTypes(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((item) => stringValue(asRecord(item)?.type))
     .filter((item): item is string => Boolean(item));
+}
+
+function failureCategories(value: unknown): string[] {
+  return [...new Set(failureTypes(value).map(failureCategory))];
+}
+
+function failureCategoryCounts(rows: Array<{ failureCategories?: string[] }>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of rows) {
+    for (const category of row.failureCategories ?? []) {
+      counts[category] = (counts[category] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function failureCategory(type: string): string {
+  if (type === "agent_changed_amount" || type === "amount_mismatch" || type === "period_mismatch" || type === "perspective_mismatch") {
+    return "core_accuracy";
+  }
+  if (type === "missing_source") return "source_evidence";
+  if (type === "scorer_term_miss" || type === "forbidden_term") return "format_quality";
+  if (type === "invalid_actual_path" || type === "agent_runner_error") return "runner_health";
+  if (type === "missing_reference") return "reference_health";
+  if (type.startsWith("question_generator_")) return "question_validity";
+  if (type === "write_tool_called") return "safety";
+  return "other";
 }

@@ -7,6 +7,7 @@ interface ExpectedRules {
   mustContainAny?: string[][];
   mustNotContain?: string[];
   amounts?: Array<{ label: string; value: number }>;
+  amountLabelGroups?: string[][];
   sources?: string[];
   periods?: string[];
   perspectives?: string[];
@@ -72,8 +73,9 @@ export function scoreCase(input: ScoreInput): CaseScore {
     });
   }
   for (const amount of expected.amounts ?? []) {
-    if (!amountPresent(answer, amount.value, amount.label)) {
-      const referenceHasAmount = Boolean(referenceAnswer) && amountPresent(referenceAnswer, amount.value, amount.label);
+    if (!amountPresent(answer, amount.value, amount.label, expected.amountLabelGroups)) {
+      const referenceHasAmount = Boolean(referenceAnswer)
+        && amountPresent(referenceAnswer, amount.value, amount.label, expected.amountLabelGroups);
       addFailure(
         failures,
         failureDetails,
@@ -169,6 +171,7 @@ function mergeExpectedRules(expected: ExpectedRules, referenceAnswer: string): E
   return {
     ...expected,
     amounts: [...(expected.amounts ?? []), ...(derived.amounts ?? [])],
+    amountLabelGroups: expected.amountLabelGroups,
     sources: [...(expected.sources ?? []), ...(derived.sources ?? [])],
     periods: [...(expected.periods ?? []), ...(derived.periods ?? [])],
     perspectives: [...(expected.perspectives ?? []), ...(derived.perspectives ?? []).slice(0, 1)],
@@ -187,22 +190,45 @@ function addFailure(
   failureDetails.push({ type, ...detail });
 }
 
-function amountPresent(answer: string, value: number, label?: string): boolean {
+function amountPresent(answer: string, value: number, label?: string, labelGroups?: string[][]): boolean {
   const variants = amountVariants(value);
   if (label) {
-    const windows = labeledWindows(answer, label);
-    if (windows.length > 0) {
-      for (const window of windows) {
-        const normalizedWindow = normalize(window);
-        if (variants.some((variant) => normalizedWindow.includes(normalize(variant)))) {
-          return true;
-        }
-      }
-      return false;
+    for (const candidate of amountLabelCandidates(label, labelGroups)) {
+      const presence = labeledAmountPresence(answer, candidate, variants);
+      if (presence === "match") return true;
+      if (presence === "mismatch") return false;
     }
   }
   const normalizedAnswer = normalize(answer);
   return variants.some((variant) => normalizedAnswer.includes(normalize(variant)));
+}
+
+function amountLabelCandidates(label: string, labelGroups: string[] | string[][] | undefined): string[] {
+  const candidates = [label];
+  const groups = Array.isArray(labelGroups?.[0]) ? labelGroups as string[][] : [];
+  for (const group of groups) {
+    if (!group.some((item) => normalize(item) === normalize(label))) continue;
+    for (const item of group) {
+      if (!candidates.some((candidate) => normalize(candidate) === normalize(item))) {
+        candidates.push(item);
+      }
+    }
+  }
+  return candidates;
+}
+
+function labeledAmountPresence(answer: string, label: string, variants: string[]): "match" | "mismatch" | "no_amount" {
+  const windows = labeledWindows(answer, label);
+  if (windows.length === 0) return "no_amount";
+  let sawMoneyLikeWindow = false;
+  for (const window of windows) {
+    const normalizedWindow = normalize(window);
+    if (variants.some((variant) => normalizedWindow.includes(normalize(variant)))) {
+      return "match";
+    }
+    if (containsMoneyLike(window)) sawMoneyLikeWindow = true;
+  }
+  return sawMoneyLikeWindow ? "mismatch" : "no_amount";
 }
 
 function labeledWindows(answer: string, label: string): string[] {

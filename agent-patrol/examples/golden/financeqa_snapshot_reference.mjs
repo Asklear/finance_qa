@@ -235,13 +235,18 @@ function normalizeMemberRow(value) {
 }
 
 function resolvePeriod(rows, mode, asOf) {
+  if (mode === "latest") {
+    const latestAvailable = maxMonth(rows.map((row) => row.year_month).filter(Boolean));
+    if (!latestAvailable) {
+      throw new Error("snapshot has no finance periods for requested template");
+    }
+    return { from: latestAvailable, to: latestAvailable };
+  }
+
   const previous = previousCompleteMonth(asOf);
   const maxAvailable = maxMonth(rows.map((row) => row.year_month).filter((month) => month <= formatMonth(previous)));
   if (!maxAvailable) {
     throw new Error("snapshot has no complete finance periods for requested template");
-  }
-  if (mode === "latest") {
-    return { from: maxAvailable, to: maxAvailable };
   }
   const requestedTo = minMonth(formatMonth(previous), maxAvailable);
   return {

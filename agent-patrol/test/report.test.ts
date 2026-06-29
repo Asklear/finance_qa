@@ -93,7 +93,8 @@ test("writeReport writes failed evidence package with actual and reference answe
       actual: {
         source: "agent",
         answer: "OpenClaw 回答：应收未收 2,000,000.00 元",
-        sessionId: "patrol-session-1"
+        sessionId: "patrol-session-1",
+        toolCalls: [{ name: "finance-query" }]
       },
       reference: {
         source: "financeqa_mcp",
@@ -137,11 +138,13 @@ test("writeReport writes failed evidence package with actual and reference answe
 
   const summary = fs.readFileSync(path.join(dir, "summary.md"), "utf8");
   assert.match(summary, /Failure Types: agent_changed_amount/);
+  assert.match(summary, /Agent Tools: finance-query/);
   assert.match(summary, /Reference: FinanceQA MCP/);
   assert.match(summary, /Evidence: failed_cases\/finance-case-1\.json/);
 
   const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
   assert.deepEqual(summaryJson.failedCases[0].failureTypes, ["agent_changed_amount"]);
+  assert.deepEqual(summaryJson.failedCases[0].agentTools, ["finance-query"]);
   assert.equal(summaryJson.failedCases[0].evidenceFile, "failed_cases/finance-case-1.json");
 });
 
@@ -279,4 +282,104 @@ test("writeReport surfaces missing golden reference error next to direct baselin
   const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
   assert.match(summaryJson.failedCases[0].goldenReferenceError, /did not return a result/);
   assert.match(summaryJson.failedCases[0].directToolBaselineAnswer, /800000\.00/);
+});
+
+test("writeReport exposes question generation metadata for failed cases", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-report-question-generator-"));
+  writeReport(dir, {
+    manifest: { suite: "finance" },
+    cases: [{
+      id: "finance-case-4",
+      question: "老板，上个完整月项目上还有多少应收没收回来？",
+      originalQuestion: "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？",
+      questionSource: "llm_question_generator"
+    }],
+    results: [{
+      caseId: "finance-case-4",
+      question: "老板，上个完整月项目上还有多少应收没收回来？",
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：应收未收 100.00 元",
+        sessionId: "patrol-session-4"
+      }
+    }],
+    evidence: [{
+      caseId: "finance-case-4",
+      target: "finance_qa",
+      question: "老板，上个完整月项目上还有多少应收没收回来？",
+      expected: { referenceChecks: { amounts: { labels: ["应收未收"] } } },
+      actual: {
+        source: "agent",
+        answer: "OpenClaw 回答：应收未收 100.00 元",
+        sessionId: "patrol-session-4"
+      },
+      reference: {
+        source: "golden_reference",
+        answer: "Golden：应收未收 200.00 元"
+      },
+      score: {
+        caseId: "finance-case-4",
+        pass: false,
+        failures: ["missing_amount:应收未收=200"],
+        failureDetails: [{ type: "agent_changed_amount" }]
+      }
+    }],
+    scores: [{
+      caseId: "finance-case-4",
+      pass: false,
+      failures: ["missing_amount:应收未收=200"],
+      failureDetails: [{ type: "agent_changed_amount" }]
+    }],
+    aggregate: { total: 1, passed: 0, accuracy: 0 }
+  });
+
+  const summary = fs.readFileSync(path.join(dir, "summary.md"), "utf8");
+  assert.match(summary, /Question Source: llm_question_generator/);
+  assert.match(summary, /Original Question: 从2025年10月起到上一个完整自然月月底/);
+
+  const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+  assert.equal(summaryJson.failedCases[0].questionSource, "llm_question_generator");
+  assert.equal(
+    summaryJson.failedCases[0].originalQuestion,
+    "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？"
+  );
+});
+
+test("writeReport separates core accuracy failures from source evidence failures", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-report-categories-"));
+  writeReport(dir, {
+    manifest: { suite: "finance" },
+    cases: [{ id: "finance-case-5" }],
+    results: [{
+      caseId: "finance-case-5",
+      question: "老板，最新月份营收情况？",
+      actual: {
+        source: "agent",
+        answer: "账上营收 0.00 元"
+      }
+    }],
+    scores: [{
+      caseId: "finance-case-5",
+      pass: false,
+      failures: [
+        "missing_amount:项目结算=912713.97",
+        "missing_source:优集收入、成本计算表 - 上传.xlsx"
+      ],
+      failureDetails: [
+        { type: "agent_changed_amount" },
+        { type: "missing_source" }
+      ]
+    }],
+    aggregate: { total: 1, passed: 0, accuracy: 0 }
+  });
+
+  const summary = fs.readFileSync(path.join(dir, "summary.md"), "utf8");
+  assert.match(summary, /Failure Categories: core_accuracy, source_evidence/);
+
+  const summaryJson = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+  assert.deepEqual(summaryJson.failureCategoryCounts, {
+    core_accuracy: 1,
+    source_evidence: 1
+  });
+  assert.deepEqual(summaryJson.failedCases[0].failureCategories, ["core_accuracy", "source_evidence"]);
 });

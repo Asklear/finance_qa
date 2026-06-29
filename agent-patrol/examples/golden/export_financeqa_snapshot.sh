@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCHEMA="${FINANCEQA_PG_SCHEMA:-}"
 OUTPUT="${FINANCEQA_SNAPSHOT_OUTPUT:-tmp/reference-snapshots/financeqa-latest.json.gz}"
+SQLITE_MIRROR_OUTPUT="${FINANCEQA_SQLITE_MIRROR_OUTPUT:-}"
 
 if [[ -z "$SCHEMA" ]]; then
   echo "FINANCEQA_PG_SCHEMA is required" >&2
@@ -55,3 +57,9 @@ SQL
 mv "$tmp" "$OUTPUT"
 trap - EXIT
 echo "wrote FinanceQA snapshot: $OUTPUT"
+
+if [[ -n "$SQLITE_MIRROR_OUTPUT" ]]; then
+  node "$SCRIPT_DIR/financeqa_snapshot_to_sqlite.mjs" \
+    --snapshot "$OUTPUT" \
+    --output "$SQLITE_MIRROR_OUTPUT"
+fi

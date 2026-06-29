@@ -16,6 +16,7 @@ interface CandidateCase {
   templateName: string;
   variantIndex: number;
   question: string;
+  questionAnchors?: string[][];
   scoring: Record<string, unknown>;
 }
 
@@ -53,6 +54,7 @@ function generateTargetCases(
       target: targetName,
       template: candidate.templateName,
       question: candidate.question,
+      questionAnchors: candidate.questionAnchors,
       actualRunner: target.runner.type,
       oracle: target.oracle.type,
       scoring: candidate.scoring
@@ -76,6 +78,7 @@ function expandTemplate(
           templateName,
           variantIndex: candidates.length,
           question: rendered,
+          questionAnchors: def.questionAnchors,
           scoring: def.scoring ?? {}
         });
       }
@@ -87,6 +90,7 @@ function expandTemplate(
       templateName,
       variantIndex: 0,
       question: def.fallbackQuestion,
+      questionAnchors: def.questionAnchors,
       scoring: def.scoring ?? {}
     }];
   }

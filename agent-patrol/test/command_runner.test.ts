@@ -129,3 +129,99 @@ console.log(JSON.stringify({
   assert.equal(envelope.sessionId, "patrol-session-1");
   assert.deepEqual(envelope.toolCalls, [{ name: "read_status" }]);
 });
+
+test("runCommandAgent attaches OpenClaw session tool evidence when session transcript exists", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-session-evidence-"));
+  const sessionDir = path.join(dir, "sessions");
+  fs.mkdirSync(sessionDir);
+  const scriptPath = path.join(dir, "agent_stub.mjs");
+  fs.writeFileSync(scriptPath, `
+const sessionId = process.argv[process.argv.indexOf("--session-id") + 1];
+console.log(JSON.stringify({
+  status: "ok",
+  result: {
+    payloads: [{ text: "最终答案" }],
+    meta: { agentMeta: { sessionId } }
+  }
+}));
+`, "utf8");
+  fs.writeFileSync(path.join(sessionDir, "patrol-session-2.jsonl"), [
+    JSON.stringify({ type: "session", id: "patrol-session-2" }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [{
+          type: "text",
+          text: "<relevant-memories>历史财务数据</relevant-memories>\n[Sat 2026-06-27 01:00 UTC] 巡检问题"
+        }]
+      }
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "call_1",
+          name: "finance-query",
+          arguments: { query: "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？" }
+        }]
+      }
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "finance-query",
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            data: {
+              query_spec: {
+                period_from: "2026-06",
+                period_to: "2026-06",
+                requested_period: "2002-06"
+              },
+              total: 525200
+            }
+          })
+        }]
+      }
+    })
+  ].join("\n") + "\n", "utf8");
+
+  const previousSessionDir = process.env.AGENT_PATROL_OPENCLAW_SESSION_DIR;
+  process.env.AGENT_PATROL_OPENCLAW_SESSION_DIR = sessionDir;
+  try {
+    const envelope = await runCommandAgent({
+      commandTemplate: `node ${scriptPath} --question-file {questionFile} --session-id {sessionId}`,
+      question: "巡检问题",
+      sessionId: "patrol-session-2",
+      requireSessionIsolation: true,
+      cwd: dir
+    });
+
+    assert.deepEqual(envelope.toolCalls, [{
+      id: "call_1",
+      name: "finance-query",
+      arguments: { query: "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？" }
+    }]);
+    assert.equal(envelope.sessionEvidence?.sessionFile, path.join(sessionDir, "patrol-session-2.jsonl"));
+    assert.equal(envelope.sessionEvidence?.userMessages?.[0]?.text, "<relevant-memories>历史财务数据</relevant-memories>\n[Sat 2026-06-27 01:00 UTC] 巡检问题");
+    assert.equal(envelope.sessionEvidence?.toolResults?.[0]?.toolName, "finance-query");
+    const toolJson = envelope.sessionEvidence?.toolResults?.[0]?.json as {
+      data?: { query_spec?: { requested_period?: string }; total?: number };
+    };
+    assert.equal(toolJson.data?.query_spec?.requested_period, "2002-06");
+    assert.equal(toolJson.data?.total, 525200);
+  } finally {
+    if (previousSessionDir === undefined) {
+      delete process.env.AGENT_PATROL_OPENCLAW_SESSION_DIR;
+    } else {
+      process.env.AGENT_PATROL_OPENCLAW_SESSION_DIR = previousSessionDir;
+    }
+  }
+});

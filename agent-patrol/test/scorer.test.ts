@@ -324,3 +324,48 @@ test("scoreCase accepts labeled heading amount on the next line", () => {
   assert.equal(score.pass, true);
   assert.deepEqual(score.failures, []);
 });
+
+test("scoreCase accepts configured amount label aliases when the exact reference label is not the answer headline", () => {
+  const score = scoreCase({
+    id: "case-13",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["项目应收"] },
+        periods: true
+      },
+      amountLabelGroups: [["项目应收", "应收未收", "未回款"]]
+    } as any,
+    actual: {
+      source: "agent",
+      answer: "2025年10月 ~ 2026年5月 项目应收未收汇总\n\n**总应收未收：2,065,398.17 元**"
+    },
+    reference: {
+      source: "financeqa_mcp",
+      answer: "2025-10~2026-05 DB金标口径先看项目汇总：项目应收 2065398.17 元。"
+    }
+  });
+
+  assert.equal(score.pass, true);
+  assert.deepEqual(score.failures, []);
+});
+
+test("scoreCase does not let an alias detail amount override a wrong primary labeled amount", () => {
+  const score = scoreCase({
+    id: "case-14",
+    expected: {
+      amounts: [{ label: "项目应收", value: 2065398.17 }],
+      amountLabelGroups: [["项目应收", "应收未收", "未回款"]]
+    } as any,
+    actual: {
+      source: "agent",
+      answer: "项目应收 2,000,000.00 元。明细：应收未收 2,065,398.17 元。"
+    },
+    reference: {
+      source: "financeqa_mcp",
+      answer: "项目应收 2065398.17 元。"
+    }
+  });
+
+  assert.equal(score.pass, false);
+  assert.deepEqual(score.failureDetails.map((failure) => failure.type), ["agent_changed_amount"]);
+});

@@ -14,6 +14,12 @@ export interface GoldenReferenceConfig {
   timeoutMs?: number;
 }
 
+export interface QuestionGeneratorConfig {
+  type: string;
+  command?: string;
+  timeoutMs?: number;
+}
+
 export interface RunnerConfig {
   type: string;
   command?: string;
@@ -30,6 +36,7 @@ export interface TargetConfig {
   kind?: string;
   runner: RunnerConfig;
   oracle: OracleConfig;
+  questionGenerator?: QuestionGeneratorConfig;
   goldenReference?: GoldenReferenceConfig;
   suites?: Record<string, SuiteConfig>;
 }
@@ -43,6 +50,7 @@ export interface CaseTemplateConfig {
   questions?: string[];
   question?: string;
   fallbackQuestion?: string;
+  questionAnchors?: string[][];
   variables?: Record<string, string[]>;
   scoring?: Record<string, unknown>;
 }
@@ -64,6 +72,10 @@ export interface PatrolCase {
   target: string;
   template: string;
   question: string;
+  questionAnchors?: string[][];
+  originalQuestion?: string;
+  questionSource?: "template" | "llm_question_generator" | string;
+  questionGeneratorWarning?: string;
   actualRunner: string;
   oracle: string;
   scoring: Record<string, unknown>;
@@ -76,7 +88,16 @@ export interface AgentEnvelope {
   sessionId?: string;
   sessionKey?: string;
   toolCalls?: Array<{ name?: string; [key: string]: unknown }>;
+  sessionEvidence?: AgentSessionEvidence;
   raw?: unknown;
+}
+
+export interface AgentSessionEvidence {
+  sessionFile?: string;
+  userMessages?: Array<{ text?: string; timestamp?: string; truncated?: boolean }>;
+  toolCalls?: Array<{ id?: string; name?: string; arguments?: unknown }>;
+  toolResults?: Array<{ toolCallId?: string; toolName?: string; text?: string; json?: unknown; truncated?: boolean }>;
+  parseErrors?: string[];
 }
 
 export interface ReferenceEnvelope {

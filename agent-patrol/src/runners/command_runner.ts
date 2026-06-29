@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { AgentEnvelope } from "../types.ts";
+import type { AgentEnvelope, AgentSessionEvidence } from "../types.ts";
+
+const MAX_TOOL_RESULT_TEXT_CHARS = 50_000;
+const MAX_USER_MESSAGE_TEXT_CHARS = 20_000;
 
 export interface CommandInvocation {
   command: string;
@@ -35,6 +38,7 @@ export async function runCommandAgent(options: RunCommandAgentOptions): Promise<
       timeoutMs: options.timeoutMs ?? 120_000
     });
     const envelope = parseAgentEnvelope(stdout);
+    attachOpenClawSessionEvidence(envelope);
     validateAgentEnvelope(envelope, {
       requireSessionIsolation: options.requireSessionIsolation,
       expectedSessionId: options.sessionId
@@ -102,6 +106,110 @@ export function parseAgentEnvelope(stdout: string): AgentEnvelope {
     toolCalls: Array.isArray(result.toolCalls) ? result.toolCalls as AgentEnvelope["toolCalls"] : [],
     raw: parsed
   };
+}
+
+function attachOpenClawSessionEvidence(envelope: AgentEnvelope): void {
+  const sessionDir = process.env.AGENT_PATROL_OPENCLAW_SESSION_DIR;
+  const sessionId = envelope.sessionId;
+  if (!sessionDir || !sessionId) return;
+
+  const sessionFile = path.join(sessionDir, `${sessionId}.jsonl`);
+  const evidence = readOpenClawSessionEvidence(sessionFile);
+  if (!evidence) return;
+
+  envelope.sessionEvidence = evidence;
+  if ((!envelope.toolCalls || envelope.toolCalls.length === 0) && evidence.toolCalls?.length) {
+    envelope.toolCalls = evidence.toolCalls.map((call) => ({
+      id: call.id,
+      name: call.name,
+      arguments: call.arguments
+    }));
+  }
+}
+
+function readOpenClawSessionEvidence(sessionFile: string): AgentSessionEvidence | undefined {
+  if (!fs.existsSync(sessionFile)) return undefined;
+
+  const evidence: AgentSessionEvidence = { sessionFile, userMessages: [], toolCalls: [], toolResults: [] };
+  const parseErrors: string[] = [];
+  const lines = fs.readFileSync(sessionFile, "utf8").split(/\r?\n/).filter((line) => line.trim());
+  for (let index = 0; index < lines.length; index += 1) {
+    try {
+      const row = JSON.parse(lines[index]!) as Record<string, unknown>;
+      collectSessionMessageEvidence(row, evidence);
+    } catch (err) {
+      parseErrors.push(`line ${index + 1}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (parseErrors.length > 0) evidence.parseErrors = parseErrors;
+  if (evidence.userMessages?.length === 0) delete evidence.userMessages;
+  if (evidence.toolCalls?.length === 0) delete evidence.toolCalls;
+  if (evidence.toolResults?.length === 0) delete evidence.toolResults;
+  return evidence;
+}
+
+function collectSessionMessageEvidence(row: Record<string, unknown>, evidence: AgentSessionEvidence): void {
+  const message = asRecord(row.message);
+  if (!message) return;
+
+  if (message.role === "user") {
+    const text = extractTextBlocks(message.content);
+    if (text) {
+      const truncated = text.length > MAX_USER_MESSAGE_TEXT_CHARS;
+      evidence.userMessages?.push({
+        timestamp: stringValue(row.timestamp),
+        truncated,
+        text: truncated ? text.slice(0, MAX_USER_MESSAGE_TEXT_CHARS) : text
+      });
+    }
+  }
+
+  if (message.role === "assistant") {
+    const content = Array.isArray(message.content) ? message.content : [];
+    for (const item of content) {
+      const block = asRecord(item);
+      if (block?.type !== "toolCall") continue;
+      evidence.toolCalls?.push({
+        id: stringValue(block.id),
+        name: stringValue(block.name),
+        arguments: block.arguments
+      });
+    }
+  }
+
+  if (message.role === "toolResult") {
+    const text = extractTextBlocks(message.content);
+    const result: NonNullable<AgentSessionEvidence["toolResults"]>[number] = {
+      toolCallId: stringValue(message.toolCallId),
+      toolName: stringValue(message.toolName)
+    };
+    if (text) {
+      result.truncated = text.length > MAX_TOOL_RESULT_TEXT_CHARS;
+      result.text = result.truncated ? text.slice(0, MAX_TOOL_RESULT_TEXT_CHARS) : text;
+      result.json = parseJsonText(text);
+    }
+    evidence.toolResults?.push(result);
+  }
+}
+
+function extractTextBlocks(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return undefined;
+  const parts = value
+    .map((item) => {
+      const block = asRecord(item);
+      return block?.type === "text" ? stringValue(block.text) : undefined;
+    })
+    .filter((item): item is string => Boolean(item));
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function parseJsonText(text: string): unknown | undefined {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
 }
 
 export function validateAgentEnvelope(

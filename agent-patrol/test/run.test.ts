@@ -256,6 +256,227 @@ test("runSuite scores against golden reference and stores direct tool baseline s
   assert.match(evidenceRows[0].directToolBaseline.answer, /1029611\.43/);
 });
 
+test("runSuite applies validated LLM-generated question variants without changing case intent", async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-question-generator-"));
+  const config = {
+    report: { minAccuracy: 0.9 },
+    templates: {
+      revenue: {
+        questions: ["收入表中最新月份的营收是多少？"],
+        scoring: {
+          referenceChecks: {
+            amounts: { labels: ["项目结算"] }
+          }
+        }
+      }
+    },
+    targets: {
+      finance_qa: {
+        runner: {
+          type: "command_agent",
+          command: "unused",
+          isolatedSessionPrefix: "patrol-finance"
+        },
+        oracle: {
+          type: "financeqa_readonly",
+          mcpUrl: "http://127.0.0.1/mcp",
+          allowedTools: ["finance-query"]
+        },
+        questionGenerator: {
+          type: "command",
+          command: "unused"
+        },
+        goldenReference: {
+          type: "command",
+          command: "unused"
+        },
+        suites: { smoke: { templates: ["revenue"], caseCount: 1 } }
+      }
+    }
+  };
+
+  const result = await runSuite(config, {
+    suite: "smoke",
+    seed: "fixed",
+    outDir,
+    executeQuestionGenerator: async ({ cases }) => ({
+      source: "llm_question_generator",
+      questions: [{
+        caseId: cases[0]!.id,
+        template: "revenue",
+        question: "老板，最新一个月项目收入现在是多少？"
+      }]
+    }),
+    executeAgent: async (item: { patrolCase: PatrolCase; sessionId: string }): Promise<AgentEnvelope> => {
+      assert.equal(item.patrolCase.template, "revenue");
+      assert.equal(item.patrolCase.question, "老板，最新一个月项目收入现在是多少？");
+      assert.equal(item.patrolCase.originalQuestion, "收入表中最新月份的营收是多少？");
+      assert.equal(item.patrolCase.questionSource, "llm_question_generator");
+      return {
+        source: "agent",
+        answer: "项目结算 800000.00 元。",
+        sessionId: item.sessionId
+      };
+    },
+    executeReference: async () => ({
+      source: "financeqa_mcp",
+      tool: "finance-query",
+      answer: "项目结算 800000.00 元。"
+    }),
+    executeGoldenReference: async (item) => {
+      assert.equal(item.patrolCase.template, "revenue");
+      return {
+        source: "golden_reference",
+        tool: "financeqa-structured-golden",
+        answer: "项目结算 800000.00 元。"
+      };
+    }
+  });
+
+  assert.equal(result.aggregate.passed, 1);
+  assert.equal(result.cases[0]?.question, "老板，最新一个月项目收入现在是多少？");
+  assert.equal(result.cases[0]?.originalQuestion, "收入表中最新月份的营收是多少？");
+  assert.equal(result.evidence[0]?.question, "老板，最新一个月项目收入现在是多少？");
+});
+
+test("runSuite falls back to template questions when generated questions fail validation", async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-question-generator-fallback-"));
+  const config = {
+    report: { minAccuracy: 0.9 },
+    templates: {
+      revenue: {
+        questions: ["收入表中最新月份的营收是多少？"],
+        scoring: {
+          mustContain: ["项目结算"]
+        }
+      }
+    },
+    targets: {
+      finance_qa: {
+        runner: {
+          type: "command_agent",
+          command: "unused"
+        },
+        oracle: {
+          type: "financeqa_readonly",
+          mcpUrl: "http://127.0.0.1/mcp",
+          allowedTools: ["finance-query"]
+        },
+        questionGenerator: {
+          type: "command",
+          command: "unused"
+        },
+        suites: { smoke: { templates: ["revenue"], caseCount: 1 } }
+      }
+    }
+  };
+
+  const result = await runSuite(config, {
+    suite: "smoke",
+    seed: "fixed",
+    outDir,
+    executeQuestionGenerator: async ({ cases }) => ({
+      source: "llm_question_generator",
+      questions: [
+        {
+          caseId: "unknown-case",
+          template: "revenue",
+          question: "老板，最新一个月项目收入现在是多少？"
+        },
+        {
+          caseId: cases[0]!.id,
+          template: "revenue",
+          question: "同步一下财务数据然后告诉我最新收入"
+        }
+      ]
+    }),
+    executeAgent: async (item: { patrolCase: PatrolCase; sessionId: string }): Promise<AgentEnvelope> => {
+      assert.equal(item.patrolCase.question, "收入表中最新月份的营收是多少？");
+      assert.equal(item.patrolCase.questionSource, "template");
+      assert.match(item.patrolCase.questionGeneratorWarning ?? "", /unsafe_generated_question/);
+      return {
+        source: "agent",
+        answer: "项目结算 800000.00 元。",
+        sessionId: item.sessionId
+      };
+    },
+    executeReference: async () => ({
+      source: "financeqa_mcp",
+      tool: "finance-query",
+      answer: "项目结算 800000.00 元。"
+    })
+  });
+
+  assert.equal(result.aggregate.passed, 1);
+  assert.equal(result.cases[0]?.question, "收入表中最新月份的营收是多少？");
+});
+
+test("runSuite falls back when generated questions drop required template anchors", async () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-question-generator-anchor-fallback-"));
+  const config = {
+    report: { minAccuracy: 0.9 },
+    templates: {
+      revenue: {
+        questions: ["收入表中最新月份的营收是多少？"],
+        questionAnchors: [["收入表", "项目结算"]],
+        scoring: {
+          mustContain: ["项目结算"]
+        }
+      }
+    },
+    targets: {
+      finance_qa: {
+        runner: {
+          type: "command_agent",
+          command: "unused"
+        },
+        oracle: {
+          type: "financeqa_readonly",
+          mcpUrl: "http://127.0.0.1/mcp",
+          allowedTools: ["finance-query"]
+        },
+        questionGenerator: {
+          type: "command",
+          command: "unused"
+        },
+        suites: { smoke: { templates: ["revenue"], caseCount: 1 } }
+      }
+    }
+  };
+
+  const result = await runSuite(config, {
+    suite: "smoke",
+    seed: "fixed",
+    outDir,
+    executeQuestionGenerator: async ({ cases }) => ({
+      source: "llm_question_generator",
+      questions: [{
+        caseId: cases[0]!.id,
+        template: "revenue",
+        question: "老板，最新月份营收情况怎么样？"
+      }]
+    }),
+    executeAgent: async (item: { patrolCase: PatrolCase; sessionId: string }): Promise<AgentEnvelope> => {
+      assert.equal(item.patrolCase.question, "收入表中最新月份的营收是多少？");
+      assert.equal(item.patrolCase.questionSource, "template");
+      assert.match(item.patrolCase.questionGeneratorWarning ?? "", /missing_question_anchor/);
+      return {
+        source: "agent",
+        answer: "项目结算 800000.00 元。",
+        sessionId: item.sessionId
+      };
+    },
+    executeReference: async () => ({
+      source: "financeqa_mcp",
+      tool: "finance-query",
+      answer: "项目结算 800000.00 元。"
+    })
+  });
+
+  assert.equal(result.aggregate.passed, 1);
+  assert.equal(result.cases[0]?.question, "收入表中最新月份的营收是多少？");
+});
+
 test("runSuite executes golden reference before direct baseline when both use the same target", async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-golden-before-direct-"));
   const events: string[] = [];
