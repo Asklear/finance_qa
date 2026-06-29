@@ -717,7 +717,7 @@ function contractSummaryDetailRows(contractSummary) {
 
 function requiredBossVisibleAtoms(payload) {
   const atoms = [];
-  for (const value of [payload?.period, payload?.metric_label, payload?.total]) {
+  for (const value of [payload?.period, payload?.metric_label, payload?.total, payload?.source_note, payload?.source_update_note]) {
     if (value === undefined || value === null || value === "") continue;
     const atom = String(value).trim();
     if (atom && !atoms.includes(atom)) atoms.push(atom);
@@ -741,7 +741,10 @@ async function financeQuerySystemFacts(question) {
   const requiredAtoms = requiredBossVisibleAtoms(payload);
   if (requiredAtoms.length) lines.push(`老板可见回复必须出现的精确片段：${JSON.stringify(requiredAtoms)}`);
   if (payload.source_note) lines.push(`来源说明：${payload.source_note}`);
-  if (payload.source_update_note) lines.push(`来源更新时间：${payload.source_update_note}`);
+  if (payload.source_update_note) {
+    const updateNote = String(payload.source_update_note).trim();
+    lines.push(updateNote.startsWith("来源更新时间") ? updateNote : `来源更新时间：${updateNote}`);
+  }
   if (payload.period) lines.push(`期间：${payload.period}`);
   if (payload.requested_metrics) lines.push(`指标：${JSON.stringify(payload.requested_metrics)}`);
   const itemRows = compactFinanceRows(payload.items);

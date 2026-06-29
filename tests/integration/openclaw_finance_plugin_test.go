@@ -181,6 +181,8 @@ rl.on("line", (line) => {
         metric_label: "项目应付（应付未付/未付款）",
         business_basis: "项目成本口径，应付未付金额",
         total: 1946918.51,
+        source_note: "来源：《测试表》",
+        source_update_note: "来源更新时间：2026-06-29 15:39:43",
         contract_summary: {
           invoice_unpaid_items: [
             {
@@ -298,6 +300,11 @@ if (!directHookResult?.prependSystemContext?.includes("标准金额：1946918.51
 }
 if (!directHookResult?.prependSystemContext?.includes("老板可见回复必须出现的精确片段")) {
   console.error("direct finance prompt should list exact boss-visible fact atoms:", JSON.stringify(directHookResult));
+  process.exit(1);
+}
+if (!directHookResult?.prependSystemContext?.includes("\"来源：《测试表》\"") ||
+    !directHookResult?.prependSystemContext?.includes("\"来源更新时间：2026-06-29 15:39:43\"")) {
+  console.error("direct finance prompt should require source note and update note as boss-visible fact atoms:", JSON.stringify(directHookResult));
   process.exit(1);
 }
 if (!directHookResult?.prependSystemContext?.includes("final_answer 是事实锚点，不是固定话术模板")) {
