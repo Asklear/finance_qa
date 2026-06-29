@@ -44,3 +44,4 @@ tests/scripts/verification_v2.go
 secrets/
 .tmp*/
 dist/
+.cache/
