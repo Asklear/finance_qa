@@ -613,6 +613,7 @@ function mustCallFinanceQuerySystemContext(latestQuestion, currentFacts) {
     "若本次结果含 final_answer 或 boss_reply_text，final_answer 是事实锚点，不是固定话术模板；可以重组表达顺序、表格和老板口吻。",
     "重写时必须保留 final_answer 中的关键金额、期间、指标口径、来源和来源更新时间；不要换算金额单位，除非用户明确要求。",
     "指标和口径标签必须从 final_answer 逐字保留；不要把“已开票未回款”“已收票未付款”“项目应收（应收未收）”“项目成本口径”“项目口径”等改写成近义词。",
+    "如果本次核对结果提供了标准指标标签、业务口径或标准金额，老板可见回复必须保留这些事实原子，但仍可自然改写句式和排版。",
     "不要删掉 final_answer 中修饰指标的业务前缀，例如“项目成本口径”“项目口径”“应收未收”。",
     "不要把 final_answer 的 YYYY-MM 或 YYYY-MM~YYYY-MM 期间改成相对时间或其他月份；例如不能把 2025-10~2026-05 改成至今、现在或 2025-10~2026-06。",
     "来源和来源更新时间必须从 final_answer 逐字复制；不要删改文件名、sheet 名、后缀、时间格式或标点。",
@@ -643,6 +644,10 @@ function compactFinancePayload(payload) {
     error: payload.error,
     success: payload.success,
     final_answer: payload.final_answer || payload.boss_reply_text || payload.message,
+    metric: data.metric || payload.metric,
+    metric_label: data.metric_label || payload.metric_label,
+    business_basis: data.business_basis || payload.business_basis,
+    total: data.total ?? payload.total,
     source_note: data.source_note || payload.source_note,
     source_update_note: data.source_update_note || payload.source_update_note,
     period: data.period,
@@ -698,6 +703,10 @@ async function financeQuerySystemFacts(question) {
     `最新问题：${question}`
   ];
   if (payload.final_answer) lines.push(`当前 finance-query 老板答案：${payload.final_answer}`);
+  if (payload.metric_label) lines.push(`标准指标标签：${payload.metric_label}`);
+  if (payload.business_basis) lines.push(`业务口径：${payload.business_basis}`);
+  if (payload.metric) lines.push(`标准指标：${payload.metric}`);
+  if (payload.total !== undefined && payload.total !== null && payload.total !== "") lines.push(`标准金额：${payload.total}`);
   if (payload.source_note) lines.push(`来源说明：${payload.source_note}`);
   if (payload.source_update_note) lines.push(`来源更新时间：${payload.source_update_note}`);
   if (payload.period) lines.push(`期间：${payload.period}`);
