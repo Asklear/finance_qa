@@ -54,7 +54,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === "doctor") {
     const configPath = stringFlag(flags.config);
     if (!configPath) throw new Error("--config is required");
-    const report = runDoctor(loadConfig(configPath));
+    const report = runDoctor(loadConfig(configPath), {
+      requireGoldenReference: Boolean(flags["require-golden-reference"]),
+      requireResolvedEnv: Boolean(flags["require-resolved-env"])
+    });
     console.log(JSON.stringify(report, null, 2));
     return report.ok ? 0 : 2;
   }

@@ -73,6 +73,82 @@ test("live OpenClaw local runner fails closed unless explicitly enabled", () => 
   assert.match(result.stderr, /AGENT_PATROL_LIVE=1/);
 });
 
+test("financeqa dry-run wrapper blocks mirror prepare in production mode", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-production-guard-"));
+  const envFile = path.join(dir, "financeqa.env");
+  fs.writeFileSync(envFile, [
+    "AGENT_PATROL_LIVE=1",
+    "AGENT_PATROL_ENV=production",
+    "AGENT_PATROL_CONFIG=presets/financeqa.yaml",
+    "OPENCLAW_AGENT_CMD='echo openclaw'",
+    "FINANCEQA_MCP_URL=http://127.0.0.1:3009/mcp",
+    "FINANCEQA_MCP_READ_TOKEN=test-token",
+    "AGENT_PATROL_PREPARE_CMD=examples/schedules/prepare-financeqa-snapshot-mirror.sh"
+  ].join("\n"), "utf8");
+
+  const result = spawnSync("bash", [
+    "examples/schedules/run-financeqa-dry-run.sh"
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, AGENT_PATROL_ENV_FILE: envFile }
+  });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr + readDryRunLog(dir), /refusing production dry-run.*prepare-financeqa-snapshot-mirror/);
+});
+
+test("financeqa dry-run wrapper prunes old report directories after a successful run", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-report-retention-"));
+  const binDir = path.join(dir, "bin");
+  const outDir = path.join(dir, "reports");
+  const envFile = path.join(dir, "financeqa.env");
+  const oldRun = path.join(outDir, "20260101T000000");
+  const freshRun = path.join(outDir, "20260629T120000");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(oldRun, { recursive: true });
+  fs.mkdirSync(freshRun, { recursive: true });
+  fs.writeFileSync(path.join(oldRun, "summary.json"), "{}", "utf8");
+  fs.writeFileSync(path.join(freshRun, "summary.json"), "{}", "utf8");
+  const oldDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+  fs.utimesSync(oldRun, oldDate, oldDate);
+  fs.writeFileSync(path.join(binDir, "npm"), `#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "$AGENT_PATROL_OUTPUT_DIR/$AGENT_PATROL_RUN_ID"
+cat > "$AGENT_PATROL_OUTPUT_DIR/$AGENT_PATROL_RUN_ID/summary.json" <<'JSON'
+{"aggregate":{"thresholdPassed":true}}
+JSON
+exit 0
+`, { mode: 0o755 });
+  fs.writeFileSync(envFile, [
+    "AGENT_PATROL_LIVE=1",
+    "AGENT_PATROL_CONFIG=presets/financeqa.yaml",
+    "AGENT_PATROL_OUTPUT_DIR=" + outDir,
+    "AGENT_PATROL_RUN_ID=20260629T130000",
+    "AGENT_PATROL_REPORT_RETENTION_DAYS=1",
+    "OPENCLAW_AGENT_CMD='echo openclaw'",
+    "FINANCEQA_MCP_URL=http://127.0.0.1:3009/mcp",
+    "FINANCEQA_MCP_READ_TOKEN=test-token"
+  ].join("\n"), "utf8");
+
+  const result = spawnSync("bash", [
+    "examples/schedules/run-financeqa-dry-run.sh"
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      AGENT_PATROL_ENV_FILE: envFile,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`
+    }
+  });
+
+  assert.equal(result.status, 0, result.stderr + readDryRunLog(outDir));
+  assert.equal(fs.existsSync(oldRun), false);
+  assert.equal(fs.existsSync(freshRun), true);
+  assert.equal(fs.existsSync(path.join(outDir, "20260629T130000", "summary.json")), true);
+});
+
 test("financeqa preset generates varied daily sample pool", () => {
   const config = loadConfig("presets/financeqa.yaml", {
     OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host clawdbot --question-file {questionFile} --session-id {sessionId}",
@@ -104,6 +180,228 @@ test("financeqa preset defines reference-check labels for finance answer compari
     assert.equal(referenceChecks.periods, true, `${name} should compare reference periods`);
     assert.equal(referenceChecks.sources, true, `${name} should compare reference sources`);
     assert.notEqual(referenceChecks.perspectives, true, `${name} should not hard-fail reference boilerplate wording`);
+  }
+});
+
+test("financeqa preset keeps business anchors in configuration", () => {
+  const config = loadConfig("presets/financeqa.yaml", {
+    OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host clawdbot --question-file {questionFile} --session-id {sessionId}",
+    FINANCEQA_MCP_URL: "http://127.0.0.1/stub"
+  });
+
+  for (const [name, template] of Object.entries(config.templates ?? {})) {
+    assert.ok(Array.isArray(template.questionAnchors), `${name} missing questionAnchors`);
+    assert.ok(template.questionAnchors.length > 0, `${name} questionAnchors should not be empty`);
+    assert.ok(Array.isArray(template.scoring?.amountLabelGroups), `${name} missing amountLabelGroups`);
+  }
+});
+
+test("financeqa preset template questions satisfy their configured anchors", () => {
+  const config = loadConfig("presets/financeqa.yaml", {
+    OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_ssh_runner.mjs --host clawdbot --question-file {questionFile} --session-id {sessionId}",
+    FINANCEQA_MCP_URL: "http://127.0.0.1/stub"
+  });
+  const templates = Object.keys(config.templates ?? {});
+  const configWithAllCases = {
+    ...config,
+    targets: {
+      finance_qa: {
+        ...config.targets.finance_qa,
+        suites: {
+          anchorcheck: { templates }
+        }
+      }
+    }
+  };
+
+  const cases = generateCases(configWithAllCases, { suite: "anchorcheck", seed: "anchors" });
+  for (const item of cases) {
+    for (const group of item.questionAnchors ?? []) {
+      assert.equal(
+        group.some((anchor) => normalizeAnchorText(item.question).includes(normalizeAnchorText(anchor))),
+        true,
+        `${item.id} question should contain one anchor from ${group.join("|")}: ${item.question}`
+      );
+    }
+  }
+});
+
+test("LLM command question generator rewrites cases through a configurable CLI", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-llm-question-generator-"));
+  const inputPath = path.join(dir, "input.json");
+  const llmPath = path.join(dir, "fake-llm.mjs");
+  fs.writeFileSync(inputPath, JSON.stringify({
+    version: 1,
+    target: "finance_qa",
+    suite: "smoke",
+    seed: "fixed",
+    cases: [{
+      caseId: "finance_qa_finance_project_receivable_unpaid_001",
+      template: "finance_project_receivable_unpaid",
+      originalQuestion: "从2025年10月起到上一个完整自然月月底，所有项目的应收未收是多少？",
+      questionAnchors: [["项目口径", "项目应收"], ["应收未收", "未回款"]],
+      scoring: { referenceChecks: { amounts: { labels: ["项目应收", "应收未收"] } } }
+    }]
+  }), "utf8");
+  fs.writeFileSync(llmPath, `
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  if (!input.includes("questionAnchors") || !input.includes("锚点")) {
+    console.error("missing question anchor instruction");
+    process.exit(3);
+  }
+  const data = JSON.parse(input.match(/<cases_json>([\\s\\S]+)<\\/cases_json>/)[1]);
+  console.log("LLM note before JSON");
+  console.log("\`\`\`json");
+  console.log(JSON.stringify({
+    questions: [{
+      caseId: data.cases[0].caseId,
+      template: data.cases[0].template,
+      question: "老板，从去年10月到上个完整月，项目上还有多少款没收回来？"
+    }]
+  }));
+  console.log("\`\`\`");
+});
+`, "utf8");
+
+  const result = await spawnNode([
+    "examples/question-generators/llm_command_rewriter.mjs",
+    "--input", inputPath
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      AGENT_PATROL_LLM_CMD: `node ${llmPath}`
+    }
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.source, "llm_command_rewriter");
+  assert.deepEqual(payload.questions, [{
+    caseId: "finance_qa_finance_project_receivable_unpaid_001",
+    template: "finance_project_receivable_unpaid",
+    question: "老板，从去年10月到上个完整月，项目上还有多少款没收回来？"
+  }]);
+});
+
+test("LLM command question generator extracts JSON from agent envelopes", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-llm-question-generator-envelope-"));
+  const inputPath = path.join(dir, "input.json");
+  const llmPath = path.join(dir, "fake-agent-llm.mjs");
+  fs.writeFileSync(inputPath, JSON.stringify({
+    version: 1,
+    target: "finance_qa",
+    suite: "smoke",
+    seed: "fixed",
+    cases: [{
+      caseId: "finance_qa_finance_latest_month_revenue_001",
+      template: "finance_latest_month_revenue",
+      originalQuestion: "收入表中最新月份的营收是多少？",
+      scoring: { referenceChecks: { amounts: { labels: ["项目结算"] } } }
+    }]
+  }), "utf8");
+  fs.writeFileSync(llmPath, `
+console.log(JSON.stringify({
+  result: {
+    final_answer: "\`\`\`json\\n" + JSON.stringify({
+      questions: [{
+        caseId: "finance_qa_finance_latest_month_revenue_001",
+        template: "finance_latest_month_revenue",
+        question: "老板，最新可见月份项目收入大概是多少？"
+      }]
+    }) + "\\n\`\`\`"
+  }
+}));
+`, "utf8");
+
+  const result = await spawnNode([
+    "examples/question-generators/llm_command_rewriter.mjs",
+    "--input", inputPath
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      AGENT_PATROL_LLM_CMD: `node ${llmPath}`
+    }
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.deepEqual(payload.questions, [{
+    caseId: "finance_qa_finance_latest_month_revenue_001",
+    template: "finance_latest_month_revenue",
+    question: "老板，最新可见月份项目收入大概是多少？"
+  }]);
+});
+
+test("OpenAI-compatible question generator CLI reads stdin and returns model content", async () => {
+  const seenRequests: Array<{ authorization?: string; body: Record<string, unknown> }> = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => {
+      seenRequests.push({
+        authorization: req.headers.authorization,
+        body: JSON.parse(body)
+      });
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              questions: [{
+                caseId: "case-1",
+                template: "finance_latest_month_revenue",
+                question: "老板，最新月份收入是多少？"
+              }]
+            })
+          }
+        }]
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  try {
+    const child = spawn("node", ["examples/question-generators/openai_compatible_chat.mjs"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        AGENT_PATROL_LLM_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
+        AGENT_PATROL_LLM_API_KEY: "test-key",
+        AGENT_PATROL_LLM_MODEL: "test-model"
+      },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.stdin.end("rewrite this question");
+    const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+
+    assert.equal(status, 0, stderr);
+    assert.match(stdout, /最新月份收入/);
+    assert.equal(seenRequests[0]?.authorization, "Bearer test-key");
+    assert.equal(seenRequests[0]?.body.model, "test-model");
+    const messages = seenRequests[0]?.body.messages as Array<{ role: string; content: string }>;
+    assert.equal(messages[0]?.content, "rewrite this question");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 
@@ -184,7 +482,8 @@ test("financeqa snapshot reference provider reads gzip snapshots and computes la
     tables: {
       fin_fund_income: [
         { year_month: "2026-04", settlement_amount: 900, received_amount: 800, invoice_amount: 850 },
-        { year_month: "2026-05", settlement_amount: 1200, received_amount: 1000, invoice_amount: 1100 }
+        { year_month: "2026-05", settlement_amount: 1200, received_amount: 1000, invoice_amount: 1100 },
+        { year_month: "2026-06", settlement_amount: 1300, received_amount: 900, invoice_amount: 950 }
       ],
       fin_file_mappings: [
         {
@@ -212,10 +511,10 @@ test("financeqa snapshot reference provider reads gzip snapshots and computes la
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.result.structured.metric, "项目结算");
-  assert.equal(payload.result.structured.amount, 1200);
-  assert.deepEqual(payload.result.structured.period, { from: "2026-05", to: "2026-05" });
-  assert.match(payload.result.final_answer, /2026-05/);
-  assert.match(payload.result.final_answer, /项目结算 1200\.00 元/);
+  assert.equal(payload.result.structured.amount, 1300);
+  assert.deepEqual(payload.result.structured.period, { from: "2026-06", to: "2026-06" });
+  assert.match(payload.result.final_answer, /2026-06/);
+  assert.match(payload.result.final_answer, /项目结算 1300\.00 元/);
   assert.match(payload.result.final_answer, /优集收入、成本计算表 - 上传\.xlsx/);
 });
 
@@ -620,7 +919,7 @@ test("spawnNode helper kills hung children", async () => {
 });
 
 test("financeqa low-frequency dry-run schedule examples only write local reports", () => {
-  const files = [
+  const defaultFiles = [
     "examples/cleanup/claude-session-cleanup.sh",
     "examples/cleanup/hermes-json-cleanup.sh",
     "examples/cleanup/openclaw-jsonl-cleanup.sh",
@@ -630,9 +929,24 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
     "examples/schedules/financeqa-daily.cron.example",
     "examples/schedules/financeqa-daily.service",
     "examples/schedules/financeqa-daily.timer",
+    "examples/schedules/prepare-financeqa-snapshot-mirror.sh",
     "examples/schedules/run-financeqa-dry-run.sh"
   ];
+  const productionFiles = [
+    "examples/schedules/financeqa-production-hourly.env.example",
+    "examples/schedules/financeqa-production-hourly.service",
+    "examples/schedules/financeqa-production-hourly.timer",
+    "presets/financeqa-production.yaml"
+  ];
+  const files = [...defaultFiles, ...productionFiles];
   const contents = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  const nonProductionScheduleContents = [
+    "examples/schedules/financeqa-daily.env.example",
+    "examples/schedules/financeqa-daily.cron.example",
+    "examples/schedules/financeqa-daily.service",
+    "examples/schedules/financeqa-daily.timer"
+  ].map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  const productionContents = productionFiles.map((file) => fs.readFileSync(file, "utf8")).join("\n");
   const scriptMode = fs.statSync("examples/schedules/run-financeqa-dry-run.sh").mode;
 
   assert.match(contents, /presets\/financeqa\.yaml/);
@@ -648,8 +962,12 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(contents, /FINANCEQA_GOLDEN_CMD/);
   assert.match(contents, /financeqa_canonical_golden\.mjs/);
   assert.match(contents, /FINANCEQA_REFERENCE_SNAPSHOT/);
+  assert.match(contents, /FINANCEQA_SQLITE_MIRROR_OUTPUT/);
   assert.match(contents, /financeqa_snapshot_reference\.mjs/);
+  assert.match(contents, /financeqa_snapshot_to_sqlite\.mjs/);
   assert.match(contents, /flock/);
+  assert.match(contents, /AGENT_PATROL_PREPARE_CMD/);
+  assert.match(contents, /prepare-financeqa-snapshot-mirror\.sh/);
   assert.match(contents, /AGENT_PATROL_CLEANUP_CMD/);
   assert.match(contents, /AGENT_PATROL_CLEANUP_KINDS/);
   assert.match(contents, /AGENT_PATROL_SESSION_RETENTION_DAYS/);
@@ -663,8 +981,75 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(contents, /openclaw-finance/);
   assert.match(contents, /non-production|非生产|dry-run/i);
   assert.doesNotMatch(contents, /--deliver/);
-  assert.doesNotMatch(contents, /\blzh\b/);
+  assert.doesNotMatch(nonProductionScheduleContents, /financeqa-production-hourly/);
+  assert.match(productionContents, /AGENT_PATROL_ENV=production/);
+  assert.match(productionContents, /financeqa-production\.yaml/);
+  assert.match(productionContents, /OnCalendar=\*-\*-\* \*:07:00/);
+  assert.match(productionContents, /AGENT_PATROL_REFERENCE_EXPORT_CMD/);
+  assert.match(productionContents, /AGENT_PATROL_REPORT_RETENTION_DAYS/);
+  assert.doesNotMatch(productionContents, /AGENT_PATROL_PREPARE_CMD=.*prepare-financeqa-snapshot-mirror/);
   assert.notEqual(scriptMode & 0o111, 0);
+});
+
+test("financeqa dry-run wrapper treats generated threshold-failed reports as schedule success", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-dry-run-wrapper-"));
+  const binDir = path.join(dir, "bin");
+  const rootDir = path.join(dir, "root");
+  const envFile = path.join(dir, "financeqa-daily.env");
+  const npmStub = path.join(binDir, "npm");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.mkdirSync(rootDir, { recursive: true });
+  fs.writeFileSync(npmStub, `#!/usr/bin/env bash
+set -euo pipefail
+out=""
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "--out" ]]; then
+    out="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+mkdir -p "$out"
+cat > "$out/summary.json" <<'JSON'
+{"aggregate":{"total":3,"passed":0,"accuracy":0,"thresholdPassed":false}}
+JSON
+cat > "$out/summary.md" <<'MD'
+# Agent Patrol Summary
+
+Accuracy: 0.00%
+MD
+exit 1
+`, "utf8");
+  fs.chmodSync(npmStub, 0o755);
+  fs.writeFileSync(envFile, `
+AGENT_PATROL_LIVE=1
+AGENT_PATROL_ROOT=${rootDir}
+AGENT_PATROL_OUTPUT_DIR=tmp/financeqa-dry-run
+AGENT_PATROL_RUN_ID=threshold-failed-report
+AGENT_PATROL_CONFIG=patrol.yaml
+AGENT_PATROL_SUITE=smoke
+AGENT_PATROL_CLEANUP_SESSIONS=0
+OPENCLAW_AGENT_CMD=stub-openclaw
+FINANCEQA_MCP_URL=http://127.0.0.1:1/mcp
+FINANCEQA_MCP_READ_TOKEN=test-token
+`, "utf8");
+
+  const result = spawnSync("bash", ["examples/schedules/run-financeqa-dry-run.sh"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      AGENT_PATROL_ENV_FILE: envFile
+    }
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(path.join(rootDir, "tmp/financeqa-dry-run/threshold-failed-report/summary.json")), true);
+  const log = fs.readFileSync(path.join(rootDir, "tmp/financeqa-dry-run/dry-run.log"), "utf8");
+  assert.match(log, /report_status=generated/);
+  assert.match(log, /business_status=threshold_failed/);
 });
 
 test("financeqa snapshot export example is read-only and table-whitelisted", () => {
@@ -672,6 +1057,8 @@ test("financeqa snapshot export example is read-only and table-whitelisted", () 
 
   assert.match(contents, /psql/);
   assert.match(contents, /gzip/);
+  assert.match(contents, /FINANCEQA_SQLITE_MIRROR_OUTPUT/);
+  assert.match(contents, /financeqa_snapshot_to_sqlite\.mjs/);
   assert.match(contents, /fin_contracts/);
   assert.match(contents, /fin_fund_income/);
   assert.match(contents, /fin_fund_income_groups/);
@@ -683,6 +1070,159 @@ test("financeqa snapshot export example is read-only and table-whitelisted", () 
   assert.doesNotMatch(contents, /fin_journal/);
   assert.doesNotMatch(contents, /fin_bank_statement/);
   assert.doesNotMatch(contents, /\bINSERT\b|\bUPDATE\b|\bDELETE\b|\bDROP\b|\bTRUNCATE\b/i);
+});
+
+test("financeqa snapshot to sqlite mirror builds actual-service data from the same snapshot", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-sqlite-mirror-"));
+  const snapshotPath = path.join(dir, "financeqa-snapshot.json.gz");
+  const sqlitePath = path.join(dir, "financeqa_patrol.sqlite");
+
+  fs.writeFileSync(snapshotPath, zlib.gzipSync(JSON.stringify({
+    metadata: {
+      generated_at: "2026-06-26T21:54:44+08:00",
+      source_database: "bossagent_app",
+      source_schema: "tenant_uhub_etl_shadow"
+    },
+    tables: {
+      fin_contracts: [
+        {
+          contract_id: "C001",
+          customer_name: "客户A",
+          contract_content: "项目A",
+          contract_start_date: "2025-10-01",
+          contract_end_date: "2026-12-31",
+          settlement_cycle: "月度",
+          created_at: "2026-06-26T20:00:00+08:00",
+          updated_at: "2026-06-26T20:29:51+08:00"
+        }
+      ],
+      fin_fund_income: [
+        {
+          id: 7,
+          contract_id: "C001",
+          year_month: "2026-05",
+          source_report_type: "contract_mixed_finance",
+          source_sheet_name: "26年Q2收入明细",
+          quantity: "1",
+          settlement_amount: 1851758.61,
+          received_amount: 850926.32,
+          is_invoiced: "是",
+          invoice_amount: 859782.66,
+          remarks: "巡检测试",
+          invoice_open_offset_amount: 0,
+          invoice_open_offset_reason: "",
+          contract_start_date: "2025-10-01",
+          contract_end_date: "2026-12-31",
+          settlement_cycle: "月度",
+          settlement_unit_price: "1851758.61",
+          source_cell_notes: "{}",
+          created_at: "2026-06-26T20:00:00+08:00",
+          updated_at: "2026-06-26T20:29:51+08:00"
+        }
+      ],
+      fin_cost_settlements: [
+        {
+          id: 9,
+          contract_id: "C001",
+          year_month: "2026-05",
+          source_report_type: "contract_mixed_finance",
+          source_sheet_name: "成本-月度结算",
+          quantity: "1",
+          settlement_amount: 1000,
+          is_invoiced: "是",
+          invoice_amount: 900,
+          paid_amount: 300,
+          invoice_open_offset_amount: 100,
+          account_code: "6401",
+          created_at: "2026-06-26T20:00:00+08:00",
+          updated_at: "2026-06-26T20:29:51+08:00"
+        }
+      ],
+      fin_file_mappings: [
+        {
+          id: 3,
+          table_type: "fund-income",
+          period: "2026-Q2",
+          company: "DefaultCompany",
+          storage_key: "finance/优集收入、成本计算表 - 上传.xlsx",
+          file_name: "优集收入、成本计算表 - 上传.xlsx",
+          description: "2026-Q2资金收入表",
+          file_size: 71247,
+          source_file_hash: "hash-latest",
+          source_version_id: "优集收入、成本计算表 - 上传.xlsx:hash-latest",
+          created_at: "2026-06-26T20:00:00+08:00",
+          updated_at: "2026-06-26T20:29:51+08:00"
+        }
+      ]
+    }
+  })));
+
+  const result = spawnSync("node", [
+    "examples/golden/financeqa_snapshot_to_sqlite.mjs",
+    "--snapshot", snapshotPath,
+    "--output", sqlitePath
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /wrote FinanceQA SQLite mirror/);
+
+  const query = spawnSync("sqlite3", [
+    "-json",
+    sqlitePath,
+    `
+    SELECT
+      (SELECT COUNT(*) FROM fin_contracts) AS contracts,
+      (SELECT ROUND(SUM(settlement_amount), 2) FROM fin_fund_income) AS revenue,
+      (SELECT ROUND(SUM(invoice_amount - paid_amount - COALESCE(invoice_open_offset_amount, 0)), 2) FROM fin_cost_settlements) AS invoice_open,
+      (SELECT GROUP_CONCAT(file_name, '|') FROM fin_file_mappings) AS files;
+    `
+  ], { encoding: "utf8" });
+
+  assert.equal(query.status, 0, query.stderr);
+  const rows = JSON.parse(query.stdout);
+  assert.deepEqual(rows, [{
+    contracts: 1,
+    revenue: 1851758.61,
+    invoice_open: 500,
+    files: "优集收入、成本计算表 - 上传.xlsx"
+  }]);
+
+  const schemaQuery = spawnSync("sqlite3", [
+    "-json",
+    sqlitePath,
+    `
+    SELECT name FROM pragma_table_info('dimensions') WHERE name IN ('code', 'type', 'is_active')
+    UNION ALL
+    SELECT name FROM pragma_table_info('dimension_members') WHERE name IN ('dimension_id', 'code', 'parent_id')
+    UNION ALL
+    SELECT name FROM pragma_table_info('mapping_rules') WHERE name IN ('company', 'dimension_code', 'member_code');
+    `
+  ], { encoding: "utf8" });
+
+  assert.equal(schemaQuery.status, 0, schemaQuery.stderr);
+  assert.deepEqual(
+    JSON.parse(schemaQuery.stdout).map((row: { name: string }) => row.name).sort(),
+    ["code", "code", "company", "dimension_code", "dimension_id", "is_active", "member_code", "parent_id", "type"]
+  );
+
+  const commentSchemaQuery = spawnSync("sqlite3", [
+    "-json",
+    sqlitePath,
+    `
+    SELECT name FROM pragma_table_info('meta_table_comments') WHERE name IN ('table_name', 'comment', 'updated_at')
+    UNION ALL
+    SELECT name FROM pragma_table_info('meta_column_comments') WHERE name IN ('table_name', 'column_name', 'comment', 'updated_at');
+    `
+  ], { encoding: "utf8" });
+
+  assert.equal(commentSchemaQuery.status, 0, commentSchemaQuery.stderr);
+  assert.deepEqual(
+    JSON.parse(commentSchemaQuery.stdout).map((row: { name: string }) => row.name).sort(),
+    ["column_name", "comment", "comment", "table_name", "table_name", "updated_at", "updated_at"]
+  );
 });
 
 function spawnNode(
@@ -718,6 +1258,21 @@ function spawnNode(
       resolve({ status, stdout, stderr, timedOut });
     });
   });
+}
+
+function normalizeAnchorText(value: string): string {
+  return value.replace(/[\s,，_`|]/g, "").toLowerCase();
+}
+
+function readDryRunLog(baseDir: string): string {
+  const candidates = [
+    path.join(baseDir, "dry-run.log"),
+    path.join(baseDir, "reports", "dry-run.log")
+  ];
+  return candidates
+    .filter((item) => fs.existsSync(item))
+    .map((item) => fs.readFileSync(item, "utf8"))
+    .join("\n");
 }
 
 test("agent cleanup examples prune only expired patrol session files", () => {

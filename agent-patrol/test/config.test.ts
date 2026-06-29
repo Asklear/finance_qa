@@ -76,3 +76,18 @@ targets:
   assert.equal(config.targets.finance?.runner.command, "${OPENCLAW_CMD}");
   assert.equal(config.targets.finance?.oracle.mcpUrl, "${FINANCE_URL}");
 });
+
+test("production FinanceQA preset requires generated questions and golden reference", () => {
+  const config = loadConfig("presets/financeqa-production.yaml", {
+    OPENCLAW_AGENT_CMD: "node examples/runners/openclaw_local_runner.mjs --question-file {questionFile} --session-id {sessionId}",
+    AGENT_PATROL_QUESTION_GEN_CMD: "node examples/question-generators/llm_command_rewriter.mjs --input {inputFile}",
+    FINANCEQA_MCP_URL: "http://127.0.0.1:3009/mcp",
+    FINANCEQA_GOLDEN_CMD: "node examples/golden/financeqa_snapshot_reference.mjs --template {template} --question-file {questionFile} --snapshot tmp/reference-snapshots/financeqa-production-latest.json.gz"
+  });
+
+  const target = config.targets.finance_qa;
+  assert.equal(target.questionGenerator?.type, "command");
+  assert.match(target.questionGenerator?.command ?? "", /llm_command_rewriter/);
+  assert.equal(target.goldenReference?.type, "command");
+  assert.match(target.goldenReference?.command ?? "", /financeqa_snapshot_reference/);
+});
