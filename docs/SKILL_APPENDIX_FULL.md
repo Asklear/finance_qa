@@ -80,7 +80,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 说明：即使结果无法直接回答，也要尽量保留完整业务过程。若底层已经产出更完整的 trace、证据等级或规则链路，Go MCP 可保留脱敏摘要；SQL、数据库 id、科目代码和内部字段名不得默认透出给宿主老板问答。
 重要边界：过程暴露是给宿主、前端和审计链路使用，不等于对老板展示。老板可见回复必须经过字段净化，只输出业务概念、金额、期间、口径和来源，不原样暴露数据库辅助字段。
-补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序；如果同时存在 `data.source_update_note`，也要保留来源更新时间。
+补充：如果 `data.source_note` 已存在，宿主摘要时优先直接引用它，不要自行改写来源说明，以免打乱“主要来源 / 补充来源”的顺序；如果同时存在 `data.source_update_note`，老板可见最终回答必须输出 `来源` 和 `来源更新时间` 两行。这两行是事实原子，只补这两行即可，不要求把整个 `final_answer` 原样复制成固定模板。
 补充：`source_cell_notes` 是 Excel 批注/单元格备注，`remarks` 是收入明细可见“备注”列。它们给宿主 LLM 和审计链路解释谈判状态、备注金额、异常说明、单元格依据；老板普通金额答案不默认展开这些字段，只有用户问备注、批注、谈判中、异常原因或来源细节时才转成业务语言展示。
 
 ## 3. 宿主运行接口（按需）
@@ -219,7 +219,7 @@ description: "Use when OpenClaw or Claude needs finance_qa to answer老板财务
 
 bridge 对这些查询族当前额外暴露的宿主摘要结构为：
 
-1. `final_answer` / `boss_reply_text`：老板可见最终答案，宿主应保留关键数值、期间、业务口径和来源说明；可重写周边措辞，但不得改口径、改金额、改来源或从其他字段重算。
+1. `final_answer` / `boss_reply_text`：老板可见最终答案，宿主应保留关键数值、期间、业务口径和来源说明；可重写周边措辞，但不得改口径、改金额、改来源或从其他字段重算。若结果含 `source_note/source_update_note`，老板可见最终回答必须输出 `来源` 和 `来源更新时间`。
 2. `boss_reply`：老板口径结论/原因/建议；仅当没有 `final_answer` / `boss_reply_text` 时再按三段组织。
 3. `host_summary_contract`：合同/项目维度及合同汇总结构化摘要
 4. `host_summary_supplier_payments`：供应商付款期间汇总摘要，含：

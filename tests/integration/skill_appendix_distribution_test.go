@@ -26,6 +26,9 @@ func TestRootSkillReferencesAppendixViaStableRelativePath(t *testing.T) {
 	if !strings.Contains(string(rootSkill), "关键金额、期间、业务口径和来源说明") {
 		t.Fatalf("root skill description should force hosts to preserve current Go MCP business facts without exact-output passthrough")
 	}
+	if !strings.Contains(string(rootSkill), "老板可见最终回答必须输出 `来源` 和 `来源更新时间`") {
+		t.Fatalf("root skill should explicitly require boss-visible source and source update lines")
+	}
 	if strings.Contains(string(rootSkill), "`final_answer` unchanged") {
 		t.Fatalf("root skill description should not force exact final_answer passthrough")
 	}
@@ -50,6 +53,7 @@ func TestClaudeInstructionsForceBridgeFinalAnswer(t *testing.T) {
 		"必须先调用 Go MCP",
 		"financeqa serve",
 		"必须保留 Go MCP 结果里的关键数值、期间、业务口径、来源和来源更新时间",
+		"老板可见最终回答必须输出来源和来源更新时间",
 		"可以按老板汇报风格重写措辞",
 		"不能用历史对话、记忆、旧答案",
 	} {

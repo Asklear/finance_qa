@@ -148,6 +148,93 @@ test("finance-query execute keeps clean tool query after polluted prompt hook", 
   });
 });
 
+test("before_message_write appends missing FinanceQA source atoms only", async () => {
+  const toolCalls = [];
+  await withFinancePluginHarness(toolCalls, async ({ hooks }) => {
+    const beforeWrite = hooks.get("before_message_write");
+    assert.equal(typeof beforeWrite, "function");
+
+    const sessionKey = "finance-source-session";
+    const toolResult = {
+      role: "toolResult",
+      toolName: "finance-query",
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          success: true,
+          final_answer: [
+            "项目成本口径，未付款合计 2638110.61 元。",
+            "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+            "来源更新时间：2026-06-29 20:02:31"
+          ].join("\n"),
+          data: {
+            source_note: "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+            source_update_note: "来源更新时间：2026-06-29 20:02:31"
+          }
+        })
+      }]
+    };
+    beforeWrite({ message: toolResult }, { sessionKey });
+
+    const missingSource = {
+      role: "assistant",
+      content: [{ type: "text", text: "项目成本口径，未付款合计 2638110.61 元。" }],
+      stopReason: "stop"
+    };
+    const patched = beforeWrite({ message: missingSource }, { sessionKey })?.message;
+    assert.match(patched.content[0].text, /项目成本口径，未付款合计 2638110\.61 元。/);
+    assert.match(patched.content[0].text, /来源：《优集收入、成本计算表 - 上传\.xlsx》的【成本-月度结算】/);
+    assert.match(patched.content[0].text, /来源更新时间：2026-06-29 20:02:31/);
+    assert.doesNotMatch(patched.content[0].text, /final_answer|finance-query|工具返回/);
+
+    const alreadyHasSource = {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: [
+          "项目成本口径，未付款合计 2638110.61 元。",
+          "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+          "来源更新时间：2026-06-29 20:02:31"
+        ].join("\n")
+      }],
+      stopReason: "stop"
+    };
+    beforeWrite({ message: toolResult }, { sessionKey });
+    const unchanged = beforeWrite({ message: alreadyHasSource }, { sessionKey })?.message;
+    assert.equal(unchanged.content[0].text, alreadyHasSource.content[0].text);
+
+    const nonFinance = {
+      role: "assistant",
+      content: [{ type: "text", text: "普通回答。" }],
+      stopReason: "stop"
+    };
+    const untouched = beforeWrite({ message: nonFinance }, { sessionKey: "no-finance-tool-result" });
+    assert.equal(untouched, undefined);
+
+    beforeWrite({
+      message: {
+        role: "toolResult",
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            data: {
+              source_note: "来源：《其他工具.xlsx》",
+              source_update_note: "来源更新时间：2026-06-29 20:02:31"
+            }
+          })
+        }]
+      }
+    }, { sessionKey: "anonymous-tool-result" });
+    const anonymousToolAnswer = {
+      role: "assistant",
+      content: [{ type: "text", text: "其他工具回答。" }],
+      stopReason: "stop"
+    };
+    assert.equal(beforeWrite({ message: anonymousToolAnswer }, { sessionKey: "anonymous-tool-result" }), undefined);
+  });
+});
+
 async function withServer(handler, run) {
   const server = http.createServer(async (req, res) => {
     let body = "";

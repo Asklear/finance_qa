@@ -1,6 +1,6 @@
 ---
 name: "finance"
-description: "处理老板财务、经营、合同、回款、开票、收入、成本、利润等问题时，必须先调用 `finance-query`，并以当前结果中的关键金额、期间、业务口径和来源说明为准；可以重写周边措辞，但不得凭记忆、历史对话、旧结果、利润表、银行流水、序时账或 SQL 自行作答，除非 `finance-query` 明确要求回退。"
+description: "处理老板财务、经营、合同、回款、开票、收入、成本、利润等问题时，必须先调用 `finance-query`，并以当前结果中的关键金额、期间、业务口径和来源说明为准；老板可见最终回答必须输出 `来源` 和 `来源更新时间`（如果 Go MCP 已返回），可以重写周边措辞，但不得凭记忆、历史对话、旧结果、利润表、银行流水、序时账或 SQL 自行作答，除非 `finance-query` 明确要求回退。"
 metadata:
   {
     "openclaw": { "always": true },
@@ -130,7 +130,8 @@ metadata:
 8. 若存在 `data.source_note`：
    - 宿主回答时必须保留这句来源说明，优先直接引用，不要重写成另一套来源文案
    - `data.source_documents` / `data.primary_source_tables` 只作为结构化补充，不替代 `source_note`
-   - 若同时存在 `data.source_update_note`，老板可见回答也必须保留来源更新时间
+   - 若同时存在 `data.source_update_note`，老板可见最终回答必须输出 `来源` 和 `来源更新时间` 两行
+   - 这两行是事实原子，只补这两行即可；不要因此把整个 `final_answer` 原样复制成固定模板
    - `source_cell_notes` 是 Excel 批注/单元格备注，`remarks` 是收入明细可见“备注”列；它们用于宿主 LLM 解释谈判状态、备注金额、异常说明和单元格依据，不能替代来源文件名和更新时间，也不要在普通金额答案里默认展开
 9. 若 `bridge_meta.capabilities.exposed_tools` 存在：
    - 仅把其中列出的工具视为当前 bridge 可调用能力

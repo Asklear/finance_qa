@@ -43,6 +43,10 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 		`isFinanceQuestion`,
 		`findFinanceQACwd`,
 		`cwd: findFinanceQACwd(this.binaryPath)`,
+		`api.on("before_message_write"`,
+		`pendingFinanceSourceAtomsBySession`,
+		`financeSourceAtomsFromToolResult`,
+		`patchAssistantMessageWithSourceAtoms`,
 	} {
 		if !strings.Contains(pluginText, want) {
 			t.Fatalf("OpenClaw finance plugin should contain %q", want)
@@ -50,7 +54,6 @@ func TestOpenClawFinancePluginLetsModelUseFinanceToolWithoutHardIntercept(t *tes
 	}
 	for _, reject := range []string{
 		`api.on("before_dispatch"`,
-		`api.on("before_message_write"`,
 		`FINANCE_QUERY_FINAL_ANSWER_START`,
 		`FINANCE_QUERY_PAYLOAD_START`,
 		`FINANCE_BRIDGE_PATH`,
@@ -125,8 +128,8 @@ func TestOpenClawFinancePluginMetadataUsesCurrentMajorVersion(t *testing.T) {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("parse plugin metadata %s: %v", path, err)
 		}
-		if got := doc["version"]; got != "2.2.10" {
-			t.Fatalf("%s version = %v, want 2.2.10", path, got)
+		if got := doc["version"]; got != "2.2.11" {
+			t.Fatalf("%s version = %v, want 2.2.11", path, got)
 		}
 		if strings.HasSuffix(path, "package.json") {
 			packageDoc = doc

@@ -464,6 +464,7 @@ let mcpClient = null;
 let mcpClientKey = "";
 let pluginRuntime = null;
 let latestFinanceQuestionForTool = "";
+const pendingFinanceSourceAtomsBySession = new Map();
 
 async function getMCPClient() {
   const config = loadPluginConfig(pluginRuntime);
@@ -725,6 +726,90 @@ function requiredBossVisibleAtoms(payload) {
   return atoms;
 }
 
+function normalizedSourceUpdateNote(value) {
+  const note = String(value || "").trim();
+  if (!note) return "";
+  return note.startsWith("来源更新时间") ? note : `来源更新时间：${note}`;
+}
+
+function sourceAtomsFromText(text) {
+  const rawText = String(text || "");
+  const atoms = [];
+  const updateMatch = rawText.match(/来源更新时间[：:]\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/);
+  const sourceMatch = rawText.match(/来源[：:][^\n]*(?:\.xlsx|\.xls|\.csv)[^\n]*?(?=\s*来源更新时间[：:]|\n|$)/i);
+  for (const atom of [sourceMatch?.[0], updateMatch?.[0]]) {
+    const value = String(atom || "").trim();
+    if (value && !atoms.includes(value)) atoms.push(value);
+  }
+  return atoms;
+}
+
+function sourceAtomsFromPayload(payload) {
+  const compact = compactFinancePayload(payload);
+  if (!compact || typeof compact !== "object") return [];
+  const atoms = [];
+  const sourceNote = String(compact.source_note || "").trim();
+  const sourceUpdateNote = normalizedSourceUpdateNote(compact.source_update_note);
+  for (const atom of [sourceNote, sourceUpdateNote, ...sourceAtomsFromText(compact.final_answer)]) {
+    if (atom && !atoms.includes(atom)) atoms.push(atom);
+  }
+  return atoms;
+}
+
+function financeSourceAtomsFromToolResult(message) {
+  if (!message || message.role !== "toolResult") return [];
+  const messageToolName = message.toolName || message.name;
+  if (messageToolName && messageToolName !== "finance-query") return [];
+  const text = message.content?.find?.((item) => item?.type === "text")?.text || "";
+  if (!text) return [];
+  const payload = parseToolResultPayload({ content: [{ type: "text", text }] });
+  if (!payload || typeof payload !== "object") return [];
+  const payloadToolName = payload.bridge_meta?.tool_name || payload.tool_name;
+  if (messageToolName !== "finance-query" && payloadToolName !== "finance-query") return [];
+  return sourceAtomsFromPayload(payload);
+}
+
+function financeSourceAtomSessionKey(event, ctx) {
+  return String(ctx?.sessionKey || event?.sessionKey || event?.message?.sessionKey || "__default__");
+}
+
+function hasAssistantToolCalls(message) {
+  if (!message || message.role !== "assistant") return false;
+  if (Array.isArray(message.toolCalls) && message.toolCalls.length) return true;
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length) return true;
+  if (Array.isArray(message.content)) {
+    return message.content.some((item) => item?.type === "tool_use" || item?.type === "tool_call");
+  }
+  return false;
+}
+
+function appendMissingSourceAtoms(text, atoms) {
+  const current = String(text || "");
+  const missing = atoms.filter((atom) => atom && !current.includes(atom));
+  if (!missing.length) return current;
+  const base = current.trimEnd();
+  const separator = base ? "\n\n" : "";
+  return `${base}${separator}${missing.join("\n")}`;
+}
+
+function patchAssistantMessageWithSourceAtoms(message, atoms) {
+  if (!message || message.role !== "assistant" || hasAssistantToolCalls(message)) return null;
+  if (!Array.isArray(atoms) || !atoms.length) return null;
+  if (typeof message.content === "string") {
+    const nextText = appendMissingSourceAtoms(message.content, atoms);
+    return nextText === message.content ? message : { ...message, content: nextText };
+  }
+  if (!Array.isArray(message.content)) return null;
+  const textIndex = message.content.map((item) => item?.type).lastIndexOf("text");
+  if (textIndex < 0) return null;
+  const currentText = String(message.content[textIndex]?.text || "");
+  const nextText = appendMissingSourceAtoms(currentText, atoms);
+  if (nextText === currentText) return message;
+  const nextContent = message.content.slice();
+  nextContent[textIndex] = { ...nextContent[textIndex], text: nextText };
+  return { ...message, content: nextContent };
+}
+
 async function financeQuerySystemFacts(question) {
   const result = await callFinanceTool("finance-query", { query: question });
   const payload = compactFinancePayload(parseToolResultPayload(result));
@@ -871,6 +956,27 @@ const plugin = {
       return {
         prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion, financeFacts)
       };
+    });
+
+    api.on("before_message_write", (event, ctx) => {
+      const key = financeSourceAtomSessionKey(event, ctx);
+      const message = event?.message;
+      if (message?.role === "toolResult") {
+        const atoms = financeSourceAtomsFromToolResult(message);
+        if (atoms.length) {
+          pendingFinanceSourceAtomsBySession.set(key, atoms);
+        } else if (message.toolName === "finance-query") {
+          pendingFinanceSourceAtomsBySession.delete(key);
+        }
+        return undefined;
+      }
+      if (message?.role !== "assistant") return undefined;
+      const atoms = pendingFinanceSourceAtomsBySession.get(key);
+      if (!atoms?.length) return undefined;
+      const patched = patchAssistantMessageWithSourceAtoms(message, atoms);
+      if (!patched) return undefined;
+      pendingFinanceSourceAtomsBySession.delete(key);
+      return { message: patched };
     });
   }
 };
