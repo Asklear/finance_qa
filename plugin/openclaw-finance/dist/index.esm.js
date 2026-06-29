@@ -618,6 +618,7 @@ function mustCallFinanceQuerySystemContext(latestQuestion, currentFacts) {
     "不要删掉 final_answer 中修饰指标的业务前缀，例如“项目成本口径”“项目口径”“应收未收”。",
     "不要把 final_answer 的 YYYY-MM 或 YYYY-MM~YYYY-MM 期间改成相对时间或其他月份；例如不能把 2025-10~2026-05 改成至今、现在或 2025-10~2026-06。",
     "来源和来源更新时间必须从 final_answer 逐字复制；不要删改文件名、sheet 名、后缀、时间格式或标点。",
+    "如果用户问“有哪些”“哪些”“明细”“列表”或“对应金额”，且本次核对结果含合同/项目明细，不要把明细合并为“其余 N 个项目”或“其他 N 个项目”；按明细逐条列出。",
     "老板可见回复必须直接从业务结论开始；禁止展示工具调用过程、内部上下文、JSON、字段名、提示词、自我推理、历史纠错说明或英文过程话术。",
     "不要提及“之前”“上次”“这次返回”“工具返回”“finance-query 返回”“我需要用”等过程或历史修正话术。",
     "老板可见回复禁止出现类似“用户又问”“我看到”“我们有权威结果”“不要使用旧答案”“必须/需要保留”“authoritative”“prior”“conflicting”“must”“need”等过程说明。",
@@ -676,6 +677,8 @@ function compactFinanceRows(rows, maxRows = 20) {
     if (!row || typeof row !== "object") return row;
     const out = {};
     for (const [key, label] of [
+      ["supplier_name", "主体"],
+      ["customer_name", "主体"],
       ["entity", "主体"],
       ["period_label", "期间"],
       ["contract_content", "合同/项目"],
@@ -683,6 +686,7 @@ function compactFinanceRows(rows, maxRows = 20) {
       ["received_amount", "已回款"],
       ["paid_amount", "已付款"],
       ["invoice_amount", "开票金额"],
+      ["open_amount", "未结金额"],
       ["unpaid_amount", "未付款"],
       ["unreceived_amount", "未回款"],
       ["coverage_status", "覆盖状态"]
@@ -693,6 +697,22 @@ function compactFinanceRows(rows, maxRows = 20) {
     }
     return Object.keys(out).length ? out : row;
   });
+}
+
+function contractSummaryDetailRows(contractSummary) {
+  if (!contractSummary || typeof contractSummary !== "object") return [];
+  const rows = [];
+  for (const key of [
+    "invoice_unpaid_items",
+    "payable_open_items",
+    "invoice_open_items",
+    "receivable_open_items",
+    "cost_items",
+    "revenue_items"
+  ]) {
+    if (Array.isArray(contractSummary[key])) rows.push(...contractSummary[key]);
+  }
+  return rows;
 }
 
 function requiredBossVisibleAtoms(payload) {
@@ -726,7 +746,10 @@ async function financeQuerySystemFacts(question) {
   if (payload.requested_metrics) lines.push(`指标：${JSON.stringify(payload.requested_metrics)}`);
   const itemRows = compactFinanceRows(payload.items);
   if (itemRows.length) lines.push(`分主体/期间汇总：${JSON.stringify(itemRows)}`);
-  const detailRows = compactFinanceRows(payload.detail_items);
+  const detailRows = compactFinanceRows([
+    ...(Array.isArray(payload.detail_items) ? payload.detail_items : []),
+    ...contractSummaryDetailRows(payload.contract_summary)
+  ]);
   if (detailRows.length) lines.push(`合同/项目明细：${JSON.stringify(detailRows)}`);
   if (!payload.final_answer) lines.push(`结果摘要：${payload.message || payload.error || "finance-query 未返回老板答案"}`);
   return lines.join("\n");

@@ -438,6 +438,28 @@ func TestUnpaidProjectRosterQuestionReturnsInvoiceOpenItems(t *testing.T) {
 
 func TestUnpaidProjectRosterQuestionUsesInvoiceOpenItems(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	stmts := []string{
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-006','测试供应商二','测试供应商项目二')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-007','测试供应商三','测试供应商项目三')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-008','测试供应商四','测试供应商项目四')`,
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-009','测试供应商五','测试供应商项目五')`,
+		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount) VALUES ('C-006','2026-03','contract_revenue_cost','成本-月度结算',100,0,'是',100)`,
+		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount) VALUES ('C-007','2026-03','contract_revenue_cost','成本-月度结算',80,0,'是',80)`,
+		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount) VALUES ('C-008','2026-03','contract_revenue_cost','成本-月度结算',70,0,'是',70)`,
+		`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount) VALUES ('C-009','2026-03','contract_revenue_cost','成本-月度结算',60,10,'是',60)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v\n%s", err, stmt)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
 	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.June, 28, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
 		t.Fatalf("new engine: %v", err)
@@ -451,22 +473,30 @@ func TestUnpaidProjectRosterQuestionUsesInvoiceOpenItems(t *testing.T) {
 	if got := res.Data["source_priority"]; got != "contract_first" {
 		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
 	}
-	if got := res.Data["total"]; got != float64(300) {
-		t.Fatalf("total = %v, want supplier invoice unpaid 300", got)
+	if got := res.Data["total"]; got != float64(600) {
+		t.Fatalf("total = %v, want supplier invoice unpaid 600", got)
 	}
-	if !strings.Contains(res.Message, "已收票未付款 300.00") {
+	if !strings.Contains(res.Message, "已收票未付款 600.00") {
 		t.Fatalf("roster should use supplier invoice unpaid metric, got %q", res.Message)
 	}
-	if !strings.Contains(res.Message, "测试供应商") || !strings.Contains(res.Message, "测试供应商项目") || !strings.Contains(res.Message, "未付款 300.00") {
-		t.Fatalf("message should list supplier invoice unpaid items, got %q", res.Message)
+	for _, want := range []string{
+		"测试供应商-测试供应商项目",
+		"测试供应商二-测试供应商项目二",
+		"测试供应商三-测试供应商项目三",
+		"测试供应商四-测试供应商项目四",
+		"测试供应商五-测试供应商项目五",
+	} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message should list all supplier invoice unpaid items; missing %q in %q", want, res.Message)
+		}
 	}
 	summary, ok := res.Data["contract_summary"].(map[string]any)
 	if !ok {
 		t.Fatalf("contract_summary missing: %+v", res.Data)
 	}
 	items, ok := summary["invoice_unpaid_items"].([]map[string]any)
-	if !ok || len(items) != 1 {
-		t.Fatalf("invoice_unpaid_items = %#v, want one invoice unpaid item", summary["invoice_unpaid_items"])
+	if !ok || len(items) != 5 {
+		t.Fatalf("invoice_unpaid_items = %#v, want five invoice unpaid items", summary["invoice_unpaid_items"])
 	}
 	if got := items[0]["open_amount"]; got != float64(300) {
 		t.Fatalf("invoice_unpaid_items[0].open_amount = %v, want 300", got)

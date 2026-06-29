@@ -104,18 +104,18 @@ func buildContractAggregateSupplement(selection contractAggregateSelection, summ
 			round2(summary.RevenueReceived),
 			round2(summary.CostPaid))
 	case selection.IncludeCost && !selection.IncludeRevenue && !selection.IncludeProfit:
-		return fmt.Sprintf("补充项目现金付款 %.2f 元。%s", round2(summary.CostPaid), buildCostDetailSentence(summary.CostItems))
+		return fmt.Sprintf("补充项目现金付款 %.2f 元。%s", round2(summary.CostPaid), buildCostDetailSentence(summary.CostItems, summary.OriginalQuestion))
 	case selection.IncludeRevenue && !selection.IncludeCost && !selection.IncludeProfit:
-		return fmt.Sprintf("补充项目现金到账 %.2f 元，已开票 %.2f 元。%s%s", round2(summary.RevenueReceived), round2(summary.RevenueInvoiced), buildRevenueRankingSentence(summary.RevenueCustomerRanking, summary.Top2RevenueSettlement, summary.Top2RevenueShare), buildRevenueDetailSentence(summary.RevenueItems))
+		return fmt.Sprintf("补充项目现金到账 %.2f 元，已开票 %.2f 元。%s%s", round2(summary.RevenueReceived), round2(summary.RevenueInvoiced), buildRevenueRankingSentence(summary.RevenueCustomerRanking, summary.Top2RevenueSettlement, summary.Top2RevenueShare), buildRevenueDetailSentence(summary.RevenueItems, summary.OriginalQuestion))
 	case selection.IncludeReceivable && !selection.IncludePayable:
-		return fmt.Sprintf("补充项目结算 %.2f 元、已到账 %.2f 元；其中已开票未回款 %.2f 元。%s%s", round2(summary.RevenueSettlement), round2(summary.RevenueReceived), round2(summary.RevenueInvoiceOpen), buildRevenueReceivableCustomerSentence(summary), buildRevenueReceivableDetailSentence(summary.RevenueItems))
+		return fmt.Sprintf("补充项目结算 %.2f 元、已到账 %.2f 元；其中已开票未回款 %.2f 元。%s%s", round2(summary.RevenueSettlement), round2(summary.RevenueReceived), round2(summary.RevenueInvoiceOpen), buildRevenueReceivableCustomerSentence(summary), buildRevenueReceivableDetailSentence(summary.RevenueItems, summary.OriginalQuestion))
 	case selection.IncludePayable && !selection.IncludeReceivable:
-		return fmt.Sprintf("补充项目成本 %.2f 元、已付款 %.2f 元。%s", round2(summary.CostSettlement), round2(summary.CostPaid), buildCostPayableDetailSentence(summary.CostItems))
+		return fmt.Sprintf("补充项目成本 %.2f 元、已付款 %.2f 元。%s", round2(summary.CostSettlement), round2(summary.CostPaid), buildCostPayableDetailSentence(summary.CostItems, summary.OriginalQuestion))
 	case selection.IncludeInvoiceAR && !selection.IncludeInvoiceAP:
-		detail := buildRevenueInvoiceOpenDetailSentence(summary.RevenueInvoiceOpenItems)
+		detail := buildRevenueInvoiceOpenDetailSentence(summary.RevenueInvoiceOpenItems, summary.OriginalQuestion)
 		return fmt.Sprintf("补充已开票 %.2f 元、已到账 %.2f 元。%s", round2(summary.RevenueInvoiced), round2(summary.RevenueReceived), detail)
 	case selection.IncludeInvoiceAP && !selection.IncludeInvoiceAR:
-		detail := buildCostInvoiceOpenDetailSentence(summary.CostInvoiceOpenItems)
+		detail := buildCostInvoiceOpenDetailSentence(summary.CostInvoiceOpenItems, summary.OriginalQuestion)
 		return fmt.Sprintf("补充已收票 %.2f 元、已付款 %.2f 元。%s", round2(summary.CostInvoiced), round2(summary.CostPaid), detail)
 	default:
 		parts := make([]string, 0, 4)
@@ -154,8 +154,9 @@ func buildRevenueReceivableCustomerSentence(summary contractAggregateSummary) st
 		bucketsByName[bucket.Name] = bucket
 	}
 	parts := make([]string, 0, len(rows))
+	limit := contractAggregateDetailDisplayLimit(summary.OriginalQuestion, len(rows))
 	for i, row := range rows {
-		if i >= 3 {
+		if i >= limit {
 			break
 		}
 		part := fmt.Sprintf("%s 结算 %.2f 元、已回款 %.2f 元、未回款 %.2f 元", row.Name, round2(row.SettlementAmount), round2(row.MovementAmount), round2(row.OpenAmount))
@@ -171,14 +172,15 @@ func buildRevenueReceivableCustomerSentence(summary contractAggregateSummary) st
 	return contractAggregateDetailSentence(parts, len(rows), prefix)
 }
 
-func buildRevenueReceivableDetailSentence(items []contractAggregateOpenItem) string {
+func buildRevenueReceivableDetailSentence(items []contractAggregateOpenItem, question string) string {
 	openItems := filterOpenContractAggregateItems(items)
 	if len(openItems) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(openItems))
+	limit := contractAggregateDetailDisplayLimit(question, len(openItems))
 	for i, item := range openItems {
-		if i >= 3 {
+		if i >= limit {
 			break
 		}
 		label := contractAggregateItemLabel(item)
@@ -208,13 +210,14 @@ func buildRevenueRankingSentence(rows []contractAggregateDimensionRow, top2Settl
 	return "客户收入排名：" + strings.Join(parts, "；") + suffix + "。"
 }
 
-func buildCostInvoiceOpenDetailSentence(items []contractAggregateOpenItem) string {
+func buildCostInvoiceOpenDetailSentence(items []contractAggregateOpenItem, question string) string {
 	if len(items) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(items))
+	limit := contractAggregateDetailDisplayLimit(question, len(items))
 	for i, item := range items {
-		if i >= 3 {
+		if i >= limit {
 			break
 		}
 		label := strings.TrimSpace(item.CustomerName)
@@ -231,19 +234,20 @@ func buildCostInvoiceOpenDetailSentence(items []contractAggregateOpenItem) strin
 		parts = append(parts, fmt.Sprintf("%s 已收票 %.2f 元、已付款 %.2f 元、未付款 %.2f 元", label, round2(item.InvoiceAmount), round2(item.ReceivedAmount), round2(item.OpenAmount)))
 	}
 	suffix := ""
-	if len(items) > 3 {
+	if len(items) > len(parts) {
 		suffix = fmt.Sprintf("等 %d 个项目", len(items))
 	}
 	return "明细：" + strings.Join(parts, "；") + suffix + "。"
 }
 
-func buildRevenueDetailSentence(items []contractAggregateOpenItem) string {
+func buildRevenueDetailSentence(items []contractAggregateOpenItem, question string) string {
 	if len(items) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(items))
+	limit := contractAggregateDetailDisplayLimit(question, len(items))
 	for i, item := range items {
-		if i >= 3 {
+		if i >= limit {
 			break
 		}
 		label := contractAggregateItemLabel(item)
@@ -252,13 +256,14 @@ func buildRevenueDetailSentence(items []contractAggregateOpenItem) string {
 	return contractAggregateDetailSentence(parts, len(items), "明细：")
 }
 
-func buildCostDetailSentence(items []contractAggregateOpenItem) string {
+func buildCostDetailSentence(items []contractAggregateOpenItem, question string) string {
 	if len(items) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(items))
+	limit := contractAggregateDetailDisplayLimit(question, len(items))
 	for i, item := range items {
-		if i >= 3 {
+		if i >= limit {
 			break
 		}
 		label := contractAggregateItemLabel(item)
@@ -267,14 +272,15 @@ func buildCostDetailSentence(items []contractAggregateOpenItem) string {
 	return contractAggregateDetailSentence(parts, len(items), "明细：")
 }
 
-func buildCostPayableDetailSentence(items []contractAggregateOpenItem) string {
+func buildCostPayableDetailSentence(items []contractAggregateOpenItem, question string) string {
 	openItems := filterOpenContractAggregateItems(items)
 	if len(openItems) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(openItems))
+	limit := contractAggregateDetailDisplayLimit(question, len(openItems))
 	for i, item := range openItems {
-		if i >= 3 {
+		if i >= limit {
 			break
 		}
 		label := contractAggregateItemLabel(item)
@@ -283,13 +289,14 @@ func buildCostPayableDetailSentence(items []contractAggregateOpenItem) string {
 	return contractAggregateDetailSentence(parts, len(openItems), "明细：")
 }
 
-func buildRevenueInvoiceOpenDetailSentence(items []contractAggregateOpenItem) string {
+func buildRevenueInvoiceOpenDetailSentence(items []contractAggregateOpenItem, question string) string {
 	if len(items) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(items))
+	limit := contractAggregateDetailDisplayLimit(question, len(items))
 	for i, item := range items {
-		if i >= 3 {
+		if i >= limit {
 			break
 		}
 		label := contractAggregateItemLabel(item)
@@ -322,4 +329,20 @@ func contractAggregateDetailSentence(parts []string, itemCount int, prefix strin
 		suffix = fmt.Sprintf("等 %d 个项目", itemCount)
 	}
 	return prefix + strings.Join(parts, "；") + suffix + "。"
+}
+
+func contractAggregateDetailDisplayLimit(question string, itemCount int) int {
+	if itemCount <= 0 {
+		return 0
+	}
+	if contractAggregateWantsDetailItems(question) {
+		if itemCount > 20 {
+			return 20
+		}
+		return itemCount
+	}
+	if itemCount > 3 {
+		return 3
+	}
+	return itemCount
 }
