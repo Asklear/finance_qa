@@ -337,6 +337,41 @@ console.log(JSON.stringify({
   }]);
 });
 
+test("LLM command question generator fails closed on recursive JSON slices", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-llm-question-generator-recursive-json-"));
+  const inputPath = path.join(dir, "input.json");
+  const llmPath = path.join(dir, "fake-bad-llm.mjs");
+  fs.writeFileSync(inputPath, JSON.stringify({
+    version: 1,
+    target: "finance_qa",
+    suite: "smoke",
+    seed: "fixed",
+    cases: [{
+      caseId: "finance_qa_finance_latest_month_revenue_001",
+      template: "finance_latest_month_revenue",
+      originalQuestion: "收入表中最新月份的营收是多少？"
+    }]
+  }), "utf8");
+  fs.writeFileSync(llmPath, `
+process.stdout.write("{not valid json}");
+`, "utf8");
+
+  const result = await spawnNode([
+    "examples/question-generators/llm_command_rewriter.mjs",
+    "--input", inputPath
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      AGENT_PATROL_LLM_CMD: `node ${llmPath}`
+    }
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /stdout did not contain valid JSON/);
+  assert.doesNotMatch(result.stderr, /Maximum call stack size exceeded/);
+});
+
 test("OpenAI-compatible question generator CLI reads stdin and returns model content", async () => {
   const seenRequests: Array<{ authorization?: string; body: Record<string, unknown> }> = [];
   const server = http.createServer((req, res) => {
@@ -377,7 +412,8 @@ test("OpenAI-compatible question generator CLI reads stdin and returns model con
         ...process.env,
         AGENT_PATROL_LLM_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
         AGENT_PATROL_LLM_API_KEY: "test-key",
-        AGENT_PATROL_LLM_MODEL: "test-model"
+        AGENT_PATROL_LLM_MODEL: "test-model",
+        AGENT_PATROL_LLM_RESPONSE_FORMAT: "json_object"
       },
       stdio: ["pipe", "pipe", "pipe"]
     });
@@ -398,6 +434,7 @@ test("OpenAI-compatible question generator CLI reads stdin and returns model con
     assert.match(stdout, /最新月份收入/);
     assert.equal(seenRequests[0]?.authorization, "Bearer test-key");
     assert.equal(seenRequests[0]?.body.model, "test-model");
+    assert.deepEqual(seenRequests[0]?.body.response_format, { type: "json_object" });
     const messages = seenRequests[0]?.body.messages as Array<{ role: string; content: string }>;
     assert.equal(messages[0]?.content, "rewrite this question");
   } finally {
@@ -576,7 +613,7 @@ test("financeqa snapshot reference provider nets merged groups against member mo
   assert.equal(payload.result.structured.totals.movement, 1100);
 });
 
-test("financeqa snapshot reference provider computes cost invoice open with offsets and item details", async () => {
+test("financeqa snapshot reference provider separates project payable from invoiced payable", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-cost-"));
   const snapshotPath = path.join(dir, "financeqa-snapshot.json");
   const questionFile = path.join(dir, "question.txt");
@@ -635,6 +672,21 @@ test("financeqa snapshot reference provider computes cost invoice open with offs
   assert.equal(payablePayload.result.structured.amount, 1100);
   assert.equal(payablePayload.result.structured.totals.invoice_open, 850);
 
+  const invoicedPayable = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_project_invoiced_payable_unpaid",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--as-of-date", "2026-06-26"
+  ], {
+    cwd: process.cwd(),
+    env: process.env
+  }, { timeoutMs: 5_000 });
+  assert.equal(invoicedPayable.status, 0, invoicedPayable.stderr);
+  const invoicedPayablePayload = JSON.parse(invoicedPayable.stdout);
+  assert.equal(invoicedPayablePayload.result.structured.metric, "已收票未付款");
+  assert.equal(invoicedPayablePayload.result.structured.amount, 850);
+
   const unpaidProjects = await spawnNode([
     "examples/golden/financeqa_snapshot_reference.mjs",
     "--template", "finance_unpaid_projects",
@@ -647,14 +699,14 @@ test("financeqa snapshot reference provider computes cost invoice open with offs
   }, { timeoutMs: 5_000 });
   assert.equal(unpaidProjects.status, 0, unpaidProjects.stderr);
   const unpaidPayload = JSON.parse(unpaidProjects.stdout);
-  assert.equal(unpaidPayload.result.structured.metric, "已收票未付款");
-  assert.equal(unpaidPayload.result.structured.amount, 850);
+  assert.equal(unpaidPayload.result.structured.metric, "项目应付");
+  assert.equal(unpaidPayload.result.structured.amount, 1100);
   assert.deepEqual(unpaidPayload.result.structured.items.map((item: { name: string; amount: number }) => [item.name, item.amount]), [
-    ["供应商A/成本项目A", 500],
-    ["供应商A/成本项目B", 350]
+    ["供应商A/成本项目A", 700],
+    ["供应商A/成本项目B", 400]
   ]);
   assert.match(unpaidPayload.result.final_answer, /明细前2项/);
-  assert.match(unpaidPayload.result.final_answer, /供应商A\/成本项目A 500\.00 元/);
+  assert.match(unpaidPayload.result.final_answer, /供应商A\/成本项目A 700\.00 元/);
 });
 
 test("financeqa snapshot reference provider defaults as-of date to Asia Shanghai", async () => {
@@ -808,8 +860,8 @@ test("financeqa canonical golden runner covers every financeqa preset template",
     },
     {
       template: "finance_unpaid_projects",
-      expectedQuery: "2025年10月至2026年5月，按项目列出已收票未付款金额。",
-      metric: "已收票未付款",
+      expectedQuery: "2025年10月至2026年5月，按项目列出应付未付金额。",
+      metric: "项目应付",
       amount: 600000,
       period: { from: "2025-10", to: "2026-05" }
     }
@@ -971,6 +1023,7 @@ test("financeqa low-frequency dry-run schedule examples only write local reports
   assert.match(contents, /AGENT_PATROL_CLEANUP_CMD/);
   assert.match(contents, /AGENT_PATROL_CLEANUP_KINDS/);
   assert.match(contents, /AGENT_PATROL_SESSION_RETENTION_DAYS/);
+  assert.match(contents, /AGENT_PATROL_LLM_RESPONSE_FORMAT=json_object/);
   assert.match(contents, /openclaw-jsonl-cleanup\.sh/);
   assert.match(contents, /hermes-json-cleanup\.sh/);
   assert.match(contents, /claude-session-cleanup\.sh/);

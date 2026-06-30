@@ -38,6 +38,11 @@ Then set `FINANCEQA_REFERENCE_SNAPSHOT`, `FINANCEQA_SQLITE_MIRROR_OUTPUT`, `AGEN
 
 The snapshot command reads `fin_*` rows from the local `.json.gz` and does not call `finance-query`; the export includes direct rows, merged-group rows, and group-member rows so the reference can net merged amounts against member receipts/payments. The SQLite mirror command builds the local FinanceQA MCP database from that same snapshot, so the actual agent path and golden provider compare against the same data. The older `financeqa_canonical_golden.mjs` command is still available for diagnostics, but it canonicalizes the prompt and then calls `finance-query`, so it is not an independent business reference.
 
+FinanceQA payable templates intentionally separate two cost-side metrics:
+
+- `未付款`, `应付未付`, and `项目成本口径未付款` use project payable: project cost minus paid amount.
+- `已收票未付款`, `收到发票未付款`, and `发票未付` use invoice payable: received invoice amount minus paid amount and invoice-open offsets.
+
 ## Current FinanceQA Patrol Flow
 
 1. A low-frequency scheduler starts `examples/schedules/run-financeqa-dry-run.sh`.
@@ -63,6 +68,7 @@ AGENT_PATROL_LLM_ENV_FILE=tmp/secrets/agent-patrol-llm.env
 AGENT_PATROL_LLM_API_KEY_ENV=DEEPSEEK_API_KEY
 AGENT_PATROL_LLM_BASE_URL_ENV=DEEPSEEK_BASE_URL
 AGENT_PATROL_LLM_MODEL_ENV=DEEPSEEK_MODEL
+AGENT_PATROL_LLM_RESPONSE_FORMAT=json_object
 ```
 
 The secret file should contain only provider settings and should not be committed:
@@ -74,6 +80,8 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 ```
 
 The recommended `openai_compatible_chat.mjs` command calls an OpenAI-compatible chat completions API directly, so it does not create OpenClaw/Hermes/Claude sessions. `AGENT_PATROL_LLM_CMD` can also point at any local LLM/agent CLI wrapper that reads the prompt from stdin and writes a JSON answer to stdout, but that may create agent session artifacts depending on the CLI.
+
+`AGENT_PATROL_LLM_RESPONSE_FORMAT=json_object` sends `response_format: {"type":"json_object"}` to compatible chat-completions providers. If a provider rejects that field, unset it; the parser still validates malformed output and fails closed without recursive stack overflows.
 
 The wrapper asks the LLM to return this protocol:
 

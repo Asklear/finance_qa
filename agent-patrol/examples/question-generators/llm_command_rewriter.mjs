@@ -123,14 +123,18 @@ function runLlmCommand(command, prompt, timeoutMs) {
   });
 }
 
-function parseLlmJson(stdout) {
+function parseLlmJson(stdout, depth = 0, seen = new Set()) {
   const trimmed = stdout.trim();
   if (!trimmed) throw new Error("LLM question command returned empty stdout");
+  if (depth > 8 || seen.has(trimmed)) {
+    throw new Error(`LLM question command stdout did not contain valid JSON: ${previewText(trimmed)}`);
+  }
+  seen.add(trimmed);
 
   const direct = tryParseJson(trimmed);
   if (direct !== undefined) {
     const embedded = extractAgentAnswerText(direct);
-    if (embedded) return parseLlmJson(embedded);
+    if (embedded) return parseLlmJson(embedded, depth + 1, seen);
     return direct;
   }
 
@@ -140,10 +144,10 @@ function parseLlmJson(stdout) {
   }
 
   const objectJson = extractJsonSlice(trimmed, "{", "}");
-  if (objectJson) return parseLlmJson(objectJson);
+  if (objectJson) return parseLlmJson(objectJson, depth + 1, seen);
   const arrayJson = extractJsonSlice(trimmed, "[", "]");
-  if (arrayJson) return parseLlmJson(arrayJson);
-  throw new Error("LLM question command stdout did not contain JSON");
+  if (arrayJson) return parseLlmJson(arrayJson, depth + 1, seen);
+  throw new Error(`LLM question command stdout did not contain valid JSON: ${previewText(trimmed)}`);
 }
 
 function tryParseJson(text) {
@@ -177,6 +181,10 @@ function extractJsonSlice(text, open, close) {
   const end = text.lastIndexOf(close);
   if (start < 0 || end <= start) return undefined;
   return text.slice(start, end + 1);
+}
+
+function previewText(text) {
+  return text.replace(/\s+/g, " ").slice(0, 300);
 }
 
 function normalizeQuestions(parsed) {

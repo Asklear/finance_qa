@@ -24,6 +24,7 @@ async function main() {
     ?? process.env.OPENAI_MODEL
     ?? process.env.DEEPSEEK_MODEL
     ?? "deepseek-chat";
+  const responseFormat = envValue("AGENT_PATROL_LLM_RESPONSE_FORMAT", "AGENT_PATROL_LLM_RESPONSE_FORMAT_ENV");
 
   if (!apiKey) throw new Error("AGENT_PATROL_LLM_API_KEY, OPENAI_API_KEY, or DEEPSEEK_API_KEY is required");
   if (!baseUrl) throw new Error("AGENT_PATROL_LLM_BASE_URL, OPENAI_BASE_URL, or DEEPSEEK_BASE_URL is required");
@@ -33,6 +34,7 @@ async function main() {
     apiKey,
     model,
     prompt,
+    responseFormat,
     timeoutMs: Number(process.env.AGENT_PATROL_LLM_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS
   });
 
@@ -92,18 +94,24 @@ async function callChatCompletions(options) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
+    const body = {
+      model: options.model,
+      messages: [{ role: "user", content: options.prompt }],
+      temperature: Number(process.env.AGENT_PATROL_LLM_TEMPERATURE ?? "0.7"),
+      max_tokens: Number(process.env.AGENT_PATROL_LLM_MAX_TOKENS ?? "1024")
+    };
+    const responseFormat = parseResponseFormat(options.responseFormat);
+    if (responseFormat) {
+      body.response_format = responseFormat;
+    }
+
     const response = await fetch(options.url, {
       method: "POST",
       headers: {
         "authorization": `Bearer ${options.apiKey}`,
         "content-type": "application/json"
       },
-      body: JSON.stringify({
-        model: options.model,
-        messages: [{ role: "user", content: options.prompt }],
-        temperature: Number(process.env.AGENT_PATROL_LLM_TEMPERATURE ?? "0.7"),
-        max_tokens: Number(process.env.AGENT_PATROL_LLM_MAX_TOKENS ?? "1024")
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal
     });
     const text = await response.text();
@@ -121,4 +129,12 @@ async function callChatCompletions(options) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function parseResponseFormat(value) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed || trimmed === "none" || trimmed === "off") return undefined;
+  if (trimmed === "json_object") return { type: "json_object" };
+  if (trimmed.startsWith("{")) return JSON.parse(trimmed);
+  return { type: trimmed };
 }

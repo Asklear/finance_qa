@@ -33,6 +33,8 @@ RandomizedDelaySec=5m
 
 The systemd service sets `AGENT_PATROL_ENV_FILE=/opt/finance_qa/agent-patrol/examples/schedules/financeqa-production-hourly.env` and lets the wrapper source that file. Do not replace it with systemd `EnvironmentFile=`, because same-file references in command variables need bash expansion.
 
+The production question-rewrite profile sets `AGENT_PATROL_LLM_RESPONSE_FORMAT=json_object`, so compatible LLM providers are asked for JSON output at the API layer. The parser still falls back safely if the provider returns malformed text.
+
 ## Reference Source
 
 The golden reference comes from a read-only snapshot export of the live `fin_*` tables using:
@@ -57,6 +59,15 @@ node examples/golden/financeqa_snapshot_reference.mjs \
 ```
 
 Direct `finance-query` remains diagnostic only. It must not be treated as the 90% accuracy reference when `goldenReference` is configured.
+
+## FinanceQA Metric Boundaries
+
+The FinanceQA golden templates keep project payable and invoice payable separate:
+
+- `finance_project_payable_unpaid` and `finance_unpaid_projects` use project payable: project cost minus paid amount.
+- `finance_project_invoiced_payable_unpaid` uses invoice payable: received invoice amount minus paid amount and invoice-open offsets.
+
+Questions that only say `未付款`, `应付未付`, or `项目成本口径未付款` are scored against project payable. Questions that explicitly say `已收票`, `收到发票`, or `发票未付` are scored against invoice payable.
 
 ## Safety Rules
 

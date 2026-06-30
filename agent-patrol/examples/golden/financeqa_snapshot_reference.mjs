@@ -42,12 +42,11 @@ const TEMPLATE_DEFINITIONS = {
     headline: "已收票未付款"
   },
   finance_unpaid_projects: {
-    metric: "已收票未付款",
+    metric: "项目应付",
     family: "cost",
     periodMode: "range",
-    amount: (totals) => totals.invoiceOpen,
-    itemAmount: "invoiceOpen",
-    headline: "已收票未付款",
+    amount: (totals) => totals.open,
+    headline: "项目应付",
     includeItems: true
   }
 };

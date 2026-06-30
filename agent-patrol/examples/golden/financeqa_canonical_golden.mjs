@@ -63,20 +63,17 @@ const TEMPLATE_DEFINITIONS = {
     amountLabels: ["已收票未付款", "已收票但未付款"]
   },
   finance_unpaid_projects: {
-    metric: "已收票未付款",
-    query: ({ end }) => `${formatZhMonth(PERIOD_START)}至${formatZhMonth(end)}，按项目列出已收票未付款金额。`,
+    metric: "项目应付",
+    query: ({ end }) => `${formatZhMonth(PERIOD_START)}至${formatZhMonth(end)}，按项目列出应付未付金额。`,
     amountPaths: [
-      ["data", "contract_summary", "invoiced_unpaid_amount"],
-      ["data", "project_summary", "invoiced_unpaid_amount"],
-      ["data", "metrics", "已收票未付款"],
-      ["data", "metrics", "已收票但未付款"],
       ["data", "contract_summary", "payable_amount"],
       ["data", "project_summary", "payable_amount"],
       ["data", "metrics", "未付款"],
       ["data", "metrics", "项目应付"],
+      ["data", "metrics", "应付未付"],
       ["data", "metrics", "项目成本"]
     ],
-    amountLabels: ["已收票未付款", "已收票但未付款", "未付款", "项目应付", "项目成本", "应付未付"]
+    amountLabels: ["项目应付", "应付未付", "未付款", "项目成本"]
   }
 };
 
