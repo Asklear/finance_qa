@@ -273,7 +273,7 @@ func buildCostDetailSentence(items []contractAggregateOpenItem, question string)
 }
 
 func buildCostPayableDetailSentence(items []contractAggregateOpenItem, question string) string {
-	openItems := filterOpenContractAggregateItems(items)
+	openItems := costPayableOpenItems(items)
 	if len(openItems) == 0 {
 		return ""
 	}

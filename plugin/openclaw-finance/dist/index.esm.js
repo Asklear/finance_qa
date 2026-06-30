@@ -464,7 +464,7 @@ let mcpClient = null;
 let mcpClientKey = "";
 let pluginRuntime = null;
 let latestFinanceQuestionForTool = "";
-const pendingFinanceSourceAtomsBySession = new Map();
+const pendingFinanceFactAtomsBySession = new Map();
 
 async function getMCPClient() {
   const config = loadPluginConfig(pluginRuntime);
@@ -616,6 +616,7 @@ function mustCallFinanceQuerySystemContext(latestQuestion, currentFacts) {
     "指标和口径标签必须从 final_answer 逐字保留；不要把“已开票未回款”“已收票未付款”“项目应收（应收未收）”“项目成本口径”“项目口径”等改写成近义词。",
     "如果本次核对结果提供了标准指标标签、业务口径或标准金额，老板可见回复必须保留这些事实原子，但仍可自然改写句式和排版。",
     "如果本次核对结果列出“老板可见回复必须出现的精确片段”，所有片段都必须在最终回复中原样出现。",
+    "如果精确片段包含“金额：... 元”，老板可见回复必须保留该元金额片段；可以额外补充万元换算，但不能只保留换算值。",
     "不要删掉 final_answer 中修饰指标的业务前缀，例如“项目成本口径”“项目口径”“应收未收”。",
     "不要把 final_answer 的 YYYY-MM 或 YYYY-MM~YYYY-MM 期间改成相对时间或其他月份；例如不能把 2025-10~2026-05 改成至今、现在或 2025-10~2026-06。",
     "来源和来源更新时间必须从 final_answer 逐字复制；不要删改文件名、sheet 名、后缀、时间格式或标点。",
@@ -718,10 +719,9 @@ function contractSummaryDetailRows(contractSummary) {
 
 function requiredBossVisibleAtoms(payload) {
   const atoms = [];
-  for (const value of [payload?.period, payload?.metric_label, payload?.total, payload?.source_note, payload?.source_update_note]) {
-    if (value === undefined || value === null || value === "") continue;
-    const atom = String(value).trim();
-    if (atom && !atoms.includes(atom)) atoms.push(atom);
+  for (const atom of financeFactAtomsFromPayload(payload)) {
+    const line = String(typeof atom === "string" ? atom : atom?.line || "").trim();
+    if (line && !atoms.includes(line)) atoms.push(line);
   }
   return atoms;
 }
@@ -756,7 +756,30 @@ function sourceAtomsFromPayload(payload) {
   return atoms;
 }
 
-function financeSourceAtomsFromToolResult(message) {
+function pushFinanceFactAtom(atoms, value, line) {
+  const key = String(value || "").trim();
+  const text = String(line || key).trim();
+  if (!key || !text) return;
+  if (atoms.some((atom) => atom.value === key || atom.line === text)) return;
+  atoms.push({ value: key, line: text });
+}
+
+function financeFactAtomsFromPayload(payload) {
+  const compact = compactFinancePayload(payload);
+  if (!compact || typeof compact !== "object") return [];
+  const atoms = [];
+  pushFinanceFactAtom(atoms, compact.period, compact.period ? `期间：${compact.period}` : "");
+  pushFinanceFactAtom(atoms, compact.metric_label, compact.metric_label ? `口径：${compact.metric_label}` : "");
+  if (compact.total !== undefined && compact.total !== null && compact.total !== "") {
+    pushFinanceFactAtom(atoms, compact.total, `金额：${compact.total} 元`);
+  }
+  for (const atom of sourceAtomsFromPayload(compact)) {
+    pushFinanceFactAtom(atoms, atom, atom);
+  }
+  return atoms;
+}
+
+function financeFactAtomsFromToolResult(message) {
   if (!message || message.role !== "toolResult") return [];
   const messageToolName = message.toolName || message.name;
   if (messageToolName && messageToolName !== "finance-query") return [];
@@ -766,10 +789,10 @@ function financeSourceAtomsFromToolResult(message) {
   if (!payload || typeof payload !== "object") return [];
   const payloadToolName = payload.bridge_meta?.tool_name || payload.tool_name;
   if (messageToolName !== "finance-query" && payloadToolName !== "finance-query") return [];
-  return sourceAtomsFromPayload(payload);
+  return financeFactAtomsFromPayload(payload);
 }
 
-function financeSourceAtomSessionKey(event, ctx) {
+function financeFactAtomSessionKey(event, ctx) {
   return String(ctx?.sessionKey || event?.sessionKey || event?.message?.sessionKey || "__default__");
 }
 
@@ -783,27 +806,30 @@ function hasAssistantToolCalls(message) {
   return false;
 }
 
-function appendMissingSourceAtoms(text, atoms) {
+function appendMissingFinanceFactAtoms(text, atoms) {
   const current = String(text || "");
-  const missing = atoms.filter((atom) => atom && !current.includes(atom));
+  const missing = atoms
+    .map((atom) => typeof atom === "string" ? { value: atom, line: atom } : atom)
+    .filter((atom) => atom?.value && atom?.line && !current.includes(atom.value) && !current.includes(atom.line))
+    .map((atom) => atom.line);
   if (!missing.length) return current;
   const base = current.trimEnd();
   const separator = base ? "\n\n" : "";
   return `${base}${separator}${missing.join("\n")}`;
 }
 
-function patchAssistantMessageWithSourceAtoms(message, atoms) {
+function patchAssistantMessageWithFinanceFactAtoms(message, atoms) {
   if (!message || message.role !== "assistant" || hasAssistantToolCalls(message)) return null;
   if (!Array.isArray(atoms) || !atoms.length) return null;
   if (typeof message.content === "string") {
-    const nextText = appendMissingSourceAtoms(message.content, atoms);
+    const nextText = appendMissingFinanceFactAtoms(message.content, atoms);
     return nextText === message.content ? message : { ...message, content: nextText };
   }
   if (!Array.isArray(message.content)) return null;
   const textIndex = message.content.map((item) => item?.type).lastIndexOf("text");
   if (textIndex < 0) return null;
   const currentText = String(message.content[textIndex]?.text || "");
-  const nextText = appendMissingSourceAtoms(currentText, atoms);
+  const nextText = appendMissingFinanceFactAtoms(currentText, atoms);
   if (nextText === currentText) return message;
   const nextContent = message.content.slice();
   nextContent[textIndex] = { ...nextContent[textIndex], text: nextText };
@@ -959,23 +985,23 @@ const plugin = {
     });
 
     api.on("before_message_write", (event, ctx) => {
-      const key = financeSourceAtomSessionKey(event, ctx);
+      const key = financeFactAtomSessionKey(event, ctx);
       const message = event?.message;
       if (message?.role === "toolResult") {
-        const atoms = financeSourceAtomsFromToolResult(message);
+        const atoms = financeFactAtomsFromToolResult(message);
         if (atoms.length) {
-          pendingFinanceSourceAtomsBySession.set(key, atoms);
+          pendingFinanceFactAtomsBySession.set(key, atoms);
         } else if (message.toolName === "finance-query") {
-          pendingFinanceSourceAtomsBySession.delete(key);
+          pendingFinanceFactAtomsBySession.delete(key);
         }
         return undefined;
       }
       if (message?.role !== "assistant") return undefined;
-      const atoms = pendingFinanceSourceAtomsBySession.get(key);
+      const atoms = pendingFinanceFactAtomsBySession.get(key);
       if (!atoms?.length) return undefined;
-      const patched = patchAssistantMessageWithSourceAtoms(message, atoms);
+      const patched = patchAssistantMessageWithFinanceFactAtoms(message, atoms);
       if (!patched) return undefined;
-      pendingFinanceSourceAtomsBySession.delete(key);
+      pendingFinanceFactAtomsBySession.delete(key);
       return { message: patched };
     });
   }

@@ -148,7 +148,7 @@ test("finance-query execute keeps clean tool query after polluted prompt hook", 
   });
 });
 
-test("before_message_write appends missing FinanceQA source atoms only", async () => {
+test("before_message_write appends missing FinanceQA fact atoms only", async () => {
   const toolCalls = [];
   await withFinancePluginHarness(toolCalls, async ({ hooks }) => {
     const beforeWrite = hooks.get("before_message_write");
@@ -202,6 +202,48 @@ test("before_message_write appends missing FinanceQA source atoms only", async (
     beforeWrite({ message: toolResult }, { sessionKey });
     const unchanged = beforeWrite({ message: alreadyHasSource }, { sessionKey })?.message;
     assert.equal(unchanged.content[0].text, alreadyHasSource.content[0].text);
+
+    const factSessionKey = "finance-fact-session";
+    beforeWrite({
+      message: {
+        role: "toolResult",
+        toolName: "finance-query",
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            final_answer: [
+              "2025-10~2026-05 老板口径先看项目汇总：项目应付（应付未付/未付款） 1887361.66 元。",
+              "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+              "来源更新时间：2026-06-29 20:02:31"
+            ].join("\n"),
+            data: {
+              period: "2025-10~2026-05",
+              metric_label: "项目应付（应付未付/未付款）",
+              total: 1887361.66,
+              source_note: "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+              source_update_note: "来源更新时间：2026-06-29 20:02:31"
+            }
+          })
+        }]
+      }
+    }, { sessionKey: factSessionKey });
+    const convertedAmountAnswer = {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: [
+          "2025-10~2026-05 项目口径应付约 188.74 万元。",
+          "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+          "来源更新时间：2026-06-29 20:02:31"
+        ].join("\n")
+      }],
+      stopReason: "stop"
+    };
+    const factPatched = beforeWrite({ message: convertedAmountAnswer }, { sessionKey: factSessionKey })?.message;
+    assert.match(factPatched.content[0].text, /金额：1887361\.66 元/);
+    assert.match(factPatched.content[0].text, /口径：项目应付（应付未付\/未付款）/);
+    assert.doesNotMatch(factPatched.content[0].text, /final_answer|finance-query|工具返回/);
 
     const nonFinance = {
       role: "assistant",

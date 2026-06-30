@@ -190,7 +190,15 @@ func (e *Engine) contractFinanceGroupOwnerPredicate(spec contractFinanceTotalsSp
 func (e *Engine) hasContractFinanceGroupOwnerColumns(spec contractFinanceTotalsSpec) bool {
 	groupCols := e.tableColumns(spec.GroupTable)
 	memberCols := e.tableColumns(spec.GroupMemberTable)
-	return groupCols["source_start_row"] && memberCols["source_row_number"]
+	if !groupCols["source_start_row"] || !memberCols["source_row_number"] {
+		return false
+	}
+	var marker int
+	query := fmt.Sprintf("SELECT 1 FROM %s WHERE source_start_row IS NOT NULL LIMIT 1", spec.GroupTable)
+	if err := e.db.QueryRow(query).Scan(&marker); err != nil {
+		return false
+	}
+	return marker == 1
 }
 
 func (e *Engine) contractFinanceGroupAmountFilter(spec contractFinanceTotalsSpec, periodFrom, periodTo, like string) (string, []any) {

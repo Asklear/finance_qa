@@ -152,7 +152,7 @@ func buildContractAggregatePayloadSummary(selection contractAggregateSelection, 
 		payload["payable_amount"] = round2(summary.CostPayable)
 		payload["invoiced_unpaid_amount"] = round2(summary.CostInvoiceOpen)
 		if len(summary.CostItems) > 0 {
-			payload["payable_open_items"] = buildCostItemPayload(filterOpenContractAggregateItems(summary.CostItems))
+			payload["payable_open_items"] = buildCostItemPayload(costPayableOpenItems(summary.CostItems))
 		}
 	}
 	if selection.IncludeInvoiceAP {
@@ -248,6 +248,10 @@ func filterOpenContractAggregateItems(items []contractAggregateOpenItem) []contr
 		}
 	}
 	return out
+}
+
+func costPayableOpenItems(items []contractAggregateOpenItem) []contractAggregateOpenItem {
+	return filterOpenContractAggregateItems(rollupSingleContractMergedOpenItems(items))
 }
 
 func buildCostItemPayload(items []contractAggregateOpenItem) []map[string]any {

@@ -77,7 +77,7 @@ func TestGetLatestPeriodAnchorFallsBackToCurrentMonthWhenOnlyFutureMonthsExist(t
 	}
 
 	got := engine.getLatestPeriodAnchor()
-	now := time.Now().UTC()
+	now := time.Now()
 	want := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Fatalf("latest anchor = %s, want current month fallback %s", got.Format("2006-01-02"), want.Format("2006-01-02"))

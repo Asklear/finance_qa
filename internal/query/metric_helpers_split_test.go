@@ -39,9 +39,11 @@ func TestDetectRequestedMetricsSeparatesProjectPayableAggregateFromInvoiceRoster
 		want     string
 	}{
 		{question: "按项目成本口径，从2025年10月起到上一个完整自然月月底未付款合计多少？", want: "应付"},
-		{question: "25年至26年未付款的项目及对应金额有哪些？", want: "已收票未付款"},
+		{question: "25年至26年未付款的项目及对应金额有哪些？", want: "应付"},
+		{question: "列一下2025年至2026年还有未付款的项目和金额。", want: "应付"},
 		{question: "按项目口径应付未付还有多少？", want: "应付"},
 		{question: "供应商已收票但未付款还有多少？", want: "已收票未付款"},
+		{question: "25年至26年已收票未付款的项目及对应金额有哪些？", want: "已收票未付款"},
 	}
 
 	for _, tc := range cases {

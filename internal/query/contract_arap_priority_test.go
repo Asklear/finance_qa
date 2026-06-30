@@ -457,7 +457,7 @@ func TestAllProjectPayableQuestionIsNotHijackedByPaymentCounterparty(t *testing.
 	}
 }
 
-func TestUnpaidProjectRosterQuestionReturnsInvoiceOpenItems(t *testing.T) {
+func TestUnpaidProjectRosterQuestionReturnsProjectPayableItems(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
 	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 20, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
@@ -469,32 +469,38 @@ func TestUnpaidProjectRosterQuestionReturnsInvoiceOpenItems(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
 	}
-	if got := res.Data["total"]; got != float64(300) {
-		t.Fatalf("total = %v, want supplier invoice unpaid 300", got)
+	if got := res.Data["metric"]; got != "应付" {
+		t.Fatalf("metric = %v, want 应付; message=%s data=%+v", got, res.Message, res.Data)
 	}
-	if !strings.Contains(res.Message, "测试供应商") || !strings.Contains(res.Message, "测试供应商项目") || !strings.Contains(res.Message, "未付款 300.00") {
-		t.Fatalf("message should list unpaid supplier-side project items, got %q", res.Message)
+	if got := res.Data["total"]; got != float64(500) {
+		t.Fatalf("total = %v, want project payable 500", got)
+	}
+	if !strings.Contains(res.Message, "项目应付（应付未付/未付款） 500.00") {
+		t.Fatalf("message should answer project payable, got %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "测试供应商-测试供应商项目 项目成本 700.00 元、已付款 200.00 元、未付款 500.00 元") {
+		t.Fatalf("message should list project payable items, got %q", res.Message)
 	}
 	summary, ok := res.Data["contract_summary"].(map[string]any)
 	if !ok {
 		t.Fatalf("contract_summary missing: %+v", res.Data)
 	}
-	items, ok := summary["invoice_unpaid_items"].([]map[string]any)
+	items, ok := summary["payable_open_items"].([]map[string]any)
 	if !ok || len(items) != 1 {
-		t.Fatalf("invoice_unpaid_items = %#v, want one invoice unpaid item", summary["invoice_unpaid_items"])
+		t.Fatalf("payable_open_items = %#v, want one project payable item", summary["payable_open_items"])
 	}
 	if got := items[0]["supplier_name"]; got != "测试供应商" {
-		t.Fatalf("invoice_unpaid_items[0].supplier_name = %v", got)
+		t.Fatalf("payable_open_items[0].supplier_name = %v", got)
 	}
 	if got := items[0]["contract_content"]; got != "测试供应商项目" {
-		t.Fatalf("invoice_unpaid_items[0].contract_content = %v", got)
+		t.Fatalf("payable_open_items[0].contract_content = %v", got)
 	}
-	if got := items[0]["open_amount"]; got != float64(300) {
-		t.Fatalf("invoice_unpaid_items[0].open_amount = %v, want 300", got)
+	if got := items[0]["unpaid_amount"]; got != float64(500) {
+		t.Fatalf("payable_open_items[0].unpaid_amount = %v, want 500", got)
 	}
 }
 
-func TestUnpaidProjectRosterQuestionUsesInvoiceOpenItems(t *testing.T) {
+func TestExplicitReceivedInvoiceUnpaidProjectRosterUsesInvoiceOpenItems(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -524,7 +530,7 @@ func TestUnpaidProjectRosterQuestionUsesInvoiceOpenItems(t *testing.T) {
 	}
 	defer engine.Close()
 
-	res := engine.Query("25年至26年未付款的项目及对应金额有哪些？")
+	res := engine.Query("25年至26年已收票未付款的项目及对应金额有哪些？")
 	if !res.Success {
 		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
 	}
@@ -535,7 +541,7 @@ func TestUnpaidProjectRosterQuestionUsesInvoiceOpenItems(t *testing.T) {
 		t.Fatalf("total = %v, want supplier invoice unpaid 600", got)
 	}
 	if !strings.Contains(res.Message, "已收票未付款 600.00") {
-		t.Fatalf("roster should use supplier invoice unpaid metric, got %q", res.Message)
+		t.Fatalf("explicit received-invoice roster should use supplier invoice unpaid metric, got %q", res.Message)
 	}
 	for _, want := range []string{
 		"测试供应商-测试供应商项目",
@@ -594,7 +600,7 @@ func TestUnpaidProjectRosterRollsSingleContractMergedRowsIntoProjectLabel(t *tes
 	if !res.Success {
 		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
 	}
-	if !strings.Contains(res.Message, "单合同供应商-单合同项目 已收票 1500.00 元、已付款 0.00 元、未付款 1500.00 元") {
+	if !strings.Contains(res.Message, "单合同供应商-单合同项目 项目成本 1500.00 元、已付款 0.00 元、未付款 1500.00 元") {
 		t.Fatalf("message should roll direct and single-contract merged rows into the project label, got %q", res.Message)
 	}
 	if strings.Contains(res.Message, "合并行合计（覆盖合同/项目：单合同项目）") {
@@ -604,21 +610,21 @@ func TestUnpaidProjectRosterRollsSingleContractMergedRowsIntoProjectLabel(t *tes
 	if !ok {
 		t.Fatalf("contract_summary missing: %+v", res.Data)
 	}
-	items, ok := summary["invoice_unpaid_items"].([]map[string]any)
+	items, ok := summary["payable_open_items"].([]map[string]any)
 	if !ok {
-		t.Fatalf("invoice_unpaid_items = %#v, want item payload", summary["invoice_unpaid_items"])
+		t.Fatalf("payable_open_items = %#v, want item payload", summary["payable_open_items"])
 	}
 	var found bool
 	for _, item := range items {
 		if item["supplier_name"] == "单合同供应商" && item["contract_content"] == "单合同项目" {
 			found = true
-			if got := item["open_amount"]; got != float64(1500) {
-				t.Fatalf("single-contract item open_amount = %v, want 1500", got)
+			if got := item["unpaid_amount"]; got != float64(1500) {
+				t.Fatalf("single-contract item unpaid_amount = %v, want 1500", got)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("invoice_unpaid_items should include rolled-up single-contract item, got %#v", items)
+		t.Fatalf("payable_open_items should include rolled-up single-contract item, got %#v", items)
 	}
 }
 
@@ -648,8 +654,8 @@ func TestUnpaidProjectRosterLooseYearRangeDoesNotResolveSyntheticEntity(t *testi
 	if got := res.Data["source_priority"]; got != "contract_first" {
 		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
 	}
-	if got := res.Data["total"]; got != float64(300) {
-		t.Fatalf("total = %v, want supplier invoice unpaid 300", got)
+	if got := res.Data["total"]; got != float64(500) {
+		t.Fatalf("total = %v, want project payable 500", got)
 	}
 	spec, ok := res.Data["query_spec"].(map[string]any)
 	if !ok {
@@ -676,8 +682,11 @@ func TestUnpaidProjectRosterLooseYearRangeDoesNotResolveSyntheticEntity(t *testi
 	if strings.Contains(res.Message, "没有识别到合同/项目主体") || strings.Contains(res.Message, "合同口径当前不能直接回答") {
 		t.Fatalf("project roster question should answer company-scope payable items, got %q", res.Message)
 	}
-	if !strings.Contains(res.Message, "测试供应商") || !strings.Contains(res.Message, "测试供应商项目") || !strings.Contains(res.Message, "未付款 300.00") {
-		t.Fatalf("message should list unpaid supplier-side project items, got %q", res.Message)
+	if !strings.Contains(res.Message, "项目应付（应付未付/未付款） 500.00") {
+		t.Fatalf("message should answer project payable, got %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "测试供应商-测试供应商项目 项目成本 700.00 元、已付款 200.00 元、未付款 500.00 元") {
+		t.Fatalf("message should list project payable items, got %q", res.Message)
 	}
 }
 
@@ -729,11 +738,14 @@ func TestUnpaidProjectRosterLooseYearRangeUsesActualProjectDataStart(t *testing.
 	if got := res.Data["requested_period"]; got != "2025-01~2026-05" {
 		t.Fatalf("requested_period = %v, want original broad request 2025-01~2026-05", got)
 	}
-	if !strings.Contains(res.Message, "2025-10~2026-05") || !strings.Contains(res.Message, "已收票未付款 300.00") {
-		t.Fatalf("message should use actual data range and invoice-unpaid amount, got %q", res.Message)
+	if !strings.Contains(res.Message, "2025-10~2026-05") || !strings.Contains(res.Message, "项目应付（应付未付/未付款） 500.00") {
+		t.Fatalf("message should use actual data range and project payable amount, got %q", res.Message)
 	}
-	if !strings.Contains(res.Message, "项目成本口径") {
-		t.Fatalf("message should disclose supplier-side project cost basis, got %q", res.Message)
+	if !strings.Contains(res.Message, "项目成本") {
+		t.Fatalf("message should disclose project payable cost basis, got %q", res.Message)
+	}
+	if got, _ := res.Data["business_basis"].(string); !strings.Contains(got, "项目成本口径") || !strings.Contains(got, "应付未付") {
+		t.Fatalf("business_basis = %q, want project payable cost basis; data=%+v", got, res.Data)
 	}
 }
 
@@ -782,15 +794,18 @@ func TestUnpaidProjectRosterFullYearRangeUsesActualProjectDataStart(t *testing.T
 	if got := spec["period_to"]; got != "2026-05" {
 		t.Fatalf("query_spec.period_to = %v, want 2026-05", got)
 	}
-	if !strings.Contains(res.Message, "已收票未付款 300.00") {
-		t.Fatalf("message should answer supplier-side unpaid project items, got %q", res.Message)
+	if !strings.Contains(res.Message, "项目应付（应付未付/未付款） 500.00") {
+		t.Fatalf("message should answer project payable items, got %q", res.Message)
 	}
-	if !strings.Contains(res.Message, "项目成本口径") {
-		t.Fatalf("message should disclose supplier-side project cost basis, got %q", res.Message)
+	if !strings.Contains(res.Message, "项目成本") {
+		t.Fatalf("message should disclose project payable cost basis, got %q", res.Message)
+	}
+	if got, _ := res.Data["business_basis"].(string); !strings.Contains(got, "项目成本口径") || !strings.Contains(got, "应付未付") {
+		t.Fatalf("business_basis = %q, want project payable cost basis; data=%+v", got, res.Data)
 	}
 }
 
-func TestNoPaymentProjectRosterUsesSupplierInvoiceOpenItems(t *testing.T) {
+func TestNoPaymentProjectRosterUsesProjectPayableItems(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
 	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.June, 28, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
@@ -802,14 +817,17 @@ func TestNoPaymentProjectRosterUsesSupplierInvoiceOpenItems(t *testing.T) {
 	if !res.Success {
 		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
 	}
-	if got := res.Data["metric"]; got != "已收票未付款" {
-		t.Fatalf("metric = %v, want 已收票未付款; message=%s data=%+v", got, res.Message, res.Data)
+	if got := res.Data["metric"]; got != "应付" {
+		t.Fatalf("metric = %v, want 应付; message=%s data=%+v", got, res.Message, res.Data)
 	}
-	if got := res.Data["total"]; got != float64(300) {
-		t.Fatalf("total = %v, want supplier invoice-unpaid 300", got)
+	if got := res.Data["total"]; got != float64(500) {
+		t.Fatalf("total = %v, want project payable 500", got)
 	}
 	if strings.Contains(res.Message, "项目结算") || strings.Contains(res.Message, "未回款") {
 		t.Fatalf("no-payment project roster should not answer from revenue receivable side, got %q", res.Message)
+	}
+	if !strings.Contains(res.Message, "项目应付（应付未付/未付款） 500.00") {
+		t.Fatalf("no-payment project roster should answer project payable, got %q", res.Message)
 	}
 }
 

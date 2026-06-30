@@ -116,10 +116,10 @@ func looksLikeSupplierInvoiceUnpaidQuestion(q string) bool {
 }
 
 func looksLikeSupplierInvoiceUnpaidRosterQuestion(q string) bool {
-	if containsAny(q, []string{"未回款", "未收款", "客户未付款", "客户没付款", "客户未支付", "应收"}) {
+	if containsAny(q, []string{"应收"}) {
 		return false
 	}
-	if !containsAny(q, []string{"未付款", "未支付", "未付", "没付款", "没支付", "没有付款", "没有支付"}) {
+	if !looksLikeSupplierInvoiceUnpaidQuestion(q) {
 		return false
 	}
 	if !containsAny(q, []string{"项目", "合同", "供应商", "采购", "成本"}) {
