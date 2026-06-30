@@ -16,6 +16,9 @@ func shouldUseContractDimensionWithConfig(question string, cfg RuleConfig) bool 
 	if !strings.Contains(q, "合同") {
 		return false
 	}
+	if shouldForceCompanyScopeContractAggregateWithConfig(q, cfg) {
+		return false
+	}
 	entity := extractNamedEntityFromQuestion(q)
 	hasEntity := isRealishQueryEntity(entity)
 	if shouldUseContractAggregateAnalysisQuestion(q, cfg) && !hasEntity {
@@ -64,6 +67,9 @@ func shouldUseCompanyScopeContractAggregateWithConfig(question string, cfg RuleC
 	if !containsAny(q, []string{"合同", "项目"}) {
 		return false
 	}
+	if shouldForceCompanyScopeContractAggregateWithConfig(q, cfg) {
+		return true
+	}
 	entity := extractNamedEntityFromQuestion(q)
 	if looksLikeBossRewriteNonEntity(entity) {
 		entity = ""
@@ -72,6 +78,30 @@ func shouldUseCompanyScopeContractAggregateWithConfig(question string, cfg RuleC
 		return false
 	}
 	if shouldUseExplicitFinancialAccountQuestion(q) {
+		return false
+	}
+	metric := detectBossMetricWithConfig(q, cfg)
+	if isBossContractFirstMetric(metric) {
+		return true
+	}
+	return containsAny(q, []string{
+		"结算", "执行", "情况", "多少", "有哪些", "哪些", "明细", "列表", "分别", "汇总", "统计",
+	})
+}
+
+func shouldForceCompanyScopeContractAggregate(question string) bool {
+	return shouldForceCompanyScopeContractAggregateWithConfig(question, getRuleConfig())
+}
+
+func shouldForceCompanyScopeContractAggregateWithConfig(question string, cfg RuleConfig) bool {
+	q := strings.TrimSpace(question)
+	if q == "" || shouldUseExplicitFinancialAccountQuestion(q) {
+		return false
+	}
+	if !containsAny(q, []string{
+		"所有项目", "全部项目", "全量项目",
+		"所有合同", "全部合同", "全量合同",
+	}) {
 		return false
 	}
 	metric := detectBossMetricWithConfig(q, cfg)

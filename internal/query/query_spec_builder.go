@@ -20,6 +20,9 @@ func buildQuerySpec(question string, anchor time.Time, cfg RuleConfig) QuerySpec
 	if looksLikeBossRewriteNonEntity(entity) {
 		entity = ""
 	}
+	if shouldForceCompanyScopeContractAggregateWithConfig(q, cfg) {
+		entity = ""
+	}
 	rewrite := RewriteBossQueryWithConfig(q, anchor, cfg)
 
 	spec := QuerySpec{

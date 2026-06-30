@@ -36,6 +36,9 @@ func (e *Engine) normalizeQuestionAndResolveCompany(question string) string {
 }
 
 func (e *Engine) resolveQueryEntity(q string, spec QuerySpec) string {
+	if shouldForceCompanyScopeContractAggregateWithConfig(q, e.currentRuleConfig()) {
+		return ""
+	}
 	entity := spec.Entity
 	if shouldResolveEntityDeeply(spec) {
 		if resolved := e.resolveEntityByScoredCandidates(q); resolved != "" {

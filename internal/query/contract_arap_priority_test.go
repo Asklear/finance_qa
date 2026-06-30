@@ -399,6 +399,64 @@ func TestProjectPayableRangeToLastCompleteNaturalMonthKeepsRequestedPeriod(t *te
 	}
 }
 
+func TestAllProjectPayableQuestionIsNotHijackedByPaymentCounterparty(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	stmts := []string{
+		`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-PAY-001','中金支付有限公司','支付通道服务')`,
+		`INSERT INTO bank_statement(company, transaction_date, transaction_time, transaction_type, debit_amount, credit_amount, balance, summary, counterparty_name, counterparty_account) VALUES ('测试公司','2026-05-31','','收入',0,0.55,0,'测试小额回款','中金支付有限公司','')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v\n%s", err, stmt)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.June, 28, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("按项目应付口径，从2025年10月到上个完整自然月月底，所有项目应付未付有多少？")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["source_priority"]; got != "contract_first" {
+		t.Fatalf("source_priority = %v, want contract_first; message=%s data=%+v", got, res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(500) {
+		t.Fatalf("total = %v, want company-scope project payable 500", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["entity"]; got != "" {
+		t.Fatalf("query_spec.entity = %v, want empty company-scope aggregate", got)
+	}
+	if got := spec["query_family"]; got != QueryFamilyCoreMetric {
+		t.Fatalf("query_family = %v, want %v", got, QueryFamilyCoreMetric)
+	}
+	if got := spec["needs_contract_dimension"]; got != false {
+		t.Fatalf("needs_contract_dimension = %v, want false", got)
+	}
+	for _, want := range []string{"2025-10~2026-05", "项目应付（应付未付/未付款） 500.00"} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("message should include %q, got %q", want, res.Message)
+		}
+	}
+	if strings.Contains(res.Message, "中金支付有限公司") || strings.Contains(res.Message, "财务账/流水口径") {
+		t.Fatalf("company-scope project payable should not fall back to payment counterparty, got %q", res.Message)
+	}
+}
+
 func TestUnpaidProjectRosterQuestionReturnsInvoiceOpenItems(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
 	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 20, 0, 0, 0, 0, time.UTC)))

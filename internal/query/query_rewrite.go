@@ -86,6 +86,9 @@ func RewriteBossQueryWithConfig(question string, anchor time.Time, cfg RuleConfi
 	if looksLikeBossRewriteNonEntity(entity) {
 		entity = ""
 	}
+	if shouldForceCompanyScopeContractAggregateWithConfig(q, cfg) {
+		entity = ""
+	}
 	metric := detectBossMetricWithConfig(q, cfg)
 	perspective, sourceConstraint := detectBossPerspectiveAndSourceWithConfig(q, metric, cfg)
 	scope := detectBossScopeWithConfig(q, entity, cfg)
