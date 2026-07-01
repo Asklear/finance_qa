@@ -90,3 +90,55 @@ func TestFinalizeQueryResultCarriesSemanticFamiliesOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestFinalizeQueryResultAppliesPeriodOverrideToBossRewrite(t *testing.T) {
+	ctx := queryExecutionContext{
+		spec: QuerySpec{
+			QueryFamily:             QueryFamilyCoreMetric,
+			MetricKind:              MetricKindRevenue,
+			PeriodFrom:              "2026-07",
+			PeriodTo:                "2026-07",
+			TimeScope:               TimeScopeMonth,
+			PreferContractAggregate: true,
+			BossRewrite: BossQueryRewrite{
+				Metric:              BossMetricRevenue,
+				Scope:               BossScopeCompany,
+				PeriodFrom:          "2026-07",
+				PeriodTo:            "2026-07",
+				Granularity:         BossGranularityAggregate,
+				Perspective:         BossPerspectiveContractFirst,
+				RequiresSourceProbe: true,
+			},
+		},
+	}
+
+	res := finalizeQueryResult(ctx, Result{
+		Success: true,
+		Message: "2026-06 项目结算收入 100.00 元。",
+		Data: map[string]any{
+			"source_priority": "contract_first",
+			"query_spec_overrides": map[string]any{
+				"period_from": "2026-06",
+				"period_to":   "2026-06",
+				"time_scope":   string(TimeScopeMonth),
+			},
+		},
+	})
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["period_to"]; got != "2026-06" {
+		t.Fatalf("query_spec.period_to = %v, want 2026-06", got)
+	}
+	rewrite, ok := spec["boss_rewrite"].(map[string]any)
+	if !ok {
+		t.Fatalf("boss_rewrite missing: %+v", spec)
+	}
+	if got := rewrite["period_to"]; got != "2026-06" {
+		t.Fatalf("boss_rewrite.period_to = %v, want actual business period 2026-06", got)
+	}
+	if got := rewrite["period_from"]; got != "2026-06" {
+		t.Fatalf("boss_rewrite.period_from = %v, want actual business period 2026-06", got)
+	}
+}

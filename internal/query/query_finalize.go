@@ -114,12 +114,21 @@ func applyQuerySpecOverrides(spec QuerySpec, data map[string]any) QuerySpec {
 	}
 	if periodFrom := strings.TrimSpace(anyToString(overrides["period_from"])); periodFrom != "" {
 		spec.PeriodFrom = periodFrom
+		if spec.BossRewrite.Metric != "" {
+			spec.BossRewrite.PeriodFrom = periodFrom
+		}
 	}
 	if periodTo := strings.TrimSpace(anyToString(overrides["period_to"])); periodTo != "" {
 		spec.PeriodTo = periodTo
+		if spec.BossRewrite.Metric != "" {
+			spec.BossRewrite.PeriodTo = periodTo
+		}
 	}
 	if subPeriod := strings.TrimSpace(anyToString(overrides["sub_period"])); subPeriod != "" {
 		spec.SubPeriod = subPeriod
+		if spec.BossRewrite.Metric != "" {
+			spec.BossRewrite.SubPeriod = subPeriod
+		}
 	}
 	if timeScope := strings.TrimSpace(anyToString(overrides["time_scope"])); timeScope != "" {
 		spec.TimeScope = TimeScope(timeScope)
