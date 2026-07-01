@@ -42,6 +42,10 @@ func (e *Engine) resolveContractAggregatePeriodCoverage(spec QuerySpec, requeste
 				if projectFrom, projectOK := e.earliestContractProjectDataPeriod(coverage.RequestedFrom, coverage.RequestedTo, like); projectOK && projectFrom < actualFrom {
 					actualFrom = projectFrom
 				}
+				if contractAggregateShouldPreserveRequestedBusinessCutoff(spec) &&
+					contractAggregateCanExtendActualToBusinessCutoff(actualTo, coverage.RequestedTo) {
+					actualTo = coverage.RequestedTo
+				}
 				coverage.ActualFrom = actualFrom
 				coverage.ActualTo = actualTo
 				if coverage.Adjusted() {
@@ -83,6 +87,66 @@ func (e *Engine) resolveContractAggregatePeriodCoverage(spec QuerySpec, requeste
 
 func contractAggregateShouldUseActualDataBounds(question string) bool {
 	return contractAggregateWantsDetailItems(question)
+}
+
+func contractAggregateShouldPreserveRequestedBusinessCutoff(spec QuerySpec) bool {
+	q := strings.TrimSpace(spec.OriginalQuestion)
+	if q == "" {
+		return false
+	}
+	if contractAggregateHasRelativeCurrentPeriodToken(q) {
+		return true
+	}
+	return contractAggregateLooseYearRangeEndsAtAsOfYear(q, spec.PeriodTo, spec.AsOf)
+}
+
+func contractAggregateLooseYearRangeEndsAtAsOfYear(q, requestedTo, asOf string) bool {
+	requestedYear, _ := parsePeriod(requestedTo)
+	asOfYear := contractAggregateYearFromAsOf(asOf)
+	if requestedYear == 0 || asOfYear == 0 || requestedYear != asOfYear {
+		return false
+	}
+	m := regexp.MustCompile(`(?i)(20\d{2}|\d{2})\s*年?\s*(?:到|至|-|~)\s*(20\d{2}|\d{2})\s*年`).FindStringSubmatch(q)
+	if len(m) != 3 {
+		return false
+	}
+	return contractAggregateNormalizeYearToken(m[2]) == asOfYear
+}
+
+func contractAggregateCanExtendActualToBusinessCutoff(actualTo, requestedTo string) bool {
+	if strings.TrimSpace(actualTo) == "" || strings.TrimSpace(requestedTo) == "" || requestedTo <= actualTo {
+		return false
+	}
+	return contractAggregateMonthGap(actualTo, requestedTo) == 1
+}
+
+func contractAggregateMonthGap(from, to string) int {
+	fromYear, fromMonth := parsePeriod(from)
+	toYear, toMonth := parsePeriod(to)
+	if fromYear == 0 || fromMonth == 0 || toYear == 0 || toMonth == 0 {
+		return -1
+	}
+	return (toYear-fromYear)*12 + (toMonth - fromMonth)
+}
+
+func contractAggregateYearFromAsOf(asOf string) int {
+	asOf = strings.TrimSpace(asOf)
+	if len(asOf) < 4 {
+		return 0
+	}
+	year := mustAtoi(asOf[:4])
+	if year < 2000 {
+		return 0
+	}
+	return year
+}
+
+func contractAggregateNormalizeYearToken(raw string) int {
+	year := mustAtoi(strings.TrimSpace(raw))
+	if year >= 0 && year < 100 {
+		return 2000 + year
+	}
+	return year
 }
 
 func contractFinanceSpecsForRequestedMetrics(requestedMetrics []string) []contractFinanceTotalsSpec {
