@@ -465,6 +465,7 @@ let mcpClientKey = "";
 let pluginRuntime = null;
 let latestFinanceQuestionForTool = "";
 const pendingFinanceFactAtomsBySession = new Map();
+const pendingFinanceFactPayloadsBySession = new Map();
 
 async function getMCPClient() {
   const config = loadPluginConfig(pluginRuntime);
@@ -657,19 +658,19 @@ function compactFinancePayload(payload) {
     period: data.period || payload.period,
     source_priority: data.source_priority || payload.source_priority,
     requested_metrics: data.requested_metrics || payload.requested_metrics,
-    role: data.role,
-    account_view: data.account_view,
-    cash_view: data.cash_view,
-    contract_summary: data.contract_summary,
-    customer_summary: data.customer_summary,
-    supplier_summary: data.supplier_summary,
-    tax_summary: data.tax_summary,
-    source_documents: data.source_documents,
-    items: data.items,
-    detail_items: data.detail_items,
-    source_cell_notes: data.source_cell_notes,
-    remarks: data.remarks,
-    contract_continuity_candidates: data.contract_continuity_candidates
+    role: data.role || payload.role,
+    account_view: data.account_view || payload.account_view,
+    cash_view: data.cash_view || payload.cash_view,
+    contract_summary: data.contract_summary || payload.contract_summary,
+    customer_summary: data.customer_summary || payload.customer_summary,
+    supplier_summary: data.supplier_summary || payload.supplier_summary,
+    tax_summary: data.tax_summary || payload.tax_summary,
+    source_documents: data.source_documents || payload.source_documents,
+    items: data.items || payload.items,
+    detail_items: data.detail_items || payload.detail_items,
+    source_cell_notes: data.source_cell_notes || payload.source_cell_notes,
+    remarks: data.remarks || payload.remarks,
+    contract_continuity_candidates: data.contract_continuity_candidates || payload.contract_continuity_candidates
   };
 }
 
@@ -842,6 +843,103 @@ function replaceMalformedFinanceAmountAtoms(text, atoms) {
   return nextText;
 }
 
+function formatFinanceMoney(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value ?? "").trim();
+  return num.toFixed(2);
+}
+
+function sameFinanceAmount(a, b) {
+  const left = Number(String(a || "").replace(/,/g, ""));
+  const right = Number(String(b || "").replace(/,/g, ""));
+  return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) < 0.005;
+}
+
+function sourceUpdateAtomLine(atoms) {
+  for (const atom of atoms || []) {
+    const line = String(typeof atom === "string" ? atom : atom?.line || "").trim();
+    if (line.startsWith("来源更新时间：") || line.startsWith("来源更新时间:")) return line;
+  }
+  return "";
+}
+
+function hasConflictingFinanceFactAtoms(text, atoms) {
+  const rawText = String(text || "");
+  const expectedAmount = amountAtomValue((atoms || []).find((atom) => {
+    const line = String(typeof atom === "string" ? atom : atom?.line || "").trim();
+    return line.startsWith("金额：") || line.startsWith("金额:");
+  }));
+  if (expectedAmount) {
+    for (const match of rawText.matchAll(/金额[：:]\s*([0-9][0-9,]*(?:\.\d+)?)/g)) {
+      if (!sameFinanceAmount(match[1], expectedAmount)) return true;
+    }
+  }
+  const expectedSourceUpdate = sourceUpdateAtomLine(atoms);
+  if (expectedSourceUpdate) {
+    for (const match of rawText.matchAll(/来源更新时间[：:]\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}/g)) {
+      if (match[0].trim() !== expectedSourceUpdate) return true;
+    }
+  }
+  return false;
+}
+
+function financeDetailLine(row) {
+  if (!row || typeof row !== "object") return "";
+  const entity = String(row.supplier_name || row.customer_name || row.entity || "").trim();
+  const content = String(row.contract_content || row.project_name || "").trim();
+  const label = [entity, content].filter(Boolean).join("-");
+  if (!label) return "";
+  if (row.unpaid_amount !== undefined && row.unpaid_amount !== null) {
+    const parts = [];
+    if (row.settlement_amount !== undefined && row.settlement_amount !== null) parts.push(`项目成本 ${formatFinanceMoney(row.settlement_amount)} 元`);
+    if (row.paid_amount !== undefined && row.paid_amount !== null) parts.push(`已付款 ${formatFinanceMoney(row.paid_amount)} 元`);
+    parts.push(`未付款 ${formatFinanceMoney(row.unpaid_amount)} 元`);
+    return `${label} ${parts.join("、")}`;
+  }
+  if (row.open_amount !== undefined && row.open_amount !== null) {
+    const parts = [];
+    if (row.invoice_amount !== undefined && row.invoice_amount !== null) parts.push(`已收票 ${formatFinanceMoney(row.invoice_amount)} 元`);
+    if (row.paid_amount !== undefined && row.paid_amount !== null) parts.push(`已付款 ${formatFinanceMoney(row.paid_amount)} 元`);
+    parts.push(`未付款 ${formatFinanceMoney(row.open_amount)} 元`);
+    return `${label} ${parts.join("、")}`;
+  }
+  if (row.unreceived_amount !== undefined && row.unreceived_amount !== null) {
+    const parts = [];
+    if (row.settlement_amount !== undefined && row.settlement_amount !== null) parts.push(`结算 ${formatFinanceMoney(row.settlement_amount)} 元`);
+    if (row.received_amount !== undefined && row.received_amount !== null) parts.push(`已回款 ${formatFinanceMoney(row.received_amount)} 元`);
+    parts.push(`未回款 ${formatFinanceMoney(row.unreceived_amount)} 元`);
+    return `${label} ${parts.join("、")}`;
+  }
+  return "";
+}
+
+function canonicalFinanceAnswerFromPayload(payload) {
+  const compact = compactFinancePayload(payload);
+  if (!compact || typeof compact !== "object") return "";
+  const lines = [];
+  if (compact.period) lines.push(`期间：${compact.period}`);
+  if (compact.metric_label) lines.push(`口径：${compact.metric_label}`);
+  if (compact.total !== undefined && compact.total !== null && compact.total !== "") {
+    lines.push(`金额：${formatFinanceMoney(compact.total)} 元`);
+  }
+  const summary = compact.contract_summary && typeof compact.contract_summary === "object" ? compact.contract_summary : {};
+  if (summary.cost_settlement !== undefined && summary.cost_paid !== undefined) {
+    lines.push(`补充：项目成本 ${formatFinanceMoney(summary.cost_settlement)} 元、已付款 ${formatFinanceMoney(summary.cost_paid)} 元。`);
+  } else if (summary.settlement_amount !== undefined && summary.received_amount !== undefined) {
+    lines.push(`补充：项目结算 ${formatFinanceMoney(summary.settlement_amount)} 元、已回款 ${formatFinanceMoney(summary.received_amount)} 元。`);
+  }
+  const detailLines = contractSummaryDetailRows(summary).map(financeDetailLine).filter(Boolean);
+  if (detailLines.length) {
+    lines.push("明细：");
+    detailLines.forEach((line, index) => lines.push(`${index + 1}. ${line}`));
+  }
+  const sourceNote = String(compact.source_note || "").trim();
+  const sourceUpdateNote = normalizedSourceUpdateNote(compact.source_update_note);
+  if (sourceNote) lines.push(sourceNote);
+  if (sourceUpdateNote) lines.push(sourceUpdateNote);
+  return lines.filter(Boolean).join("\n");
+}
+
 function hasAssistantToolCalls(message) {
   if (!message || message.role !== "assistant") return false;
   if (Array.isArray(message.toolCalls) && message.toolCalls.length) return true;
@@ -852,8 +950,11 @@ function hasAssistantToolCalls(message) {
   return false;
 }
 
-function appendMissingFinanceFactAtoms(text, atoms) {
-  const current = replaceMalformedFinanceAmountAtoms(replaceSingleConflictingPeriodRange(String(text || ""), atoms), atoms);
+function appendMissingFinanceFactAtoms(text, atoms, payload) {
+  let current = replaceMalformedFinanceAmountAtoms(replaceSingleConflictingPeriodRange(String(text || ""), atoms), atoms);
+  if (payload && hasConflictingFinanceFactAtoms(current, atoms)) {
+    current = canonicalFinanceAnswerFromPayload(payload) || current;
+  }
   const missing = atoms
     .map((atom) => typeof atom === "string" ? { value: atom, line: atom } : atom)
     .filter((atom) => atom?.value && atom?.line && !current.includes(atom.value) && !current.includes(atom.line))
@@ -921,30 +1022,30 @@ function replaceSingleConflictingPeriodRange(text, atoms) {
   return nextText;
 }
 
-function patchAssistantMessageWithFinanceFactAtoms(message, atoms) {
+function patchAssistantMessageWithFinanceFactAtoms(message, atoms, payload) {
   if (!message || message.role !== "assistant" || hasAssistantToolCalls(message)) return null;
   if (!Array.isArray(atoms) || !atoms.length) return null;
   if (typeof message.content === "string") {
-    const nextText = appendMissingFinanceFactAtoms(message.content, atoms);
+    const nextText = appendMissingFinanceFactAtoms(message.content, atoms, payload);
     return nextText === message.content ? message : { ...message, content: nextText };
   }
   if (!Array.isArray(message.content)) return null;
   const textIndex = message.content.map((item) => item?.type).lastIndexOf("text");
   if (textIndex < 0) return null;
   const currentText = String(message.content[textIndex]?.text || "");
-  const nextText = appendMissingFinanceFactAtoms(currentText, atoms);
+  const nextText = appendMissingFinanceFactAtoms(currentText, atoms, payload);
   if (nextText === currentText) return message;
   const nextContent = message.content.slice();
   nextContent[textIndex] = { ...nextContent[textIndex], text: nextText };
   return { ...message, content: nextContent };
 }
 
-function patchAssistantTextsWithFinanceFactAtoms(assistantTexts, atoms) {
+function patchAssistantTextsWithFinanceFactAtoms(assistantTexts, atoms, payload) {
   if (!Array.isArray(assistantTexts) || !Array.isArray(atoms) || !atoms.length) return false;
   for (let i = assistantTexts.length - 1; i >= 0; i--) {
     const currentText = assistantTexts[i];
     if (typeof currentText !== "string" || !currentText.trim()) continue;
-    const nextText = appendMissingFinanceFactAtoms(currentText, atoms);
+    const nextText = appendMissingFinanceFactAtoms(currentText, atoms, payload);
     if (nextText === currentText) return false;
     assistantTexts[i] = nextText;
     return true;
@@ -1101,14 +1202,17 @@ const plugin = {
       latestFinanceQuestionForTool = latestQuestion || "";
       if (!latestQuestion) {
         pendingFinanceFactAtomsBySession.delete(key);
+        pendingFinanceFactPayloadsBySession.delete(key);
         return undefined;
       }
       const financeFactBundle = await financeQuerySystemFactBundle(latestQuestion);
       const atoms = financeFactAtomsFromPayload(financeFactBundle.payload);
       if (atoms.length) {
         pendingFinanceFactAtomsBySession.set(key, atoms);
+        pendingFinanceFactPayloadsBySession.set(key, financeFactBundle.payload);
       } else {
         pendingFinanceFactAtomsBySession.delete(key);
+        pendingFinanceFactPayloadsBySession.delete(key);
       }
       return {
         prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion, financeFactBundle.text)
@@ -1118,8 +1222,9 @@ const plugin = {
     api.on("llm_output", (event, ctx) => {
       const key = financeFactAtomSessionKey(event, ctx);
       const atoms = pendingFinanceFactAtomsBySession.get(key);
+      const payload = pendingFinanceFactPayloadsBySession.get(key);
       if (!atoms?.length) return undefined;
-      patchAssistantTextsWithFinanceFactAtoms(event?.assistantTexts, atoms);
+      patchAssistantTextsWithFinanceFactAtoms(event?.assistantTexts, atoms, payload);
       return undefined;
     });
 
@@ -1130,17 +1235,21 @@ const plugin = {
         const atoms = financeFactAtomsFromToolResult(message);
         if (atoms.length) {
           pendingFinanceFactAtomsBySession.set(key, atoms);
+          pendingFinanceFactPayloadsBySession.set(key, compactFinancePayload(parseToolResultPayload(message)));
         } else if (message.toolName === "finance-query") {
           pendingFinanceFactAtomsBySession.delete(key);
+          pendingFinanceFactPayloadsBySession.delete(key);
         }
         return undefined;
       }
       if (message?.role !== "assistant") return undefined;
       const atoms = pendingFinanceFactAtomsBySession.get(key);
+      const payload = pendingFinanceFactPayloadsBySession.get(key);
       if (!atoms?.length) return undefined;
-      const patched = patchAssistantMessageWithFinanceFactAtoms(message, atoms);
+      const patched = patchAssistantMessageWithFinanceFactAtoms(message, atoms, payload);
       if (!patched) return undefined;
       pendingFinanceFactAtomsBySession.delete(key);
+      pendingFinanceFactPayloadsBySession.delete(key);
       return { message: patched };
     });
   }

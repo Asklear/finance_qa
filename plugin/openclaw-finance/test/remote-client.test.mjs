@@ -288,6 +288,73 @@ test("before_message_write appends missing FinanceQA fact atoms only", async () 
     assert.match(amountCorrected.content[0].text, /3538259\.73 元/);
     assert.match(amountCorrected.content[0].text, /来源更新时间：2026-07-01 18:10:42/);
 
+    const staleAnswerSessionKey = "finance-stale-answer-session";
+    beforeWrite({
+      message: {
+        role: "toolResult",
+        toolName: "finance-query",
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            final_answer: "2025-10~2026-06 老板口径先看项目汇总：项目应付（应付未付/未付款） 3538259.73 元。",
+            data: {
+              period: "2025-10~2026-06",
+              metric_label: "项目应付（应付未付/未付款）",
+              total: 3538259.73,
+              source_note: "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+              source_update_note: "来源更新时间：2026-07-01 18:10:42",
+              contract_summary: {
+                cost_settlement: 14644177.16,
+                cost_paid: 11105917.43,
+                payable_open_items: [
+                  {
+                    supplier_name: "南京林悦智能科技有限公司",
+                    contract_content: "行业商品数据采购合同",
+                    settlement_amount: 3343015.18,
+                    paid_amount: 1309631.38,
+                    unpaid_amount: 2033383.8
+                  },
+                  {
+                    supplier_name: "重庆智博渊源信息技术咨询服务有限公司",
+                    contract_content: "合并行合计",
+                    settlement_amount: 137804,
+                    paid_amount: 0,
+                    unpaid_amount: 137804
+                  }
+                ]
+              }
+            }
+          })
+        }]
+      }
+    }, { sessionKey: staleAnswerSessionKey });
+    const staleAnswer = {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: [
+          "口径：项目应付（应付未付/未付款）",
+          "金额：1887361.66 元",
+          "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+          "来源更新时间：2026-06-29 20:02:31",
+          "期间：2025-10~2026-06",
+          "",
+          "| # | 供应商-合同/项目 | **未付款** |",
+          "|---|---|---|",
+          "| 1 | 南京林悦智能-行业商品数据采购合同 | 731,806.22 |"
+        ].join("\n")
+      }],
+      stopReason: "stop"
+    };
+    const staleCorrected = beforeWrite({ message: staleAnswer }, { sessionKey: staleAnswerSessionKey })?.message;
+    assert.doesNotMatch(staleCorrected.content[0].text, /1887361\.66|731,806\.22|2026-06-29 20:02:31/);
+    assert.match(staleCorrected.content[0].text, /金额：3538259\.73 元/);
+    assert.match(staleCorrected.content[0].text, /重庆智博渊源信息技术咨询服务有限公司-合并行合计/);
+    assert.match(staleCorrected.content[0].text, /未付款 137804\.00 元/);
+    assert.match(staleCorrected.content[0].text, /来源更新时间：2026-07-01 18:10:42/);
+    assert.doesNotMatch(staleCorrected.content[0].text, /final_answer|finance-query|工具返回/);
+
     const nonFinance = {
       role: "assistant",
       content: [{ type: "text", text: "普通回答。" }],
