@@ -796,6 +796,52 @@ function financeFactAtomSessionKey(event, ctx) {
   return String(ctx?.sessionKey || event?.sessionKey || event?.message?.sessionKey || "__default__");
 }
 
+function amountAtomValue(atom) {
+  const line = String(typeof atom === "string" ? atom : atom?.line || "").trim();
+  const value = String(typeof atom === "string" ? atom : atom?.value ?? "").trim();
+  const match = line.match(/^金额[：:]\s*([0-9][0-9,]*(?:\.\d+)?)/);
+  return String(match?.[1] || value).replace(/,/g, "").trim();
+}
+
+function hasValidGroupedNumber(raw) {
+  const [integerPart] = String(raw || "").split(".");
+  if (!integerPart?.includes(",")) return true;
+  const groups = integerPart.split(",");
+  return /^[0-9]{1,3}$/.test(groups[0] || "") && groups.slice(1).every((group) => /^[0-9]{3}$/.test(group));
+}
+
+function replaceMalformedAmountAtom(text, atom) {
+  const expectedAmount = amountAtomValue(atom);
+  if (!expectedAmount || !/^[0-9]+(?:\.\d+)?$/.test(expectedAmount)) return text;
+  if (text.includes(expectedAmount)) return text;
+  const lines = String(text || "").split("\n");
+  const moneyPattern = /[0-9][0-9,]*(?:\.\d+)?(?=\s*(?:万元|万|元))/g;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] || "";
+    if (!/(合计|总额|金额|项目|应收|应付|未回款|未付款)/.test(line)) continue;
+    let replaced = false;
+    const nextLine = line.replace(moneyPattern, (raw) => {
+      if (replaced || hasValidGroupedNumber(raw)) return raw;
+      replaced = true;
+      return expectedAmount;
+    });
+    if (!replaced) continue;
+    lines[i] = nextLine;
+    return lines.join("\n");
+  }
+  return text;
+}
+
+function replaceMalformedFinanceAmountAtoms(text, atoms) {
+  let nextText = String(text || "");
+  for (const atom of atoms || []) {
+    const line = String(typeof atom === "string" ? atom : atom?.line || "").trim();
+    if (!line.startsWith("金额：") && !line.startsWith("金额:")) continue;
+    nextText = replaceMalformedAmountAtom(nextText, atom);
+  }
+  return nextText;
+}
+
 function hasAssistantToolCalls(message) {
   if (!message || message.role !== "assistant") return false;
   if (Array.isArray(message.toolCalls) && message.toolCalls.length) return true;
@@ -807,7 +853,7 @@ function hasAssistantToolCalls(message) {
 }
 
 function appendMissingFinanceFactAtoms(text, atoms) {
-  const current = replaceSingleConflictingPeriodRange(String(text || ""), atoms);
+  const current = replaceMalformedFinanceAmountAtoms(replaceSingleConflictingPeriodRange(String(text || ""), atoms), atoms);
   const missing = atoms
     .map((atom) => typeof atom === "string" ? { value: atom, line: atom } : atom)
     .filter((atom) => atom?.value && atom?.line && !current.includes(atom.value) && !current.includes(atom.line))

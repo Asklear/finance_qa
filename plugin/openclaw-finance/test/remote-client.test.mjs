@@ -245,6 +245,49 @@ test("before_message_write appends missing FinanceQA fact atoms only", async () 
     assert.match(factPatched.content[0].text, /口径：项目应付（应付未付\/未付款）/);
     assert.doesNotMatch(factPatched.content[0].text, /final_answer|finance-query|工具返回/);
 
+    const malformedAmountSessionKey = "finance-malformed-amount-session";
+    beforeWrite({
+      message: {
+        role: "toolResult",
+        toolName: "finance-query",
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            success: true,
+            final_answer: [
+              "2025-10~2026-06 老板口径先看项目汇总：项目应付（应付未付/未付款） 3538259.73 元。",
+              "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+              "来源更新时间：2026-07-01 18:10:42"
+            ].join("\n"),
+            data: {
+              period: "2025-10~2026-06",
+              metric_label: "项目应付（应付未付/未付款）",
+              total: 3538259.73,
+              source_note: "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+              source_update_note: "来源更新时间：2026-07-01 18:10:42"
+            }
+          })
+        }]
+      }
+    }, { sessionKey: malformedAmountSessionKey });
+    const malformedAmountAnswer = {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: [
+          "2025-10~2026-06 期间，所有项目应付未付合计 **353,825,97.73 元**。",
+          "口径：项目应付（应付未付/未付款）",
+          "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+          "更新时间：2026-07-01 18:10:42"
+        ].join("\n")
+      }],
+      stopReason: "stop"
+    };
+    const amountCorrected = beforeWrite({ message: malformedAmountAnswer }, { sessionKey: malformedAmountSessionKey })?.message;
+    assert.doesNotMatch(amountCorrected.content[0].text, /353,825,97\.73/);
+    assert.match(amountCorrected.content[0].text, /3538259\.73 元/);
+    assert.match(amountCorrected.content[0].text, /来源更新时间：2026-07-01 18:10:42/);
+
     const nonFinance = {
       role: "assistant",
       content: [{ type: "text", text: "普通回答。" }],

@@ -382,8 +382,8 @@ WHERE cs.year_month BETWEEN ? AND ?`
 		if e.hasContractFinanceGroupOwnerColumns(costSettlementTotalsSpec()) {
 			groupMemberCount := `(SELECT COUNT(*) FROM fin_cost_settlement_group_members gm_attr WHERE gm_attr.group_id = g.id)`
 			unionSQL += fmt.Sprintf(`
-UNION ALL
-SELECT c.customer_name,
+	UNION ALL
+	SELECT c.customer_name,
        c.contract_content,
        COALESCE(g.settlement_amount, 0) AS settlement_amount,
        CASE WHEN %[1]s <= 1 THEN COALESCE(g.invoice_amount, 0) ELSE 0 END AS invoice_amount,
@@ -392,16 +392,36 @@ SELECT c.customer_name,
 FROM fin_cost_settlement_groups g
 JOIN fin_cost_settlement_group_members gm ON gm.group_id = g.id AND %[2]s
 JOIN fin_contracts c ON c.contract_id = gm.contract_id
-WHERE g.year_month BETWEEN ? AND ?`, groupMemberCount, e.contractFinanceGroupOwnerPredicate(costSettlementTotalsSpec()))
+	WHERE g.year_month BETWEEN ? AND ?`, groupMemberCount, e.contractFinanceGroupOwnerPredicate(costSettlementTotalsSpec()))
 			args = append(args, periodFrom, periodTo)
 			if strings.TrimSpace(like) != "" {
 				unionSQL += ` AND (g.customer_name LIKE ? OR c.customer_name LIKE ? OR c.contract_content LIKE ?)`
 				args = append(args, like, like, like)
 			}
+			unionSQL += fmt.Sprintf(`
+	UNION ALL
+	SELECT g.customer_name,
+	       '合并行合计' AS contract_content,
+	       COALESCE(g.settlement_amount, 0) AS settlement_amount,
+	       COALESCE(g.invoice_amount, 0) AS invoice_amount,
+	       COALESCE(g.paid_amount, 0) AS paid_amount,
+	       CASE WHEN COALESCE(g.settlement_amount, 0) > COALESCE(g.paid_amount, 0) THEN COALESCE(g.settlement_amount, 0) - COALESCE(g.paid_amount, 0) ELSE 0 END AS open_amount
+	FROM fin_cost_settlement_groups g
+	WHERE g.year_month BETWEEN ? AND ?
+	  AND NOT EXISTS (
+	      SELECT 1
+	      FROM fin_cost_settlement_group_members gm
+	      WHERE gm.group_id = g.id AND %[1]s
+	  )`, e.contractFinanceGroupOwnerPredicate(costSettlementTotalsSpec()))
+			args = append(args, periodFrom, periodTo)
+			if strings.TrimSpace(like) != "" {
+				unionSQL += ` AND g.customer_name LIKE ?`
+				args = append(args, like)
+			}
 		} else {
 			groupContent := e.mergedGroupContractContentSQL("fin_cost_settlement_group_members", "g")
 			unionSQL += `
-UNION ALL
+	UNION ALL
 SELECT g.customer_name,
        ` + groupContent + ` AS contract_content,
        COALESCE(g.settlement_amount, 0) AS settlement_amount,

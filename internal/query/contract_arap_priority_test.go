@@ -628,6 +628,61 @@ func TestUnpaidProjectRosterRollsSingleContractMergedRowsIntoProjectLabel(t *tes
 	}
 }
 
+func TestUnpaidProjectRosterKeepsUnattributedMergedCostGroupAsPayableItem(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE fin_cost_settlement_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, customer_name TEXT, year_month TEXT, settlement_amount REAL, paid_amount REAL, invoice_amount REAL, source_start_row INTEGER)`,
+		`CREATE TABLE fin_cost_settlement_group_members (group_id INTEGER, contract_id TEXT, source_row_number INTEGER)`,
+		`INSERT INTO fin_cost_settlement_groups(id, customer_name, year_month, settlement_amount, paid_amount, invoice_amount, source_start_row) VALUES (20,'未归属供应商','2026-03',137804,0,137804,200)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec stmt failed: %v\n%s", err, stmt)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
+	}
+
+	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.April, 20, 0, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("2026年3月未付款的项目及对应金额有哪些？")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["total"]; got != float64(138304) {
+		t.Fatalf("total = %v, want existing fixture payable plus merged group payable 138304", got)
+	}
+	if !strings.Contains(res.Message, "未归属供应商-合并行合计 项目成本 137804.00 元、已付款 0.00 元、未付款 137804.00 元") {
+		t.Fatalf("message should include unattributed merged cost group detail, got %q", res.Message)
+	}
+	summary, ok := res.Data["contract_summary"].(map[string]any)
+	if !ok {
+		t.Fatalf("contract_summary missing: %+v", res.Data)
+	}
+	items, ok := summary["payable_open_items"].([]map[string]any)
+	if !ok || len(items) == 0 {
+		t.Fatalf("payable_open_items = %#v, want unattributed merged group item", summary["payable_open_items"])
+	}
+	if got := items[0]["supplier_name"]; got != "未归属供应商" {
+		t.Fatalf("supplier_name = %v, want 未归属供应商", got)
+	}
+	if got := items[0]["contract_content"]; got != "合并行合计" {
+		t.Fatalf("contract_content = %v, want 合并行合计", got)
+	}
+	if got := items[0]["unpaid_amount"]; got != float64(137804) {
+		t.Fatalf("unpaid_amount = %v, want 137804", got)
+	}
+}
+
 func TestUnpaidProjectRosterLooseYearRangeDoesNotResolveSyntheticEntity(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
 	db, err := sql.Open("sqlite", dbPath)
