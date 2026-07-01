@@ -893,6 +893,19 @@ function patchAssistantMessageWithFinanceFactAtoms(message, atoms) {
   return { ...message, content: nextContent };
 }
 
+function patchAssistantTextsWithFinanceFactAtoms(assistantTexts, atoms) {
+  if (!Array.isArray(assistantTexts) || !Array.isArray(atoms) || !atoms.length) return false;
+  for (let i = assistantTexts.length - 1; i >= 0; i--) {
+    const currentText = assistantTexts[i];
+    if (typeof currentText !== "string" || !currentText.trim()) continue;
+    const nextText = appendMissingFinanceFactAtoms(currentText, atoms);
+    if (nextText === currentText) return false;
+    assistantTexts[i] = nextText;
+    return true;
+  }
+  return false;
+}
+
 async function financeQuerySystemFacts(question) {
   const bundle = await financeQuerySystemFactBundle(question);
   return bundle.text;
@@ -1054,6 +1067,14 @@ const plugin = {
       return {
         prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion, financeFactBundle.text)
       };
+    });
+
+    api.on("llm_output", (event, ctx) => {
+      const key = financeFactAtomSessionKey(event, ctx);
+      const atoms = pendingFinanceFactAtomsBySession.get(key);
+      if (!atoms?.length) return undefined;
+      patchAssistantTextsWithFinanceFactAtoms(event?.assistantTexts, atoms);
+      return undefined;
     });
 
     api.on("before_message_write", (event, ctx) => {

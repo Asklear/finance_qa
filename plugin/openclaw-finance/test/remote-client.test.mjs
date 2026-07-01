@@ -282,6 +282,7 @@ test("prefetched finance facts guard repeated answers that skip a fresh tool cal
   await withFinancePluginHarness(toolCalls, async ({ hooks }) => {
     const beforePrompt = hooks.get("before_prompt_build");
     const beforeWrite = hooks.get("before_message_write");
+    const llmOutput = hooks.get("llm_output");
     const sessionKey = "finance-repeat-session";
 
     const promptResult = await beforePrompt({
@@ -308,6 +309,20 @@ test("prefetched finance facts guard repeated answers that skip a fresh tool cal
     assert.equal(toolCalls.length, 1);
     assert.equal(toolCalls[0].arguments.query, "25年至26年未付款的项目及对应金额有哪些？");
     assert.match(promptResult.prependSystemContext, /2025-10~2026-06/);
+
+    const assistantTexts = [
+      [
+        "口径：项目应付（应付未付/未付款）",
+        "金额：1887361.66 元",
+        "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+        "来源更新时间：2026-06-29 20:02:31",
+        "期间：2025-10~2026-05"
+      ].join("\n")
+    ];
+    llmOutput({ assistantTexts }, { sessionKey });
+    assert.match(assistantTexts[0], /期间：2025-10~2026-06/);
+    assert.doesNotMatch(assistantTexts[0], /2025-10~2026-05/);
+    assert.doesNotMatch(assistantTexts[0], /final_answer|finance-query|工具返回/);
 
     const staleRepeatedAnswer = {
       role: "assistant",
