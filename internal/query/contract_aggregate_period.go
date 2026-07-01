@@ -106,11 +106,7 @@ func contractAggregateLooseYearRangeEndsAtAsOfYear(q, requestedTo, asOf string) 
 	if requestedYear == 0 || asOfYear == 0 || requestedYear != asOfYear {
 		return false
 	}
-	m := regexp.MustCompile(`(?i)(20\d{2}|\d{2})\s*年?\s*(?:到|至|-|~)\s*(20\d{2}|\d{2})\s*年`).FindStringSubmatch(q)
-	if len(m) != 3 {
-		return false
-	}
-	return contractAggregateNormalizeYearToken(m[2]) == asOfYear
+	return looseYearRangeEndsAtYear(q, asOfYear)
 }
 
 func contractAggregateCanExtendActualToBusinessCutoff(actualTo, requestedTo string) bool {
@@ -141,7 +137,15 @@ func contractAggregateYearFromAsOf(asOf string) int {
 	return year
 }
 
-func contractAggregateNormalizeYearToken(raw string) int {
+func looseYearRangeEndsAtYear(q string, year int) bool {
+	m := regexp.MustCompile(`(?i)(20\d{2}|\d{2})\s*年?\s*(?:到|至|-|~)\s*(20\d{2}|\d{2})\s*年`).FindStringSubmatch(q)
+	if len(m) != 3 {
+		return false
+	}
+	return normalizeYearTokenForQuery(m[2]) == year
+}
+
+func normalizeYearTokenForQuery(raw string) int {
 	year := mustAtoi(strings.TrimSpace(raw))
 	if year >= 0 && year < 100 {
 		return 2000 + year

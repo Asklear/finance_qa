@@ -751,31 +751,7 @@ func TestUnpaidProjectRosterLooseYearRangeUsesActualProjectDataStart(t *testing.
 
 func TestUnpaidProjectRosterCurrentYearRangeKeepsBusinessCutoffMonth(t *testing.T) {
 	dbPath := buildContractARAPPriorityDB(t)
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE fin_fund_income SET year_month='2025-10' WHERE contract_id='C-001'`); err != nil {
-		t.Fatalf("move project workbook coverage start: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE fin_cost_settlements SET year_month='2026-01' WHERE contract_id='C-002'`); err != nil {
-		t.Fatalf("move cost fixture after coverage start: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-005','测试供应商','后续已结清项目')`); err != nil {
-		t.Fatalf("insert latest-period contract: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount) VALUES ('C-005','2026-05','contract_revenue_cost','成本-月度结算',100,100,'是',100)`); err != nil {
-		t.Fatalf("insert may cost row: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-006','六月客户','六月收入项目')`); err != nil {
-		t.Fatalf("insert june revenue contract: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C-006','2026-06','contract_fund_income','26年Q2收入明细',100,100,'是',100)`); err != nil {
-		t.Fatalf("insert june revenue row: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close sqlite: %v", err)
-	}
+	seedUnpaidProjectRosterBusinessCutoffFixture(t, dbPath)
 
 	engine, err := NewEngine(dbPath, "测试公司", WithAsOfAnchor(time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)))
 	if err != nil {
@@ -805,6 +781,61 @@ func TestUnpaidProjectRosterCurrentYearRangeKeepsBusinessCutoffMonth(t *testing.
 	}
 	if !strings.Contains(res.Message, "2025-10~2026-06") || !strings.Contains(res.Message, "项目应付（应付未付/未付款） 500.00") {
 		t.Fatalf("message should keep business cutoff period and project payable amount, got %q", res.Message)
+	}
+}
+
+func TestUnpaidProjectRosterUsesLatestDataMonthAsBusinessCutoffWithoutAsOf(t *testing.T) {
+	dbPath := buildContractARAPPriorityDB(t)
+	seedUnpaidProjectRosterBusinessCutoffFixture(t, dbPath)
+
+	engine, err := NewEngine(dbPath, "测试公司")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+	defer engine.Close()
+
+	res := engine.Query("25年至26年未付款的项目及对应金额有哪些？")
+	if !res.Success {
+		t.Fatalf("query failed: %s data=%+v", res.Message, res.Data)
+	}
+	if got := res.Data["period"]; got != "2025-10~2026-06" {
+		t.Fatalf("period = %v, want latest data month as business cutoff 2025-10~2026-06", got)
+	}
+	spec, ok := res.Data["query_spec"].(map[string]any)
+	if !ok {
+		t.Fatalf("query_spec missing: %+v", res.Data)
+	}
+	if got := spec["period_to"]; got != "2026-06" {
+		t.Fatalf("query_spec.period_to = %v, want latest data month 2026-06", got)
+	}
+}
+
+func seedUnpaidProjectRosterBusinessCutoffFixture(t *testing.T, dbPath string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE fin_fund_income SET year_month='2025-10' WHERE contract_id='C-001'`); err != nil {
+		t.Fatalf("move project workbook coverage start: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE fin_cost_settlements SET year_month='2026-01' WHERE contract_id='C-002'`); err != nil {
+		t.Fatalf("move cost fixture after coverage start: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-005','测试供应商','后续已结清项目')`); err != nil {
+		t.Fatalf("insert latest-period contract: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO fin_cost_settlements(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, paid_amount, is_invoiced, invoice_amount) VALUES ('C-005','2026-05','contract_revenue_cost','成本-月度结算',100,100,'是',100)`); err != nil {
+		t.Fatalf("insert may cost row: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO fin_contracts(contract_id, customer_name, contract_content) VALUES ('C-006','六月客户','六月收入项目')`); err != nil {
+		t.Fatalf("insert june revenue contract: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO fin_fund_income(contract_id, year_month, source_report_type, source_sheet_name, settlement_amount, received_amount, is_invoiced, invoice_amount) VALUES ('C-006','2026-06','contract_fund_income','26年Q2收入明细',100,100,'是',100)`); err != nil {
+		t.Fatalf("insert june revenue row: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
 	}
 }
 

@@ -104,16 +104,17 @@ func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 	q := e.normalizeQuestionAndResolveCompany(question)
 	cfg := e.currentRuleConfig()
 	anchor := e.getLatestPeriodAnchor()
+	periodAnchor := e.periodParserAnchorForQuestion(q, anchor)
 
 	intent, intentTrace := classifyIntentV2(q, cfg)
-	spec := buildQuerySpec(q, anchor, cfg)
+	spec := buildQuerySpec(q, periodAnchor, cfg)
 	entity := e.resolveQueryEntity(q, spec)
 	spec = reconcileQuerySpec(spec, entity, cfg)
 	spec = e.applyLegacyContractContentFallback(q, spec)
 	entity = spec.Entity
 	hasRealEntity := e.isRealBusinessEntity(q, entity)
 	spec, entity, hasRealEntity = normalizeExplicitCashCompanyRoute(q, spec, entity, hasRealEntity, cfg)
-	spec, entity, hasRealEntity, anchor = e.applyQueryPriorityAdjustments(q, intent, spec, entity, hasRealEntity, anchor)
+	spec, entity, hasRealEntity, periodAnchor = e.applyQueryPriorityAdjustments(q, intent, spec, entity, hasRealEntity, periodAnchor)
 	spec, _ = e.decideBossRoute(context.Background(), spec)
 	entity = spec.Entity
 	hasRealEntity = e.isRealBusinessEntity(q, entity)
@@ -126,7 +127,7 @@ func (e *Engine) resolveQueryRouting(question string) resolvedQueryRouting {
 		spec:               spec,
 		entity:             entity,
 		hasRealEntity:      hasRealEntity,
-		anchor:             anchor,
+		anchor:             periodAnchor,
 		cfg:                cfg,
 	}
 }
