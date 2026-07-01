@@ -373,6 +373,30 @@ test("scoreCase accepts configured amount label aliases when the exact reference
   assert.deepEqual(score.failures, []);
 });
 
+test("scoreCase accepts primary metric followed by a nearby amount line", () => {
+  const score = scoreCase({
+    id: "case-13a",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["项目应收"] },
+        periods: true
+      },
+      amountLabelGroups: [["项目应收", "应收未收", "未回款"]]
+    } as any,
+    actual: {
+      source: "agent",
+      answer: "期间：2025-10~2026-06\n\n口径：项目应收（应收未收）\n\n金额：2590598.17 元\n\n项目结算 2725.88 万元，已到账 2466.82 万元，其中已开票未回款 46.71 万元。\n\n挂账客户中，四川其妙科技有限公司未回款最多，152.65 万元。"
+    },
+    reference: {
+      source: "golden_reference",
+      answer: "2025-10~2026-06 DB金标口径先看项目汇总：项目应收 2590598.17 元。"
+    }
+  });
+
+  assert.equal(score.pass, true);
+  assert.deepEqual(score.failures, []);
+});
+
 test("scoreCase does not let an alias detail amount override a wrong primary labeled amount", () => {
   const score = scoreCase({
     id: "case-14",

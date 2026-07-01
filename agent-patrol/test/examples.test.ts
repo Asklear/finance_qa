@@ -709,6 +709,52 @@ test("financeqa snapshot reference provider separates project payable from invoi
   assert.match(unpaidPayload.result.final_answer, /供应商A\/成本项目A 700\.00 元/);
 });
 
+test("financeqa snapshot reference cost range follows the business cutoff month", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-cost-cutoff-"));
+  const snapshotPath = path.join(dir, "financeqa-snapshot.json");
+  const questionFile = path.join(dir, "question.txt");
+  fs.writeFileSync(questionFile, "从2025年10月起到上一个完整自然月月底，所有项目的应付未付是多少？", "utf8");
+  fs.writeFileSync(snapshotPath, JSON.stringify({
+    metadata: {
+      generated_at: "2026-07-01T13:09:47+08:00",
+      source_database: "bossagent_app",
+      source_schema: "tenant_uhub"
+    },
+    tables: {
+      fin_fund_income: [
+        { year_month: "2026-06", settlement_amount: 1, received_amount: 0, invoice_amount: 0 }
+      ],
+      fin_cost_settlements: [
+        {
+          contract_id: "S1",
+          year_month: "2026-05",
+          settlement_amount: 1000,
+          paid_amount: 300,
+          invoice_amount: 900,
+          invoice_open_offset_amount: 100
+        }
+      ]
+    }
+  }), "utf8");
+
+  const result = await spawnNode([
+    "examples/golden/financeqa_snapshot_reference.mjs",
+    "--template", "finance_project_payable_unpaid",
+    "--question-file", questionFile,
+    "--snapshot", snapshotPath,
+    "--as-of-date", "2026-07-01"
+  ], {
+    cwd: process.cwd(),
+    env: process.env
+  }, { timeoutMs: 5_000 });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.deepEqual(payload.result.structured.period, { from: "2025-10", to: "2026-06" });
+  assert.match(payload.result.final_answer, /2025-10~2026-06/);
+  assert.equal(payload.result.structured.amount, 700);
+});
+
 test("financeqa snapshot reference provider defaults as-of date to Asia Shanghai", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-patrol-financeqa-snapshot-local-date-"));
   const snapshotPath = path.join(dir, "financeqa-snapshot.json");

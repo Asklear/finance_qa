@@ -93,7 +93,7 @@ async function main() {
     const tableSpec = TABLES_BY_FAMILY[definition.family];
     const facts = financeFacts(snapshot, tableSpec);
     const allRows = [...facts.directRows, ...facts.groupRows];
-    const period = resolvePeriod(allRows, definition.periodMode, asOf);
+    const period = resolvePeriod(allRows, definition.periodMode, asOf, snapshot);
     const rows = allRows.filter((row) => inPeriod(row, period));
     const totals = collectTotals(facts, tableSpec, period, definition);
     const amount = round2(definition.amount(totals));
@@ -233,7 +233,7 @@ function normalizeMemberRow(value) {
   };
 }
 
-function resolvePeriod(rows, mode, asOf) {
+function resolvePeriod(rows, mode, asOf, snapshot) {
   if (mode === "latest") {
     const latestAvailable = maxMonth(rows.map((row) => row.year_month).filter(Boolean));
     if (!latestAvailable) {
@@ -243,15 +243,29 @@ function resolvePeriod(rows, mode, asOf) {
   }
 
   const previous = previousCompleteMonth(asOf);
+  const businessCutoff = businessCutoffMonth(snapshot, previous);
   const maxAvailable = maxMonth(rows.map((row) => row.year_month).filter((month) => month <= formatMonth(previous)));
   if (!maxAvailable) {
     throw new Error("snapshot has no complete finance periods for requested template");
   }
-  const requestedTo = minMonth(formatMonth(previous), maxAvailable);
+  const requestedTo = minMonth(formatMonth(previous), businessCutoff || maxAvailable);
   return {
     from: formatMonth(PERIOD_START),
     to: requestedTo
   };
+}
+
+function businessCutoffMonth(snapshot, previous) {
+  const maxCompleteMonth = formatMonth(previous);
+  const tables = [
+    "fin_fund_income",
+    "fin_fund_income_groups",
+    "fin_cost_settlements",
+    "fin_cost_settlement_groups"
+  ];
+  return maxMonth(tables.flatMap((table) => arrayValue(snapshot.tables[table])
+    .map((row) => stringValue(asRecord(row)?.year_month))
+    .filter((month) => month && month <= maxCompleteMonth)));
 }
 
 function collectTotals(facts, tableSpec, period, definition) {
