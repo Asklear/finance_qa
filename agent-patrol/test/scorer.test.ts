@@ -276,6 +276,30 @@ test("scoreCase accepts equivalent period formats and ten-thousand yuan amounts 
   assert.deepEqual(score.failures, []);
 });
 
+test("scoreCase ignores reference metadata timestamps when deriving business periods", () => {
+  const score = scoreCase({
+    id: "case-10a",
+    expected: {
+      referenceChecks: {
+        amounts: { labels: ["项目结算"] },
+        periods: true,
+        sources: true
+      }
+    },
+    actual: {
+      source: "agent",
+      answer: "2026-06 最新月份项目结算收入（营收） 912,713.97 元。来源：《优集收入、成本计算表 - 上传.xlsx》"
+    },
+    reference: {
+      source: "golden_reference",
+      answer: "2026-06~2026-06 DB金标口径先看项目汇总：项目结算 912713.97 元。补充项目结算 912713.97 元、已到账 387513.97 元、已开票 837613.97 元。 来源：《优集收入、成本计算表 - 上传.xlsx》 来源更新时间：2026-06-29T20:02:31.995894 快照生成时间：2026-07-01T09:07:47+08"
+    }
+  });
+
+  assert.equal(score.pass, true);
+  assert.deepEqual(score.failures, []);
+});
+
 test("scoreCase compares labeled headline amounts instead of any repeated detail amount", () => {
   const score = scoreCase({
     id: "case-11",

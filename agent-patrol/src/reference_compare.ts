@@ -98,10 +98,15 @@ function parseAmount(raw: string, unit: string | undefined): number | undefined 
 
 function derivePeriods(referenceAnswer: string): string[] {
   const periods: string[] = [];
-  for (const match of referenceAnswer.matchAll(/\b(20\d{2})[-/年](0?[1-9]|1[0-2])月?\b/g)) {
+  const answerText = businessAnswerText(referenceAnswer);
+  for (const match of answerText.matchAll(/\b(20\d{2})[-/年](0?[1-9]|1[0-2])月?\b/g)) {
     periods.push(`${match[1]}-${match[2]!.padStart(2, "0")}`);
   }
   return unique(periods).slice(0, 2);
+}
+
+function businessAnswerText(referenceAnswer: string): string {
+  return referenceAnswer.split(/(?:\s|^)(?:来源：|来源更新时间：?|快照生成时间：?)/)[0] ?? referenceAnswer;
 }
 
 function deriveSources(referenceAnswer: string): string[] {
