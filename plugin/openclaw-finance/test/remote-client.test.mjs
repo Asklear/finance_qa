@@ -277,6 +277,78 @@ test("before_message_write appends missing FinanceQA fact atoms only", async () 
   });
 });
 
+test("prefetched finance facts guard repeated answers that skip a fresh tool call", async () => {
+  const toolCalls = [];
+  await withFinancePluginHarness(toolCalls, async ({ hooks }) => {
+    const beforePrompt = hooks.get("before_prompt_build");
+    const beforeWrite = hooks.get("before_message_write");
+    const sessionKey = "finance-repeat-session";
+
+    const promptResult = await beforePrompt({
+      sessionKey,
+      prompt: "25年至26年未付款的项目及对应金额有哪些？",
+      messages: [
+        {
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: "2025-10~2026-05 项目口径应付（应付未付/未付款） 1887361.66 元。"
+          }]
+        },
+        {
+          role: "user",
+          content: [{
+            type: "text",
+            text: "[Wed 2026-07-01 11:09 GMT+8] 25年至26年未付款的项目及对应金额有哪些？"
+          }]
+        }
+      ]
+    }, { sessionKey });
+
+    assert.equal(toolCalls.length, 1);
+    assert.equal(toolCalls[0].arguments.query, "25年至26年未付款的项目及对应金额有哪些？");
+    assert.match(promptResult.prependSystemContext, /2025-10~2026-06/);
+
+    const staleRepeatedAnswer = {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: [
+          "2025-10~2026-05 项目口径应付（应付未付/未付款） 1887361.66 元。",
+          "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+          "来源更新时间：2026-06-29 20:02:31"
+        ].join("\n")
+      }],
+      stopReason: "stop"
+    };
+
+    const patched = beforeWrite({ message: staleRepeatedAnswer, sessionKey }, { sessionKey })?.message;
+    assert.match(patched.content[0].text, /2025-10~2026-06/);
+    assert.doesNotMatch(patched.content[0].text, /2025-10~2026-05/);
+    assert.match(patched.content[0].text, /口径：项目应付（应付未付\/未付款）/);
+    assert.match(patched.content[0].text, /1887361\.66/);
+    assert.match(patched.content[0].text, /来源：《优集收入、成本计算表 - 上传\.xlsx》的【成本-月度结算】/);
+    assert.match(patched.content[0].text, /来源更新时间：2026-06-29 20:02:31/);
+    assert.doesNotMatch(patched.content[0].text, /final_answer|finance-query|工具返回/);
+  }, {
+    toolPayload: {
+      success: true,
+      final_answer: [
+        "2025-10~2026-06 老板口径先看项目汇总：项目应付（应付未付/未付款） 1887361.66 元。",
+        "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+        "来源更新时间：2026-06-29 20:02:31"
+      ].join("\n"),
+      data: {
+        period: "2025-10~2026-06",
+        metric_label: "项目应付（应付未付/未付款）",
+        total: 1887361.66,
+        source_note: "来源：《优集收入、成本计算表 - 上传.xlsx》的【成本-月度结算】",
+        source_update_note: "来源更新时间：2026-06-29 20:02:31"
+      }
+    }
+  });
+});
+
 async function withServer(handler, run) {
   const server = http.createServer(async (req, res) => {
     let body = "";
@@ -307,7 +379,7 @@ function writeJSON(res, payload) {
   res.end(JSON.stringify(payload));
 }
 
-async function withFinancePluginHarness(toolCalls, run) {
+async function withFinancePluginHarness(toolCalls, run, options = {}) {
   await withServer(async (req, res, body) => {
     const message = JSON.parse(body || "{}");
     assert.equal(req.headers.authorization, "Bearer test-token");
@@ -325,6 +397,9 @@ async function withFinancePluginHarness(toolCalls, run) {
     assert.equal(message.method, "tools/call");
     assert.equal(message.params.name, "finance-query");
     toolCalls.push(message.params);
+    const toolPayload = typeof options.toolPayload === "function"
+      ? options.toolPayload(message.params?.arguments || {})
+      : options.toolPayload;
     writeJSON(res, {
       jsonrpc: "2.0",
       id: message.id,
@@ -332,7 +407,7 @@ async function withFinancePluginHarness(toolCalls, run) {
         content: [
           {
             type: "text",
-            text: JSON.stringify({ success: true, final_answer: "ok" })
+            text: JSON.stringify(toolPayload || { success: true, final_answer: "ok" })
           }
         ]
       }

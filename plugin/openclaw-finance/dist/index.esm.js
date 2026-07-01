@@ -654,9 +654,9 @@ function compactFinancePayload(payload) {
     total: data.total ?? payload.total,
     source_note: data.source_note || payload.source_note,
     source_update_note: data.source_update_note || payload.source_update_note,
-    period: data.period,
-    source_priority: data.source_priority,
-    requested_metrics: data.requested_metrics,
+    period: data.period || payload.period,
+    source_priority: data.source_priority || payload.source_priority,
+    requested_metrics: data.requested_metrics || payload.requested_metrics,
     role: data.role,
     account_view: data.account_view,
     cash_view: data.cash_view,
@@ -807,7 +807,7 @@ function hasAssistantToolCalls(message) {
 }
 
 function appendMissingFinanceFactAtoms(text, atoms) {
-  const current = String(text || "");
+  const current = replaceSingleConflictingPeriodRange(String(text || ""), atoms);
   const missing = atoms
     .map((atom) => typeof atom === "string" ? { value: atom, line: atom } : atom)
     .filter((atom) => atom?.value && atom?.line && !current.includes(atom.value) && !current.includes(atom.line))
@@ -816,6 +816,63 @@ function appendMissingFinanceFactAtoms(text, atoms) {
   const base = current.trimEnd();
   const separator = base ? "\n\n" : "";
   return `${base}${separator}${missing.join("\n")}`;
+}
+
+function periodAtomValue(atoms) {
+  if (!Array.isArray(atoms)) return "";
+  for (const atom of atoms) {
+    const value = String(typeof atom === "string" ? atom : atom?.value || "").trim();
+    const line = String(typeof atom === "string" ? atom : atom?.line || "").trim();
+    const candidate = line.startsWith("期间：") ? line.slice("期间：".length).trim() : value;
+    if (/^20\d{2}-\d{2}~20\d{2}-\d{2}$/.test(candidate)) return candidate;
+  }
+  return "";
+}
+
+function normalizePeriodRangeToken(raw) {
+  const text = String(raw || "").trim();
+  let match = text.match(/(20\d{2})-(\d{1,2})\s*~\s*(20\d{2})-(\d{1,2})/);
+  if (!match) {
+    match = text.match(/(20\d{2})年\s*(\d{1,2})月\s*[~至到-]\s*(20\d{2})年\s*(\d{1,2})月/);
+  }
+  if (!match) return "";
+  const [, fromYear, fromMonth, toYear, toMonth] = match;
+  return `${fromYear}-${fromMonth.padStart(2, "0")}~${toYear}-${toMonth.padStart(2, "0")}`;
+}
+
+function chinesePeriodRange(period) {
+  const match = String(period || "").match(/^(20\d{2})-(\d{2})~(20\d{2})-(\d{2})$/);
+  if (!match) return period;
+  const [, fromYear, fromMonth, toYear, toMonth] = match;
+  return `${fromYear}年${Number(fromMonth)}月~${toYear}年${Number(toMonth)}月`;
+}
+
+function periodRangesFromText(text) {
+  const ranges = [];
+  for (const pattern of [
+    /20\d{2}-\d{2}\s*~\s*20\d{2}-\d{2}/g,
+    /20\d{2}年\s*\d{1,2}月\s*[~至到-]\s*20\d{2}年\s*\d{1,2}月/g
+  ]) {
+    for (const match of String(text || "").matchAll(pattern)) {
+      ranges.push(match[0]);
+    }
+  }
+  return ranges;
+}
+
+function replaceSingleConflictingPeriodRange(text, atoms) {
+  const currentPeriod = periodAtomValue(atoms);
+  if (!currentPeriod) return text;
+  const ranges = periodRangesFromText(text);
+  if (!ranges.length) return text;
+  const uniquePeriods = [...new Set(ranges.map(normalizePeriodRangeToken).filter(Boolean))];
+  if (uniquePeriods.length !== 1 || uniquePeriods[0] === currentPeriod) return text;
+  let nextText = text;
+  for (const range of ranges) {
+    const replacement = range.includes("年") ? chinesePeriodRange(currentPeriod) : currentPeriod;
+    nextText = nextText.split(range).join(replacement);
+  }
+  return nextText;
 }
 
 function patchAssistantMessageWithFinanceFactAtoms(message, atoms) {
@@ -837,9 +894,14 @@ function patchAssistantMessageWithFinanceFactAtoms(message, atoms) {
 }
 
 async function financeQuerySystemFacts(question) {
+  const bundle = await financeQuerySystemFactBundle(question);
+  return bundle.text;
+}
+
+async function financeQuerySystemFactBundle(question) {
   const result = await callFinanceTool("finance-query", { query: question });
   const payload = compactFinancePayload(parseToolResultPayload(result));
-  if (!payload || typeof payload !== "object") return "";
+  if (!payload || typeof payload !== "object") return { text: "", payload: null };
   const lines = [
     "本次核对结果只供生成最终回复使用；不要展示本段标题、JSON 或字段名，可以基于“当前 finance-query 老板答案”自然改写。",
     `最新问题：${question}`
@@ -866,7 +928,7 @@ async function financeQuerySystemFacts(question) {
   ]);
   if (detailRows.length) lines.push(`合同/项目明细：${JSON.stringify(detailRows)}`);
   if (!payload.final_answer) lines.push(`结果摘要：${payload.message || payload.error || "finance-query 未返回老板答案"}`);
-  return lines.join("\n");
+  return { text: lines.join("\n"), payload };
 }
 
 async function callFinanceTool(name, rawParams) {
@@ -974,13 +1036,23 @@ const plugin = {
       }
     ), { name: "finance-sync" });
 
-    api.on("before_prompt_build", async (event) => {
+    api.on("before_prompt_build", async (event, ctx) => {
+      const key = financeFactAtomSessionKey(event, ctx);
       const latestQuestion = financeQuestionForPromptEvent(event);
       latestFinanceQuestionForTool = latestQuestion || "";
-      if (!latestQuestion) return undefined;
-      const financeFacts = await financeQuerySystemFacts(latestQuestion);
+      if (!latestQuestion) {
+        pendingFinanceFactAtomsBySession.delete(key);
+        return undefined;
+      }
+      const financeFactBundle = await financeQuerySystemFactBundle(latestQuestion);
+      const atoms = financeFactAtomsFromPayload(financeFactBundle.payload);
+      if (atoms.length) {
+        pendingFinanceFactAtomsBySession.set(key, atoms);
+      } else {
+        pendingFinanceFactAtomsBySession.delete(key);
+      }
       return {
-        prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion, financeFacts)
+        prependSystemContext: mustCallFinanceQuerySystemContext(latestQuestion, financeFactBundle.text)
       };
     });
 
